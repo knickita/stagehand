@@ -1,19 +1,35 @@
-imports=[
-    "FirstPersonLook",
-    "LoadCatalogue"
-]
+bl_info = {
+    "name": "Stagehand",
+    "author": "Nick",
+    "version": (0, 0, 1),
+    "blender": (3, 0, 0)
+}
 
-#reload a class registered in blender, useful during development, to update the changes in code. maybe we can remove it in the final version
-def Reload(moduleName):
-    cls=__import__(moduleName)
-    try:
-        cls.unregister()
-    except:
-        pass
-    cls.register()
+# pylint: disable=fixme, import-error
+from . import FirstPersonLook
+from . import LoadCatalogue
+from . import MenuConfiguration
 
-import sys
-for moduleName in imports:
-    if moduleName in sys.modules:
-        del sys.modules[moduleName]    
-    Reload(moduleName)
+classes = (    
+    FirstPersonLook,
+    LoadCatalogue,
+    MenuConfiguration   
+)
+
+
+def register():
+    for cls in classes:
+        cls.register()
+
+
+def unregister():
+    for cls in reversed(classes):
+        try:
+            cls.unregister()
+        except Exception as x:
+            print(x)
+            continue
+
+
+if __name__ == "__main__":
+    register()

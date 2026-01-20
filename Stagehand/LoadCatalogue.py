@@ -1,17 +1,21 @@
 import bpy
 
-class SIMPLE_OT_hello(bpy.types.Operator):
+class LoadCatalogue(bpy.types.Operator):
     bl_idname = "wm.simple_hello"
-    bl_label = "Say Hello"
+    bl_label = "cane"
 
     def execute(self, context):
-        self.report({'INFO'}, "Hello from Blender operator!")
-        print("Hello from Blender operator!")
+        print("eccolo!")        
         return {'FINISHED'}
     
+    
+def menu_func(self, context):
+    self.layout.operator(LoadCatalogue.bl_idname, text="Hello Nick75")
 
-def register():
-    bpy.utils.register_class(SIMPLE_OT_hello)
 
-def unregister():
-    bpy.utils.unregister_class(SIMPLE_OT_hello)
+def register():    
+    bpy.utils.register_class(LoadCatalogue)
+    
+
+def unregister():    
+    bpy.utils.unregister_class(LoadCatalogue)    

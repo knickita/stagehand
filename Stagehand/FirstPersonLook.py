@@ -1,4 +1,3 @@
-# pylint: disable=fixme, import-error
 import bpy
 from mathutils import Vector, Quaternion
 
@@ -86,6 +85,9 @@ class FirstPersonLook(bpy.types.Operator):
 
             rv3d = self.rv3d
 
+            if not rv3d.is_perspective:
+                rv3d.view_perspective="PERSP"
+
             # Save the current eye position (camera position)
             dist = rv3d.view_distance
             eye = rv3d.view_location + (rv3d.view_rotation @ Vector((0, 0, dist)))
@@ -152,6 +154,7 @@ def register_keymap():
 
     addon_keymaps.append((km, kmi))
 
+
 def get_prefs():
     class Fallback:
         speed = 3.0
@@ -175,8 +178,3 @@ def unregister():
     unregister_keymap()
     if hasattr(FirstPersonLook, "bl_rna"):
         bpy.utils.unregister_class(FirstPersonLook)
-    
-
-def reload():
-    unregister()
-    register()

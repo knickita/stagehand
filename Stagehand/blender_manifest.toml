@@ -1,0 +1,9 @@
+blender_version_min = "3.6.0"
+id = "Stagehand"
+maintainer = "nick"
+license = ["to be defined"]
+name = "Stagehand"
+schema_version = "1.0.0"
+tagline = "descrizione del programma"
+type = "add-on"
+version = "0.0.1"
