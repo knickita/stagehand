@@ -1,5 +1,7 @@
 import bpy
 
+from .LinkTypes import get_compatible_link_types, link_type_label
+
 
 class StagehandTagItem(bpy.types.PropertyGroup):
     value: bpy.props.StringProperty(
@@ -174,6 +176,10 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
             for index, link_item in enumerate(stagehand.links, start=1):
                 item_box = links_box.box()
                 item_box.label(text=f"Link {index}")
+                item_box.label(text=f"Type: {link_type_label(link_item.type)}")
+                compatible_types = get_compatible_link_types(link_item.type)
+                compatible_label = ", ".join(link_type_label(link_type) for link_type in compatible_types)
+                item_box.label(text=f"Compatible With: {compatible_label or 'None'}")
                 item_box.prop(link_item, "type")
                 item_box.prop(link_item, "cylindricalType")
                 item_box.prop(link_item, "displayRadius")
