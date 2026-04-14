@@ -11,7 +11,7 @@
         {
             "name": "array",
             "uniqueId": 1,
-            "mesh3d": "Models/audioarray",
+            "mesh3d": "Models/array",
             "tags": [],
             "links": [],
             "watt": 0.0
@@ -724,9 +724,9 @@
             "watt": 0.0
         },
         {
-            "name": "litecQX30-cube",
+            "name": "litecQX30-dado",
             "uniqueId": 9,
-            "mesh3d": "Models/litecQX30-cube",
+            "mesh3d": "Models/litecQX30-dado",
             "tags": [
                 "trusscube"
             ],
@@ -903,47 +903,6 @@
                 }
             ],
             "watt": 450.0
-        },
-        {
-            "name": "cable 16A mono > powercontrue",
-            "uniqueId": 12,
-            "mesh3d": "",
-            "tags": [
-                "cable"
-            ],
-            "links": [
-                {
-                    "posdir": [
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        1.0,
-                        0.0,
-                        0.0
-                    ],
-                    "displayradius": 0.05000000074505806,
-                    "type": 3,
-                    "cylindricaltype": false,
-                    "length": 0.0
-                },
-                {
-                    "posdir": [
-                        0.0,
-                        0.0,
-                        1.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        1.0
-                    ],
-                    "displayradius": 0.05000000074505806,
-                    "type": 10,
-                    "cylindricaltype": false,
-                    "length": 0.0
-                }
-            ],
-            "watt": 0.0
         },
         {
             "name": "powerbox 63 penta > 12x 16 mono",
@@ -1912,9 +1871,9 @@
             "watt": 0.0
         },
         {
-            "name": "litecQX30-10cm",
+            "name": "litecQX30-107mm",
             "uniqueId": 19,
-            "mesh3d": "Models/litecQX30-10cm",
+            "mesh3d": "Models/litecQX30-107mm",
             "tags": [
                 "truss"
             ],
@@ -3457,9 +3416,9 @@
             "watt": 0.0
         },
         {
-            "name": "litecQX40-cube",
+            "name": "litecQX40-dado",
             "uniqueId": 34,
-            "mesh3d": "Models/litecQX40-cube",
+            "mesh3d": "Models/litecQX40-dado",
             "tags": [
                 "trusscube"
             ],
@@ -3740,47 +3699,6 @@
                     "type": 2,
                     "cylindricaltype": true,
                     "length": 0.20800000429153443
-                }
-            ],
-            "watt": 0.0
-        },
-        {
-            "name": "cable powercontrue > powercontrue",
-            "uniqueId": 37,
-            "mesh3d": "",
-            "tags": [
-                "cable"
-            ],
-            "links": [
-                {
-                    "posdir": [
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        1.0,
-                        0.0,
-                        0.0
-                    ],
-                    "displayradius": 0.05000000074505806,
-                    "type": 9,
-                    "cylindricaltype": false,
-                    "length": 0.0
-                },
-                {
-                    "posdir": [
-                        0.0,
-                        0.0,
-                        1.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        1.0
-                    ],
-                    "displayradius": 0.05000000074505806,
-                    "type": 10,
-                    "cylindricaltype": false,
-                    "length": 0.0
                 }
             ],
             "watt": 0.0

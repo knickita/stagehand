@@ -3,6 +3,8 @@ from pathlib import Path
 
 import bpy
 
+from .AddStagehandObject import apply_stagehand_catalogue_data
+
 
 CATALOGUE_BY_ID = {}
 REGISTERED_CLASSES = []
@@ -48,9 +50,7 @@ def _resolve_mesh_path(mesh_path):
 
 
 def _tag_imported_object(obj, asset_data):
-    obj.stagehand.is_stagehand_object = True
-    obj.stagehand.asset_id = asset_data["uniqueId"]
-    obj.stagehand.powerConsumption = float(asset_data.get("watt", 0.0))
+    apply_stagehand_catalogue_data(obj, asset_data)
 
 
 def _import_asset(asset_data):
