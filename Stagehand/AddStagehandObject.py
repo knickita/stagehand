@@ -1,6 +1,18 @@
+import math
+
 import bpy
+from mathutils import Matrix, Quaternion
 
 from .LinkTypes import get_compatible_link_types, link_type_label
+
+
+UNITY_TO_BLENDER_AXIS_SWAP = (
+    Matrix((
+        (1.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (0.0, 1.0, 0.0),
+    ))
+)
 
 
 class StagehandTagItem(bpy.types.PropertyGroup):
@@ -72,6 +84,27 @@ def _clear_collection(collection):
         collection.remove(len(collection) - 1)
 
 
+def _convert_link_rotation_for_blender(pos_dir):
+    unity_rotation = Quaternion(pos_dir[3:7])
+    unity_rotation_matrix = unity_rotation.to_matrix()
+    blender_rotation_matrix = (
+        UNITY_TO_BLENDER_AXIS_SWAP
+        @ unity_rotation_matrix
+        @ UNITY_TO_BLENDER_AXIS_SWAP.inverted()
+    )
+    blender_rotation = blender_rotation_matrix.to_quaternion()
+
+    return (
+        pos_dir[0],
+        pos_dir[1],
+        pos_dir[2],
+        blender_rotation.x,
+        blender_rotation.y,
+        blender_rotation.z,
+        blender_rotation.w,
+    )
+
+
 def apply_stagehand_catalogue_data(obj, asset_data=None):
     stagehand = obj.stagehand
     stagehand.is_stagehand_object = True
@@ -103,7 +136,7 @@ def apply_stagehand_catalogue_data(obj, asset_data=None):
 
         pos_dir = tuple(float(value) for value in link_data.get("posdir", []))
         if len(pos_dir) == 7:
-            link_item.posDir = pos_dir
+            link_item.posDir = _convert_link_rotation_for_blender(pos_dir)
 
 
 def prevent_stagehand_edit_mode():
