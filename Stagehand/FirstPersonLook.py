@@ -157,7 +157,7 @@ def register_keymap():
 
 def get_prefs():
     class Fallback:
-        speed = 3.0
+        speed = 10.0
         look_sens = 0.002
         use_alt = False
     return Fallback()

@@ -6,14 +6,18 @@ bl_info = {
 }
 
 # pylint: disable=fixme, import-error
+from . import AddStagehandObject
 from . import FirstPersonLook
 from . import LoadCatalogue
 from . import MenuConfiguration
+from . import OptionsPanel
 
 classes = (    
+    AddStagehandObject,
     FirstPersonLook,
     LoadCatalogue,
-    MenuConfiguration   
+    MenuConfiguration,
+    OptionsPanel,
 )
 
 

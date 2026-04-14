@@ -1,12 +1,16 @@
 import bpy
 
+
 # --- Menu ---
 class Stagehand_MT_menu(bpy.types.Menu):
     bl_label = "Stagehand"
     bl_idname = "Stagehand_MT_menu"
 
     def draw(self, context):
-        self.layout.operator("wm.simple_hello")
+        self.layout.operator("mesh.stagehand_add_object", text="Add Stagehand Object")
+        self.layout.menu("STAGEHAND_MT_catalogue_menu", text="Import From Catalogue")
+        self.layout.separator()
+        self.layout.operator("stagehand.reload_catalogue", text="Reload Catalogue")
 
 # --- Draw function to add menu to 3D View header ---
 def draw_custom_menu(self, context):
