@@ -3,6 +3,9 @@ import bpy
 from .AddStagehandObject import ensure_stagehand_uid
 
 
+CONNECTION_MAINTENANCE_INTERVAL = 0.5
+
+
 def is_stagehand_object(obj):
     return (
         obj is not None
@@ -115,9 +118,48 @@ def iter_connected_links(obj):
             yield index, other_obj, other_link_index, other_link
 
 
+def prune_stale_connections():
+    live_uids = {obj.stagehand.uid for obj in iter_stagehand_objects() if obj.stagehand.uid}
+
+    for obj in iter_stagehand_objects():
+        for link in obj.stagehand.links:
+            if not link.connectedObjectUid:
+                continue
+
+            if link.connectedObjectUid not in live_uids:
+                link.connectedObjectUid = ""
+                link.connectedLinkIndex = -1
+                continue
+
+            other_obj = find_object_by_uid(link.connectedObjectUid)
+            if other_obj is None:
+                link.connectedObjectUid = ""
+                link.connectedLinkIndex = -1
+                continue
+
+            other_link = get_link(other_obj, link.connectedLinkIndex)
+            if other_link is None or other_link.connectedObjectUid != obj.stagehand.uid:
+                link.connectedObjectUid = ""
+                link.connectedLinkIndex = -1
+
+
+def connection_maintenance_timer():
+    try:
+        prune_stale_connections()
+    except RuntimeError:
+        pass
+
+    return CONNECTION_MAINTENANCE_INTERVAL
+
+
 def register():
-    pass
+    if not bpy.app.timers.is_registered(connection_maintenance_timer):
+        bpy.app.timers.register(
+            connection_maintenance_timer,
+            first_interval=CONNECTION_MAINTENANCE_INTERVAL,
+        )
 
 
 def unregister():
-    pass
+    if bpy.app.timers.is_registered(connection_maintenance_timer):
+        bpy.app.timers.unregister(connection_maintenance_timer)
