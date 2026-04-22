@@ -11,7 +11,6 @@ _draw_handler = None
 
 SPHERE_SEGMENTS = 24
 SPHERE_COLOR = (1.0, 0.1, 0.1, 1.0)
-DIRECTION_COLOR = (0.0, 1.0, 1.0, 1.0)
 
 
 def _is_stagehand_object(obj):
@@ -91,13 +90,9 @@ def _cylinder_segments(center, rotation, radius, length):
 
 def _build_link_segments(obj):
     shape_segments = []
-    direction_segments = []
     for link in obj.stagehand.links:
         radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
         center, rotation = _link_transform(obj, link)
-        forward = rotation @ Vector((0, 1, 0))
-        direction_length = max(link.length, radius * 2.0, 0.15)
-        direction_segments.extend((center, center + (forward * direction_length)))
 
         if link.cylindricalType:
             length = link.length if link.length > 0.0 else radius
@@ -110,7 +105,7 @@ def _build_link_segments(obj):
         shape_segments.extend(_circle_points(center, radius, axis_x, axis_y))
         shape_segments.extend(_circle_points(center, radius, axis_y, axis_z))
         shape_segments.extend(_circle_points(center, radius, axis_x, axis_z))
-    return shape_segments, direction_segments
+    return shape_segments
 
 
 def _draw_link_mode():
@@ -119,8 +114,8 @@ def _draw_link_mode():
     if obj is None:
         return
 
-    shape_segments, direction_segments = _build_link_segments(obj)
-    if not shape_segments and not direction_segments:
+    shape_segments = _build_link_segments(obj)
+    if not shape_segments:
         return
 
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
@@ -131,12 +126,6 @@ def _draw_link_mode():
         shader.bind()
         shader.uniform_float("color", SPHERE_COLOR)
         shape_batch.draw(shader)
-
-    if direction_segments:
-        direction_batch = batch_for_shader(shader, "LINES", {"pos": direction_segments})
-        shader.bind()
-        shader.uniform_float("color", DIRECTION_COLOR)
-        direction_batch.draw(shader)
 
     gpu.state.blend_set("NONE")
 
