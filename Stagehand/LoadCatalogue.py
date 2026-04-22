@@ -83,6 +83,8 @@ def _import_asset(asset_data):
     if len(imported_objects) == 1:
         imported_objects[0].name = asset_data["name"]
 
+    return imported_objects
+
 
 def _build_operator(asset_data):
     asset_id = asset_data["uniqueId"]
