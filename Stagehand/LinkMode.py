@@ -11,6 +11,7 @@ _draw_handler = None
 
 SPHERE_SEGMENTS = 24
 SPHERE_COLOR = (1.0, 0.1, 0.1, 1.0)
+DIRECTION_COLOR = (0.0, 1.0, 1.0, 1.0)
 
 
 def _is_stagehand_object(obj):
@@ -56,7 +57,12 @@ def _circle_points(center, radius, axis_a, axis_b):
 
 def _link_transform(obj, link):
     local_position = Vector(link.posDir[:3])
-    local_rotation = Quaternion(link.posDir[3:7])
+    local_rotation = Quaternion((
+        link.posDir[6],
+        link.posDir[3],
+        link.posDir[4],
+        link.posDir[5],
+    ))
     center = obj.matrix_world.to_translation() + (obj.matrix_world.to_quaternion() @ local_position)
     rotation = obj.matrix_world.to_quaternion() @ local_rotation
     return center, rotation
@@ -68,13 +74,13 @@ def _cylinder_segments(center, rotation, radius, length):
     axis_z = rotation @ Vector((0, 0, 1))
 
     base_center = center
-    top_center = center + (axis_z * length)
+    top_center = center + (axis_y * length)
 
     segments = []
-    segments.extend(_circle_points(base_center, radius, axis_x, axis_y))
-    segments.extend(_circle_points(top_center, radius, axis_x, axis_y))
+    segments.extend(_circle_points(base_center, radius, axis_x, axis_z))
+    segments.extend(_circle_points(top_center, radius, axis_x, axis_z))
 
-    for direction in (axis_x, -axis_x, axis_y, -axis_y):
+    for direction in (axis_x, -axis_x, axis_z, -axis_z):
         segments.extend((
             base_center + (direction * radius),
             top_center + (direction * radius),
@@ -84,23 +90,27 @@ def _cylinder_segments(center, rotation, radius, length):
 
 
 def _build_link_segments(obj):
-    segments = []
+    shape_segments = []
+    direction_segments = []
     for link in obj.stagehand.links:
         radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
         center, rotation = _link_transform(obj, link)
+        forward = rotation @ Vector((0, 1, 0))
+        direction_length = max(link.length, radius * 2.0, 0.15)
+        direction_segments.extend((center, center + (forward * direction_length)))
 
         if link.cylindricalType:
             length = link.length if link.length > 0.0 else radius
-            segments.extend(_cylinder_segments(center, rotation, radius, length))
+            shape_segments.extend(_cylinder_segments(center, rotation, radius, length))
             continue
 
         axis_x = rotation @ Vector((1, 0, 0))
         axis_y = rotation @ Vector((0, 1, 0))
         axis_z = rotation @ Vector((0, 0, 1))
-        segments.extend(_circle_points(center, radius, axis_x, axis_y))
-        segments.extend(_circle_points(center, radius, axis_y, axis_z))
-        segments.extend(_circle_points(center, radius, axis_x, axis_z))
-    return segments
+        shape_segments.extend(_circle_points(center, radius, axis_x, axis_y))
+        shape_segments.extend(_circle_points(center, radius, axis_y, axis_z))
+        shape_segments.extend(_circle_points(center, radius, axis_x, axis_z))
+    return shape_segments, direction_segments
 
 
 def _draw_link_mode():
@@ -109,17 +119,25 @@ def _draw_link_mode():
     if obj is None:
         return
 
-    segments = _build_link_segments(obj)
-    if not segments:
+    shape_segments, direction_segments = _build_link_segments(obj)
+    if not shape_segments and not direction_segments:
         return
 
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-    batch = batch_for_shader(shader, "LINES", {"pos": segments})
-
     gpu.state.blend_set("ALPHA")
-    shader.bind()
-    shader.uniform_float("color", SPHERE_COLOR)
-    batch.draw(shader)
+
+    if shape_segments:
+        shape_batch = batch_for_shader(shader, "LINES", {"pos": shape_segments})
+        shader.bind()
+        shader.uniform_float("color", SPHERE_COLOR)
+        shape_batch.draw(shader)
+
+    if direction_segments:
+        direction_batch = batch_for_shader(shader, "LINES", {"pos": direction_segments})
+        shader.bind()
+        shader.uniform_float("color", DIRECTION_COLOR)
+        direction_batch.draw(shader)
+
     gpu.state.blend_set("NONE")
 
 
