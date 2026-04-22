@@ -8,6 +8,7 @@ from bpy_extras import view3d_utils
 from mathutils import Matrix
 from mathutils import Quaternion, Vector
 
+from . import Connections
 from .LinkTypes import are_link_types_compatible
 from . import LoadCatalogue
 
@@ -61,6 +62,17 @@ def _circle_points(center, radius, axis_a, axis_b):
     return points
 
 
+def _filled_circle_triangles(center, radius, axis_a, axis_b):
+    triangles = []
+    for index in range(SPHERE_SEGMENTS):
+        angle_a = (2.0 * math.pi * index) / SPHERE_SEGMENTS
+        angle_b = (2.0 * math.pi * (index + 1)) / SPHERE_SEGMENTS
+        point_a = center + radius * ((math.cos(angle_a) * axis_a) + (math.sin(angle_a) * axis_b))
+        point_b = center + radius * ((math.cos(angle_b) * axis_a) + (math.sin(angle_b) * axis_b))
+        triangles.extend((center, point_b, point_a))
+    return triangles
+
+
 def _link_transform(obj, link):
     local_position = Vector(link.posDir[:3])
     local_rotation = Quaternion((
@@ -100,27 +112,31 @@ def _cylinder_segments(center, rotation, radius, length):
 
 
 def _build_link_segments(obj):
-    shape_segments = []
+    line_segments = []
+    filled_triangles = []
     for link in obj.stagehand.links:
+        if link.connectedObjectUid:
+            continue
+
         radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
         center, rotation = _link_transform(obj, link)
 
         if link.cylindricalType:
             length = link.length if link.length > 0.0 else radius
-            shape_segments.extend(_cylinder_segments(center, rotation, radius, length))
+            line_segments.extend(_cylinder_segments(center, rotation, radius, length))
             continue
 
         axis_x = rotation @ Vector((1, 0, 0))
-        axis_y = rotation @ Vector((0, 1, 0))
         axis_z = rotation @ Vector((0, 0, 1))
-        shape_segments.extend(_circle_points(center, radius, axis_x, axis_y))
-        shape_segments.extend(_circle_points(center, radius, axis_y, axis_z))
-        shape_segments.extend(_circle_points(center, radius, axis_x, axis_z))
-    return shape_segments
+        filled_triangles.extend(_filled_circle_triangles(center, radius, axis_x, axis_z))
+    return line_segments, filled_triangles
 
 
 def _iter_clickable_links(obj):
     for index, link in enumerate(obj.stagehand.links):
+        if link.connectedObjectUid:
+            continue
+
         if link.cylindricalType:
             continue
 
@@ -136,9 +152,9 @@ def _pick_clicked_link(context, event):
 
     mouse_position = Vector((event.mouse_region_x, event.mouse_region_y))
     best_hit = None
-    best_distance = CLICK_PIXEL_RADIUS
+    best_distance = None
 
-    for link_index, link, center, _rotation, _radius in _iter_clickable_links(obj):
+    for link_index, link, center, rotation, radius in _iter_clickable_links(obj):
         screen_position = view3d_utils.location_3d_to_region_2d(
             context.region,
             context.region_data,
@@ -147,8 +163,18 @@ def _pick_clicked_link(context, event):
         if screen_position is None:
             continue
 
+        edge_world_position = center + (rotation @ Vector((1, 0, 0)) * radius)
+        edge_screen_position = view3d_utils.location_3d_to_region_2d(
+            context.region,
+            context.region_data,
+            edge_world_position,
+        )
+        pixel_radius = CLICK_PIXEL_RADIUS
+        if edge_screen_position is not None:
+            pixel_radius = max(CLICK_PIXEL_RADIUS, (edge_screen_position - screen_position).length)
+
         distance = (screen_position - mouse_position).length
-        if distance <= best_distance:
+        if distance <= pixel_radius and (best_distance is None or distance <= best_distance):
             best_hit = (obj, link_index, link, center)
             best_distance = distance
 
@@ -213,19 +239,27 @@ def _draw_link_mode():
     if obj is None:
         return
 
-    shape_segments = _build_link_segments(obj)
-    if not shape_segments:
+    line_segments, filled_triangles = _build_link_segments(obj)
+    if not line_segments and not filled_triangles:
         return
 
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     gpu.state.blend_set("ALPHA")
+    gpu.state.face_culling_set("BACK")
 
-    if shape_segments:
-        shape_batch = batch_for_shader(shader, "LINES", {"pos": shape_segments})
+    if filled_triangles:
+        circle_batch = batch_for_shader(shader, "TRIS", {"pos": filled_triangles})
+        shader.bind()
+        shader.uniform_float("color", SPHERE_COLOR)
+        circle_batch.draw(shader)
+
+    if line_segments:
+        shape_batch = batch_for_shader(shader, "LINES", {"pos": line_segments})
         shader.bind()
         shader.uniform_float("color", SPHERE_COLOR)
         shape_batch.draw(shader)
 
+    gpu.state.face_culling_set("NONE")
     gpu.state.blend_set("NONE")
 
 
@@ -306,14 +340,15 @@ class STAGEHAND_OT_add_from_link_popup(bpy.types.Operator):
         imported_link = _find_imported_compatible_link(imported_objects, target_link.type)
 
         if imported_link is not None:
-            _imported_object, _imported_link_index, _imported_link, imported_center = imported_link
-            imported_center, imported_rotation = _link_transform(_imported_object, _imported_link)
+            imported_object, imported_link_index, _imported_link, imported_center = imported_link
+            imported_center, imported_rotation = _link_transform(imported_object, _imported_link)
             target_forward = _link_forward(target_rotation)
             imported_forward = _link_forward(imported_rotation)
             rotation_delta = imported_forward.rotation_difference(-target_forward)
             _rotate_objects_around_pivot(imported_objects, rotation_delta, imported_center)
-            imported_center, _imported_rotation = _link_transform(_imported_object, _imported_link)
+            imported_center, _imported_rotation = _link_transform(imported_object, _imported_link)
             _translate_objects(imported_objects, target_center - imported_center)
+            Connections.connect_links(target_object, target_link_index, imported_object, imported_link_index)
 
         return {'FINISHED'}
 

@@ -1,4 +1,5 @@
 import bpy
+import uuid
 
 from .LinkTypes import get_compatible_link_types, link_type_label
 
@@ -37,6 +38,18 @@ class StagehandLinkItem(bpy.types.PropertyGroup):
         default=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
     )
 
+    connectedObjectUid: bpy.props.StringProperty(
+        name="Connected Object UID",
+        default="",
+        options={'HIDDEN'},
+    )
+
+    connectedLinkIndex: bpy.props.IntProperty(
+        name="Connected Link Index",
+        default=-1,
+        options={'HIDDEN'},
+    )
+
 
 class StagehandObject(bpy.types.PropertyGroup):
     is_stagehand_object: bpy.props.BoolProperty(
@@ -48,6 +61,12 @@ class StagehandObject(bpy.types.PropertyGroup):
     asset_id: bpy.props.IntProperty(
         name="Asset ID",
         default=-1,
+        options={'HIDDEN'},
+    )
+
+    uid: bpy.props.StringProperty(
+        name="UID",
+        default="",
         options={'HIDDEN'},
     )
 
@@ -72,9 +91,16 @@ def _clear_collection(collection):
         collection.remove(len(collection) - 1)
 
 
+def ensure_stagehand_uid(obj):
+    if not obj.stagehand.uid:
+        obj.stagehand.uid = str(uuid.uuid4())
+    return obj.stagehand.uid
+
+
 def apply_stagehand_catalogue_data(obj, asset_data=None):
     stagehand = obj.stagehand
     stagehand.is_stagehand_object = True
+    ensure_stagehand_uid(obj)
 
     if asset_data is None:
         stagehand.asset_id = -1
@@ -104,6 +130,8 @@ def apply_stagehand_catalogue_data(obj, asset_data=None):
         pos_dir = tuple(float(value) for value in link_data.get("posdir", []))
         if len(pos_dir) == 7:
             link_item.posDir = pos_dir
+        link_item.connectedObjectUid = ""
+        link_item.connectedLinkIndex = -1
 
 
 def prevent_stagehand_edit_mode():
@@ -159,6 +187,9 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
         if stagehand.asset_id >= 0:
             readonly_column.label(text=f"Asset ID: {stagehand.asset_id}")
 
+        if stagehand.uid:
+            readonly_column.label(text=f"UID: {stagehand.uid}")
+
         if stagehand.catalogueName:
             readonly_column.prop(stagehand, "catalogueName")
 
@@ -185,6 +216,9 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
                 item_box.prop(link_item, "displayRadius")
                 item_box.prop(link_item, "length")
                 item_box.prop(link_item, "posDir")
+                if link_item.connectedObjectUid:
+                    item_box.label(text=f"Connected UID: {link_item.connectedObjectUid}")
+                    item_box.label(text=f"Connected Link: {link_item.connectedLinkIndex}")
 
 
 classes = (

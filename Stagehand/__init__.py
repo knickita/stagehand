@@ -7,6 +7,7 @@ bl_info = {
 
 # pylint: disable=fixme, import-error
 from . import AddStagehandObject
+from . import Connections
 from . import FirstPersonLook
 from . import LinkMode
 from . import LoadCatalogue
@@ -15,6 +16,7 @@ from . import OptionsPanel
 
 classes = (    
     AddStagehandObject,
+    Connections,
     FirstPersonLook,
     LinkMode,
     LoadCatalogue,
