@@ -13,6 +13,7 @@ from . import LinkMode
 from . import LoadCatalogue
 from . import MenuConfiguration
 from . import OptionsPanel
+from . import SnapLogics
 
 classes = (    
     AddStagehandObject,
@@ -22,6 +23,7 @@ classes = (
     LoadCatalogue,
     MenuConfiguration,
     OptionsPanel,
+    SnapLogics,
 )
 
 

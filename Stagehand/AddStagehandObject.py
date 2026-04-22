@@ -4,6 +4,9 @@ import uuid
 from .LinkTypes import get_compatible_link_types, link_type_label
 
 
+addon_keymaps = []
+
+
 class StagehandTagItem(bpy.types.PropertyGroup):
     value: bpy.props.StringProperty(
         name="Tag",
@@ -12,6 +15,12 @@ class StagehandTagItem(bpy.types.PropertyGroup):
 
 
 class StagehandLinkItem(bpy.types.PropertyGroup):
+    uid: bpy.props.StringProperty(
+        name="UID",
+        default="",
+        options={'HIDDEN'},
+    )
+
     type: bpy.props.IntProperty(
         name="Type",
         default=0,
@@ -40,6 +49,12 @@ class StagehandLinkItem(bpy.types.PropertyGroup):
 
     connectedObjectUid: bpy.props.StringProperty(
         name="Connected Object UID",
+        default="",
+        options={'HIDDEN'},
+    )
+
+    connectedLinkUid: bpy.props.StringProperty(
+        name="Connected Link UID",
         default="",
         options={'HIDDEN'},
     )
@@ -97,6 +112,12 @@ def ensure_stagehand_uid(obj):
     return obj.stagehand.uid
 
 
+def ensure_stagehand_link_uid(link):
+    if not link.uid:
+        link.uid = str(uuid.uuid4())
+    return link.uid
+
+
 def apply_stagehand_catalogue_data(obj, asset_data=None):
     stagehand = obj.stagehand
     stagehand.is_stagehand_object = True
@@ -122,6 +143,7 @@ def apply_stagehand_catalogue_data(obj, asset_data=None):
     _clear_collection(stagehand.links)
     for link_data in asset_data.get("links", []):
         link_item = stagehand.links.add()
+        ensure_stagehand_link_uid(link_item)
         link_item.type = int(link_data.get("type", 0))
         link_item.cylindricalType = bool(link_data.get("cylindricaltype", False))
         link_item.displayRadius = float(link_data.get("displayradius", 0.0))
@@ -131,6 +153,7 @@ def apply_stagehand_catalogue_data(obj, asset_data=None):
         if len(pos_dir) == 7:
             link_item.posDir = pos_dir
         link_item.connectedObjectUid = ""
+        link_item.connectedLinkUid = ""
         link_item.connectedLinkIndex = -1
 
 
@@ -146,6 +169,14 @@ def prevent_stagehand_edit_mode():
             pass
 
     return 0.2
+
+
+def _selected_stagehand_objects(context):
+    return [
+        obj
+        for obj in context.selected_objects
+        if getattr(obj, "stagehand", None) is not None and obj.stagehand.is_stagehand_object
+    ]
 
 
 class STAGEHAND_OT_add_object(bpy.types.Operator):
@@ -164,6 +195,21 @@ class STAGEHAND_OT_add_object(bpy.types.Operator):
         obj.name = "Stagehand Object"
         apply_stagehand_catalogue_data(obj)
         return {'FINISHED'}
+
+
+class STAGEHAND_OT_scale_guard(bpy.types.Operator):
+    bl_idname = "stagehand.scale_guard"
+    bl_label = "Stagehand Scale Guard"
+    bl_description = "Prevent scaling Stagehand objects"
+
+    def invoke(self, context, event):
+        del event
+
+        if _selected_stagehand_objects(context):
+            self.report({'WARNING'}, "Scaling is disabled for Stagehand objects")
+            return {'FINISHED'}
+
+        return bpy.ops.transform.resize('INVOKE_DEFAULT')
 
 
 class STAGEHAND_PT_object_properties(bpy.types.Panel):
@@ -211,6 +257,8 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
                 compatible_types = get_compatible_link_types(link_item.type)
                 compatible_label = ", ".join(link_type_label(link_type) for link_type in compatible_types)
                 item_box.label(text=f"Compatible With: {compatible_label or 'None'}")
+                if link_item.uid:
+                    item_box.label(text=f"Link UID: {link_item.uid}")
                 item_box.prop(link_item, "type")
                 item_box.prop(link_item, "cylindricalType")
                 item_box.prop(link_item, "displayRadius")
@@ -218,7 +266,8 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
                 item_box.prop(link_item, "posDir")
                 if link_item.connectedObjectUid:
                     item_box.label(text=f"Connected UID: {link_item.connectedObjectUid}")
-                    item_box.label(text=f"Connected Link: {link_item.connectedLinkIndex}")
+                    if link_item.connectedLinkUid:
+                        item_box.label(text=f"Connected Link UID: {link_item.connectedLinkUid}")
 
 
 classes = (
@@ -226,8 +275,30 @@ classes = (
     StagehandLinkItem,
     StagehandObject,
     STAGEHAND_OT_add_object,
+    STAGEHAND_OT_scale_guard,
     STAGEHAND_PT_object_properties,
 )
+
+
+def register_keymap():
+    wm = bpy.context.window_manager
+    kc = wm.keyconfigs.addon
+    if not kc:
+        return
+
+    km = kc.keymaps.new(name='Object Mode', space_type='EMPTY')
+    kmi = km.keymap_items.new(
+        STAGEHAND_OT_scale_guard.bl_idname,
+        type='S',
+        value='PRESS',
+    )
+    addon_keymaps.append((km, kmi))
+
+
+def unregister_keymap():
+    for km, kmi in addon_keymaps:
+        km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
 
 
 def register():
@@ -235,6 +306,7 @@ def register():
         bpy.utils.register_class(cls)
 
     bpy.types.Object.stagehand = bpy.props.PointerProperty(type=StagehandObject)
+    register_keymap()
     if not bpy.app.timers.is_registered(prevent_stagehand_edit_mode):
         bpy.app.timers.register(prevent_stagehand_edit_mode, first_interval=0.2)
 
@@ -243,6 +315,7 @@ def unregister():
     if bpy.app.timers.is_registered(prevent_stagehand_edit_mode):
         bpy.app.timers.unregister(prevent_stagehand_edit_mode)
 
+    unregister_keymap()
     del bpy.types.Object.stagehand
 
     for cls in reversed(classes):

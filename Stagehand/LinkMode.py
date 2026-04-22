@@ -609,15 +609,21 @@ class STAGEHAND_OT_pick_link_for_add(bpy.types.Operator):
         if context.area is None or context.area.type != 'VIEW_3D':
             return {'PASS_THROUGH'}
 
+        wm = context.window_manager
+        link_mode_active = getattr(wm, "stagehand_link_mode_enabled", False)
+        selecting_mode_active = getattr(wm, "stagehand_selecting_link_mode_enabled", False)
+        if not link_mode_active and not selecting_mode_active:
+            return {'PASS_THROUGH'}
+
         target_object, target_link_index, pending_anchor_object, _selected_link_index = _get_selecting_mode_target(context)
         if target_object is not None and pending_anchor_object is not None:
             if target_link_index < 0 or target_link_index >= len(target_object.stagehand.links):
-                return {'CANCELLED'}
+                return {'FINISHED'}
 
             target_link = target_object.stagehand.links[target_link_index]
             hit = _pick_clicked_compatible_link(context, event, pending_anchor_object, target_link.type)
             if hit is None:
-                return {'PASS_THROUGH'}
+                return {'FINISHED'}
 
             imported_object, imported_link_index, imported_link, imported_center = hit
             _apply_preview_alignment(context, imported_object, imported_link_index)
@@ -629,7 +635,7 @@ class STAGEHAND_OT_pick_link_for_add(bpy.types.Operator):
 
         hit = _pick_clicked_link(context, event)
         if hit is None:
-            return {'PASS_THROUGH'}
+            return {'FINISHED'}
 
         obj, link_index, link, _center = hit
         compatible_items = _compatible_catalogue_items(link.type)
@@ -637,7 +643,6 @@ class STAGEHAND_OT_pick_link_for_add(bpy.types.Operator):
             self.report({'WARNING'}, "No compatible Stagehand objects found for this link")
             return {'CANCELLED'}
 
-        wm = context.window_manager
         wm.stagehand_clicked_object_name = obj.name_full
         wm.stagehand_clicked_link_index = link_index
         wm.stagehand_clicked_link_type = int(link.type)
