@@ -1108,12 +1108,12 @@ def _page_content_stream(rendered_views, title, image_object_numbers):
         draw_y = y + (slot_height - 18.0 - draw_height) * 0.5
 
         content.extend([
-            f"BT /F1 10 Tf {x:.2f} {y + slot_height - 10.0:.2f} Td ({_pdf_escape(label)}) Tj ET",
-            f"{x:.2f} {y:.2f} {slot_width:.2f} {slot_height:.2f} re S",
             "q",
             f"{draw_width:.2f} 0 0 {draw_height:.2f} {draw_x:.2f} {draw_y:.2f} cm",
             f"/Im{index + 1} Do",
             "Q",
+            f"{x:.2f} {y:.2f} {slot_width:.2f} {slot_height:.2f} re S",
+            f"BT /F1 10 Tf {x:.2f} {y + slot_height - 10.0:.2f} Td ({_pdf_escape(label)}) Tj ET",
         ])
 
     content.append("Q")
