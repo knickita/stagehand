@@ -13,6 +13,7 @@ from . import LinkMode
 from . import LoadCatalogue
 from . import MenuConfiguration
 from . import OptionsPanel
+from . import PdfDrawings
 from . import SnapLogics
 
 classes = (    
@@ -21,6 +22,7 @@ classes = (
     FirstPersonLook,
     LinkMode,
     LoadCatalogue,
+    PdfDrawings,
     MenuConfiguration,
     OptionsPanel,
     SnapLogics,
