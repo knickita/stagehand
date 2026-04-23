@@ -17,9 +17,27 @@ TITLE_HEIGHT = 32.0
 RENDER_WIDTH = 1200
 RENDER_HEIGHT = 850
 CAMERA_FIT_MARGIN = 1.65
+DIMENSION_FIT_MARGIN = 1.28
 WHITE = (1.0, 1.0, 1.0)
 BLACK = (0.0, 0.0, 0.0)
 OPAQUE_WHITE = (1.0, 1.0, 1.0, 1.0)
+
+
+def _project_name():
+    blend_path = bpy.data.filepath
+    if blend_path:
+        return Path(blend_path).stem
+
+    return "Stagehand PDF Drawings"
+
+
+def _pdf_filename_for_project(project_name):
+    sanitized = "".join(
+        character if character.isalnum() or character in (" ", "-", "_") else "_"
+        for character in project_name
+    ).strip()
+    sanitized = "_".join(sanitized.split())
+    return f"{sanitized or 'stagehand_pdf_drawings'}.pdf"
 
 
 def _visible_mesh_objects(context):
@@ -28,6 +46,14 @@ def _visible_mesh_objects(context):
         for obj in context.scene.objects
         if obj.type == 'MESH' and obj.visible_get()
     ]
+
+
+def _is_truss_object(obj):
+    stagehand = getattr(obj, "stagehand", None)
+    if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
+        return False
+
+    return any("truss" in tag.value.lower() for tag in stagehand.tags)
 
 
 def _object_bounds(objects):
@@ -49,6 +75,23 @@ def _object_bounds(objects):
     return center, dimensions
 
 
+def _world_box(objects):
+    min_corner = Vector((math.inf, math.inf, math.inf))
+    max_corner = Vector((-math.inf, -math.inf, -math.inf))
+
+    for obj in objects:
+        for corner in obj.bound_box:
+            world_corner = obj.matrix_world @ Vector(corner)
+            min_corner.x = min(min_corner.x, world_corner.x)
+            min_corner.y = min(min_corner.y, world_corner.y)
+            min_corner.z = min(min_corner.z, world_corner.z)
+            max_corner.x = max(max_corner.x, world_corner.x)
+            max_corner.y = max(max_corner.y, world_corner.y)
+            max_corner.z = max(max_corner.z, world_corner.z)
+
+    return min_corner, max_corner
+
+
 def _projected_bounds(objects, camera_rotation):
     min_corner = Vector((math.inf, math.inf, math.inf))
     max_corner = Vector((-math.inf, -math.inf, -math.inf))
@@ -67,6 +110,24 @@ def _projected_bounds(objects, camera_rotation):
     return max_corner - min_corner
 
 
+def _projected_box(objects, camera_rotation):
+    min_corner = Vector((math.inf, math.inf, math.inf))
+    max_corner = Vector((-math.inf, -math.inf, -math.inf))
+    world_to_camera_rotation = camera_rotation.inverted()
+
+    for obj in objects:
+        for corner in obj.bound_box:
+            projected = world_to_camera_rotation @ (obj.matrix_world @ Vector(corner))
+            min_corner.x = min(min_corner.x, projected.x)
+            min_corner.y = min(min_corner.y, projected.y)
+            min_corner.z = min(min_corner.z, projected.z)
+            max_corner.x = max(max_corner.x, projected.x)
+            max_corner.y = max(max_corner.y, projected.y)
+            max_corner.z = max(max_corner.z, projected.z)
+
+    return min_corner, max_corner
+
+
 def _set_camera_view(scene, camera, center, objects, view_direction):
     direction = view_direction.normalized()
     camera_rotation = direction.to_track_quat('-Z', 'Y').to_euler()
@@ -82,6 +143,127 @@ def _set_camera_view(scene, camera, center, objects, view_direction):
     camera.rotation_euler = camera_rotation
     camera.data.type = 'ORTHO'
     camera.data.ortho_scale = max(required_width_scale, required_height_scale, 0.5) * CAMERA_FIT_MARGIN
+
+
+def _expand_camera_for_dimensions(scene, camera):
+    camera.data.ortho_scale *= DIMENSION_FIT_MARGIN
+
+
+def _camera_point(camera_rotation, center, point):
+    return camera_rotation.inverted() @ (point - center)
+
+
+def _view_dimension_data(scene, camera, center, truss_objects, view_name):
+    if not truss_objects:
+        return None
+
+    camera_rotation = camera.rotation_euler.to_matrix()
+    min_corner, max_corner = _world_box(truss_objects)
+    frame_height = camera.data.ortho_scale
+    frame_width = frame_height * (scene.render.resolution_x / max(scene.render.resolution_y, 1))
+    axes_by_view = {
+        "Front": ("X", "Z"),
+        "Left": ("Y", "Z"),
+        "Top": ("X", "Y"),
+        "Iso": ("X", "Z"),
+    }
+
+    def point_for(axis_values):
+        return Vector((
+            axis_values.get("X", min_corner.x),
+            axis_values.get("Y", min_corner.y),
+            axis_values.get("Z", min_corner.z),
+        ))
+
+    def axis_dimension(axis):
+        if axis == "X":
+            p1 = point_for({"X": min_corner.x})
+            p2 = point_for({"X": max_corner.x})
+            value = max_corner.x - min_corner.x
+        elif axis == "Y":
+            p1 = point_for({"Y": min_corner.y, "X": max_corner.x})
+            p2 = point_for({"Y": max_corner.y, "X": max_corner.x})
+            value = max_corner.y - min_corner.y
+        else:
+            p1 = point_for({"Z": min_corner.z, "X": max_corner.x, "Y": max_corner.y})
+            p2 = point_for({"Z": max_corner.z, "X": max_corner.x, "Y": max_corner.y})
+            value = max_corner.z - min_corner.z
+
+        return {
+            "p1": _camera_point(camera_rotation, center, p1),
+            "p2": _camera_point(camera_rotation, center, p2),
+            "value": value,
+        }
+
+    projected_min, projected_max = _projected_box(truss_objects, camera_rotation)
+    projected_center = camera_rotation.inverted() @ center
+
+    def projected_dimension(axis, p1, p2):
+        if axis == "X":
+            value = max_corner.x - min_corner.x
+        elif axis == "Y":
+            value = max_corner.y - min_corner.y
+        else:
+            value = max_corner.z - min_corner.z
+
+        return {
+            "p1": p1 - projected_center,
+            "p2": p2 - projected_center,
+            "value": value,
+        }
+
+    if view_name in {"Front", "Left", "Top"}:
+        if view_name == "Front":
+            axes = (
+                projected_dimension(
+                    "X",
+                    Vector((projected_min.x, projected_min.y, 0.0)),
+                    Vector((projected_max.x, projected_min.y, 0.0)),
+                ),
+                projected_dimension(
+                    "Z",
+                    Vector((projected_max.x, projected_min.y, 0.0)),
+                    Vector((projected_max.x, projected_max.y, 0.0)),
+                ),
+            )
+        elif view_name == "Left":
+            axes = (
+                projected_dimension(
+                    "Y",
+                    Vector((projected_min.x, projected_min.y, 0.0)),
+                    Vector((projected_max.x, projected_min.y, 0.0)),
+                ),
+                projected_dimension(
+                    "Z",
+                    Vector((projected_max.x, projected_min.y, 0.0)),
+                    Vector((projected_max.x, projected_max.y, 0.0)),
+                ),
+            )
+        else:
+            axes = (
+                projected_dimension(
+                    "X",
+                    Vector((projected_min.x, projected_min.y, 0.0)),
+                    Vector((projected_max.x, projected_min.y, 0.0)),
+                ),
+                projected_dimension(
+                    "Y",
+                    Vector((projected_max.x, projected_min.y, 0.0)),
+                    Vector((projected_max.x, projected_max.y, 0.0)),
+                ),
+            )
+    else:
+        axes = tuple(
+            axis_dimension(axis)
+            for axis in axes_by_view.get(view_name, ("X", "Z"))
+        )
+
+    return {
+        "frame_width": frame_width,
+        "frame_height": frame_height,
+        "axes": axes,
+        "center": _camera_point(camera_rotation, center, (min_corner + max_corner) * 0.5),
+    }
 
 
 def _capture_attributes(owner, attribute_names):
@@ -236,6 +418,23 @@ def _create_white_material():
     return material
 
 
+def _create_black_material():
+    material = bpy.data.materials.new("Stagehand PDF Black Dimension")
+    material.diffuse_color = (0.0, 0.0, 0.0, 1.0)
+    material.use_nodes = True
+
+    nodes = material.node_tree.nodes
+    nodes.clear()
+
+    output_node = nodes.new(type="ShaderNodeOutputMaterial")
+    emission_node = nodes.new(type="ShaderNodeEmission")
+    emission_node.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+    emission_node.inputs["Strength"].default_value = 1.0
+    material.node_tree.links.new(emission_node.outputs["Emission"], output_node.inputs["Surface"])
+
+    return material
+
+
 def _create_line_render_objects(scene, objects):
     white_material = _create_white_material()
     temporary_objects = []
@@ -278,7 +477,130 @@ def _remove_line_render_objects(temporary_objects, white_material, original_hide
         bpy.data.materials.remove(white_material)
 
 
-def _render_view(context, view_name, center, objects, temp_directory):
+def _camera_overlay_point(camera_rotation, center, point):
+    return center + (camera_rotation @ Vector((point.x, point.y, 0.0)))
+
+
+def _add_dimension_curve(scene, name, points, material, bevel_depth):
+    curve = bpy.data.curves.new(name, 'CURVE')
+    curve.dimensions = '3D'
+    curve.resolution_u = 1
+    curve.bevel_depth = bevel_depth
+    curve.bevel_resolution = 0
+
+    for start, end in points:
+        spline = curve.splines.new('POLY')
+        spline.points.add(1)
+        spline.points[0].co = (start.x, start.y, start.z, 1.0)
+        spline.points[1].co = (end.x, end.y, end.z, 1.0)
+
+    curve.materials.append(material)
+    obj = bpy.data.objects.new(name, curve)
+    scene.collection.objects.link(obj)
+    return obj
+
+
+def _add_dimension_text(scene, name, text, location, camera, material, size, direction_x, direction_y):
+    curve = bpy.data.curves.new(name, 'FONT')
+    curve.body = text
+    curve.align_x = 'CENTER'
+    curve.align_y = 'CENTER'
+    curve.size = size
+    curve.materials.append(material)
+
+    obj = bpy.data.objects.new(name, curve)
+    obj.location = location
+    obj.rotation_euler = camera.rotation_euler
+    if direction_x < 0.0:
+        direction_x = -direction_x
+        direction_y = -direction_y
+    obj.rotation_euler.rotate_axis('Z', math.atan2(direction_y, direction_x))
+    scene.collection.objects.link(obj)
+    return obj
+
+
+def _create_dimension_render_objects(scene, camera, center, dimension_data):
+    if dimension_data is None:
+        return [], None
+
+    camera_rotation = camera.rotation_euler.to_matrix()
+    material = _create_black_material()
+    temporary_objects = []
+    offset = camera.data.ortho_scale * 0.04
+    tick = camera.data.ortho_scale * 0.012
+    bevel_depth = camera.data.ortho_scale * 0.0008
+    text_size = camera.data.ortho_scale * 0.035
+    center_point = dimension_data["center"]
+
+    for index, axis_dimension in enumerate(dimension_data["axes"]):
+        if axis_dimension["value"] <= 0.01:
+            continue
+
+        p1 = axis_dimension["p1"].copy()
+        p2 = axis_dimension["p2"].copy()
+        direction_x, direction_y = _normalize_2d(p2.x - p1.x, p2.y - p1.y)
+        normal_x, normal_y = -direction_y, direction_x
+        mid = (p1 + p2) * 0.5
+
+        if ((mid.x - center_point.x) * normal_x) + ((mid.y - center_point.y) * normal_y) < 0.0:
+            normal_x = -normal_x
+            normal_y = -normal_y
+
+        normal = Vector((normal_x, normal_y, 0.0))
+        q1 = p1 + (normal * offset)
+        q2 = p2 + (normal * offset)
+        tick_vector = normal * tick
+        label_point = ((q1 + q2) * 0.5) + (normal * (text_size * 0.65))
+
+        world_segments = [
+            (_camera_overlay_point(camera_rotation, center, p1), _camera_overlay_point(camera_rotation, center, q1)),
+            (_camera_overlay_point(camera_rotation, center, p2), _camera_overlay_point(camera_rotation, center, q2)),
+            (_camera_overlay_point(camera_rotation, center, q1), _camera_overlay_point(camera_rotation, center, q2)),
+            (
+                _camera_overlay_point(camera_rotation, center, q1 - tick_vector),
+                _camera_overlay_point(camera_rotation, center, q1 + tick_vector),
+            ),
+            (
+                _camera_overlay_point(camera_rotation, center, q2 - tick_vector),
+                _camera_overlay_point(camera_rotation, center, q2 + tick_vector),
+            ),
+        ]
+
+        temporary_objects.append(_add_dimension_curve(
+            scene,
+            f"Stagehand PDF Dimension Lines {index}",
+            world_segments,
+            material,
+            bevel_depth,
+        ))
+        temporary_objects.append(_add_dimension_text(
+            scene,
+            f"Stagehand PDF Dimension Text {index}",
+            _format_dimension(axis_dimension["value"]),
+            _camera_overlay_point(camera_rotation, center, label_point),
+            camera,
+            material,
+            text_size,
+            direction_x,
+            direction_y,
+        ))
+
+    return temporary_objects, material
+
+
+def _remove_dimension_render_objects(temporary_objects, material):
+    for obj in temporary_objects:
+        data = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if data is not None and data.users == 0:
+            if isinstance(data, bpy.types.Curve):
+                bpy.data.curves.remove(data)
+
+    if material is not None and material.users == 0:
+        bpy.data.materials.remove(material)
+
+
+def _render_view(context, view_name, center, objects, truss_objects, temp_directory):
     scene = context.scene
     camera_data = bpy.data.cameras.new(f"Stagehand PDF {view_name} Camera Data")
     camera = bpy.data.objects.new(f"Stagehand PDF {view_name} Camera", camera_data)
@@ -292,9 +614,14 @@ def _render_view(context, view_name, center, objects, temp_directory):
     }[view_name]
 
     _set_camera_view(scene, camera, center, objects, view_direction)
+    _expand_camera_for_dimensions(scene, camera)
+    dimension_objects = []
+    dimension_material = None
 
     output_path = Path(temp_directory) / f"{view_name.lower()}.png"
     try:
+        dimension_data = _view_dimension_data(scene, camera, center, truss_objects, view_name)
+        dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, center, dimension_data)
         scene.camera = camera
         scene.render.filepath = str(output_path)
         bpy.ops.render.render(write_still=True)
@@ -305,6 +632,7 @@ def _render_view(context, view_name, center, objects, temp_directory):
         finally:
             bpy.data.images.remove(image)
     finally:
+        _remove_dimension_render_objects(dimension_objects, dimension_material)
         bpy.data.objects.remove(camera, do_unlink=True)
         bpy.data.cameras.remove(camera_data)
 
@@ -355,14 +683,28 @@ def _pdf_image_stream(image):
     return header + b"stream\n" + compressed + b"\nendstream"
 
 
-def _write_pdf(filepath, rendered_views):
+def _format_dimension(value):
+    centimeters = value * 100.0
+    if centimeters >= 100.0:
+        return f"{centimeters / 100.0:.2f} m"
+    return f"{centimeters:.0f} cm"
+
+
+def _normalize_2d(x, y):
+    length = math.hypot(x, y)
+    if length <= 0.0001:
+        return 0.0, 1.0
+    return x / length, y / length
+
+
+def _write_pdf(filepath, rendered_views, title):
     labels = ("Front", "Left", "Top", "Iso")
     slot_width = (PAGE_WIDTH - (PAGE_MARGIN * 2.0) - PAGE_GUTTER) / 2.0
     slot_height = (PAGE_HEIGHT - (PAGE_MARGIN * 2.0) - TITLE_HEIGHT - PAGE_GUTTER) / 2.0
 
     content = [
         "q",
-        "BT /F1 18 Tf 36 566 Td (Stagehand PDF Drawings) Tj ET",
+        f"BT /F1 18 Tf 36 566 Td ({_pdf_escape(title)}) Tj ET",
     ]
 
     for index, label in enumerate(labels):
@@ -447,7 +789,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         if not self.filepath:
             blend_path = bpy.data.filepath
             base_directory = Path(blend_path).parent if blend_path else Path.home()
-            self.filepath = str(base_directory / "stagehand_pdf_drawings.pdf")
+            self.filepath = str(base_directory / _pdf_filename_for_project(_project_name()))
 
         return ExportHelper.invoke(self, context, event)
 
@@ -456,6 +798,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         if not objects:
             self.report({'ERROR'}, "No visible mesh objects found for PDF drawings")
             return {'CANCELLED'}
+        truss_objects = [obj for obj in objects if _is_truss_object(obj)]
 
         center, dimensions = _object_bounds(objects)
         scene = context.scene
@@ -509,9 +852,16 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
             with tempfile.TemporaryDirectory() as temp_directory:
                 for view_name in ("Front", "Left", "Top", "Iso"):
-                    rendered_views[view_name] = _render_view(context, view_name, center, objects, temp_directory)
+                    rendered_views[view_name] = _render_view(
+                        context,
+                        view_name,
+                        center,
+                        objects,
+                        truss_objects,
+                        temp_directory,
+                    )
 
-            _write_pdf(self.filepath, rendered_views)
+            _write_pdf(self.filepath, rendered_views, _project_name())
         except Exception as exc:
             self.report({'ERROR'}, f"Unable to generate PDF drawings: {exc}")
             return {'CANCELLED'}
