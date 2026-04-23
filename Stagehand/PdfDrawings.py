@@ -8,6 +8,8 @@ import bpy
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Vector
 
+from . import Connections
+
 
 PAGE_WIDTH = 842.0
 PAGE_HEIGHT = 595.0
@@ -48,12 +50,29 @@ def _visible_mesh_objects(context):
     ]
 
 
+def _object_tags(obj):
+    stagehand = getattr(obj, "stagehand", None)
+    if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
+        return []
+
+    return [tag.value.lower() for tag in stagehand.tags]
+
+
+def _has_tag(obj, tag_name):
+    tag_name = tag_name.lower()
+    return any(tag_name in tag for tag in _object_tags(obj))
+
+
 def _is_truss_object(obj):
     stagehand = getattr(obj, "stagehand", None)
     if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
         return False
 
-    return any("truss" in tag.value.lower() for tag in stagehand.tags)
+    return _has_tag(obj, "truss")
+
+
+def _is_trusscube_object(obj):
+    return _has_tag(obj, "trusscube")
 
 
 def _object_bounds(objects):
@@ -90,6 +109,144 @@ def _world_box(objects):
             max_corner.z = max(max_corner.z, world_corner.z)
 
     return min_corner, max_corner
+
+
+def _segment_local_box(segment_objects, rotation=None):
+    if rotation is None:
+        primary_obj = max(
+            segment_objects,
+            key=lambda obj: max(obj.dimensions.x, obj.dimensions.y, obj.dimensions.z),
+        )
+        rotation = primary_obj.matrix_world.to_quaternion().to_matrix()
+    inverse_rotation = rotation.inverted()
+    origin = segment_objects[0].matrix_world.translation
+    min_corner = Vector((math.inf, math.inf, math.inf))
+    max_corner = Vector((-math.inf, -math.inf, -math.inf))
+
+    for obj in segment_objects:
+        for corner in obj.bound_box:
+            world_corner = obj.matrix_world @ Vector(corner)
+            local_corner = inverse_rotation @ (world_corner - origin)
+            min_corner.x = min(min_corner.x, local_corner.x)
+            min_corner.y = min(min_corner.y, local_corner.y)
+            min_corner.z = min(min_corner.z, local_corner.z)
+            max_corner.x = max(max_corner.x, local_corner.x)
+            max_corner.y = max(max_corner.y, local_corner.y)
+            max_corner.z = max(max_corner.z, local_corner.z)
+
+    return {
+        "dimensions": max_corner - min_corner,
+        "rotation": rotation,
+    }
+
+
+def _structure_rotation(objects):
+    primary_obj = max(
+        objects,
+        key=lambda obj: max(obj.dimensions.x, obj.dimensions.y, obj.dimensions.z),
+    )
+    return primary_obj.matrix_world.to_quaternion().to_matrix()
+
+
+def _object_uid(obj):
+    return Connections.get_object_uid(obj)
+
+
+def _connected_truss_neighbors(obj, visible_truss_uids):
+    neighbors = []
+
+    for _link_index, other_obj, _other_link_index, _other_link in Connections.iter_connected_links(obj):
+        other_uid = _object_uid(other_obj)
+        if other_uid in visible_truss_uids and _is_truss_object(other_obj):
+            neighbors.append(other_obj)
+
+    return neighbors
+
+
+def _segment_key(objects):
+    return tuple(sorted(_object_uid(obj) for obj in objects))
+
+
+def _build_truss_segments(truss_objects):
+    visible_truss_uids = {_object_uid(obj) for obj in truss_objects}
+    trusscube_objects = [obj for obj in truss_objects if _is_trusscube_object(obj)]
+    segments = [[obj] for obj in trusscube_objects]
+    seen_segments = set()
+
+    for obj in trusscube_objects:
+        seen_segments.add((_object_uid(obj),))
+
+    for start_obj in trusscube_objects:
+        start_uid = _object_uid(start_obj)
+        for neighbor in _connected_truss_neighbors(start_obj, visible_truss_uids):
+            path = [start_obj, neighbor]
+            previous_uid = start_uid
+            current_obj = neighbor
+            visited = {start_uid}
+
+            while current_obj is not None:
+                current_uid = _object_uid(current_obj)
+                if current_uid in visited:
+                    break
+
+                visited.add(current_uid)
+
+                if _is_trusscube_object(current_obj):
+                    segment = [obj for obj in path if not _is_trusscube_object(obj)]
+                    key = _segment_key(segment)
+                    if segment and key not in seen_segments:
+                        seen_segments.add(key)
+                        segments.append(segment)
+                    break
+
+                next_objects = [
+                    obj
+                    for obj in _connected_truss_neighbors(current_obj, visible_truss_uids)
+                    if _object_uid(obj) != previous_uid
+                ]
+
+                if not next_objects:
+                    segment = [obj for obj in path if not _is_trusscube_object(obj)]
+                    key = _segment_key(segment)
+                    if segment and key not in seen_segments:
+                        seen_segments.add(key)
+                        segments.append(segment)
+                    break
+
+                previous_uid = current_uid
+                current_obj = next_objects[0]
+                path.append(current_obj)
+
+    if not segments and truss_objects:
+        segments.append(list(truss_objects))
+
+    return segments
+
+
+def _connected_truss_groups(truss_objects):
+    truss_by_uid = {_object_uid(obj): obj for obj in truss_objects}
+    unvisited = set(truss_by_uid)
+    groups = []
+
+    while unvisited:
+        start_uid = min(unvisited)
+        stack = [truss_by_uid[start_uid]]
+        group = []
+        unvisited.remove(start_uid)
+
+        while stack:
+            obj = stack.pop()
+            group.append(obj)
+
+            for neighbor in _connected_truss_neighbors(obj, set(truss_by_uid)):
+                neighbor_uid = _object_uid(neighbor)
+                if neighbor_uid in unvisited:
+                    unvisited.remove(neighbor_uid)
+                    stack.append(neighbor)
+
+        groups.append(sorted(group, key=lambda obj: obj.name_full))
+
+    return groups
 
 
 def _projected_bounds(objects, camera_rotation):
@@ -153,12 +310,11 @@ def _camera_point(camera_rotation, center, point):
     return camera_rotation.inverted() @ (point - center)
 
 
-def _view_dimension_data(scene, camera, center, truss_objects, view_name):
-    if not truss_objects:
+def _view_dimension_data(scene, camera, center, truss_segments, view_name, structure_rotation):
+    if not truss_segments:
         return None
 
     camera_rotation = camera.rotation_euler.to_matrix()
-    min_corner, max_corner = _world_box(truss_objects)
     frame_height = camera.data.ortho_scale
     frame_width = frame_height * (scene.render.resolution_x / max(scene.render.resolution_y, 1))
     axes_by_view = {
@@ -167,102 +323,110 @@ def _view_dimension_data(scene, camera, center, truss_objects, view_name):
         "Top": ("X", "Y"),
         "Iso": ("X", "Z"),
     }
+    all_min_corner, all_max_corner = _world_box([obj for segment in truss_segments for obj in segment])
+    assembly_projected_center = camera_rotation.inverted() @ ((all_min_corner + all_max_corner) * 0.5)
 
-    def point_for(axis_values):
-        return Vector((
-            axis_values.get("X", min_corner.x),
-            axis_values.get("Y", min_corner.y),
-            axis_values.get("Z", min_corner.z),
-        ))
+    def segment_axes(segment_objects):
+        min_corner, max_corner = _world_box(segment_objects)
+        local_box = _segment_local_box(segment_objects, structure_rotation)
 
-    def axis_dimension(axis):
-        if axis == "X":
-            p1 = point_for({"X": min_corner.x})
-            p2 = point_for({"X": max_corner.x})
-            value = max_corner.x - min_corner.x
-        elif axis == "Y":
-            p1 = point_for({"Y": min_corner.y, "X": max_corner.x})
-            p2 = point_for({"Y": max_corner.y, "X": max_corner.x})
-            value = max_corner.y - min_corner.y
-        else:
-            p1 = point_for({"Z": min_corner.z, "X": max_corner.x, "Y": max_corner.y})
-            p2 = point_for({"Z": max_corner.z, "X": max_corner.x, "Y": max_corner.y})
-            value = max_corner.z - min_corner.z
+        def local_value_for_axis(axis):
+            axis_index = {"X": 0, "Y": 1, "Z": 2}[axis]
+            return local_box["dimensions"][axis_index]
 
-        return {
-            "p1": _camera_point(camera_rotation, center, p1),
-            "p2": _camera_point(camera_rotation, center, p2),
-            "value": value,
-        }
+        def point_for(axis_values):
+            return Vector((
+                axis_values.get("X", min_corner.x),
+                axis_values.get("Y", min_corner.y),
+                axis_values.get("Z", min_corner.z),
+            ))
 
-    projected_min, projected_max = _projected_box(truss_objects, camera_rotation)
-    projected_center = camera_rotation.inverted() @ center
+        def axis_dimension(axis):
+            if axis == "X":
+                p1 = point_for({"X": min_corner.x})
+                p2 = point_for({"X": max_corner.x})
+            elif axis == "Y":
+                p1 = point_for({"Y": min_corner.y, "X": max_corner.x})
+                p2 = point_for({"Y": max_corner.y, "X": max_corner.x})
+            else:
+                p1 = point_for({"Z": min_corner.z, "X": max_corner.x, "Y": max_corner.y})
+                p2 = point_for({"Z": max_corner.z, "X": max_corner.x, "Y": max_corner.y})
 
-    def projected_dimension(axis, p1, p2):
-        if axis == "X":
-            value = max_corner.x - min_corner.x
-        elif axis == "Y":
-            value = max_corner.y - min_corner.y
-        else:
-            value = max_corner.z - min_corner.z
+            return {
+                "p1": _camera_point(camera_rotation, center, p1),
+                "p2": _camera_point(camera_rotation, center, p2),
+                "value": local_value_for_axis(axis),
+            }
 
-        return {
-            "p1": p1 - projected_center,
-            "p2": p2 - projected_center,
-            "value": value,
-        }
+        projected_min, projected_max = _projected_box(segment_objects, camera_rotation)
+        projected_center = camera_rotation.inverted() @ center
+        projected_mid = (projected_min + projected_max) * 0.5
+        outside_x = projected_max.x if projected_mid.x >= assembly_projected_center.x else projected_min.x
+        outside_y = projected_max.y if projected_mid.y >= assembly_projected_center.y else projected_min.y
 
-    if view_name in {"Front", "Left", "Top"}:
+        def projected_dimension(axis, p1, p2):
+            return {
+                "p1": p1 - projected_center,
+                "p2": p2 - projected_center,
+                "value": local_value_for_axis(axis),
+            }
+
         if view_name == "Front":
-            axes = (
+            dimensions = (
                 projected_dimension(
                     "X",
-                    Vector((projected_min.x, projected_min.y, 0.0)),
-                    Vector((projected_max.x, projected_min.y, 0.0)),
+                    Vector((projected_min.x, outside_y, 0.0)),
+                    Vector((projected_max.x, outside_y, 0.0)),
                 ),
                 projected_dimension(
                     "Z",
-                    Vector((projected_max.x, projected_min.y, 0.0)),
-                    Vector((projected_max.x, projected_max.y, 0.0)),
+                    Vector((outside_x, projected_min.y, 0.0)),
+                    Vector((outside_x, projected_max.y, 0.0)),
                 ),
             )
         elif view_name == "Left":
-            axes = (
+            dimensions = (
                 projected_dimension(
                     "Y",
-                    Vector((projected_min.x, projected_min.y, 0.0)),
-                    Vector((projected_max.x, projected_min.y, 0.0)),
+                    Vector((projected_min.x, outside_y, 0.0)),
+                    Vector((projected_max.x, outside_y, 0.0)),
                 ),
                 projected_dimension(
                     "Z",
-                    Vector((projected_max.x, projected_min.y, 0.0)),
-                    Vector((projected_max.x, projected_max.y, 0.0)),
+                    Vector((outside_x, projected_min.y, 0.0)),
+                    Vector((outside_x, projected_max.y, 0.0)),
                 ),
             )
-        else:
-            axes = (
+        elif view_name == "Top":
+            dimensions = (
                 projected_dimension(
                     "X",
-                    Vector((projected_min.x, projected_min.y, 0.0)),
-                    Vector((projected_max.x, projected_min.y, 0.0)),
+                    Vector((projected_min.x, outside_y, 0.0)),
+                    Vector((projected_max.x, outside_y, 0.0)),
                 ),
                 projected_dimension(
                     "Y",
-                    Vector((projected_max.x, projected_min.y, 0.0)),
-                    Vector((projected_max.x, projected_max.y, 0.0)),
+                    Vector((outside_x, projected_min.y, 0.0)),
+                    Vector((outside_x, projected_max.y, 0.0)),
                 ),
             )
-    else:
-        axes = tuple(
-            axis_dimension(axis)
-            for axis in axes_by_view.get(view_name, ("X", "Z"))
-        )
+        else:
+            dimensions = tuple(
+                axis_dimension(axis)
+                for axis in axes_by_view.get(view_name, ("X", "Z"))
+            )
+
+        return (max(dimensions, key=lambda dimension: dimension["value"]),)
+
+    axes = []
+    for segment in truss_segments:
+        axes.extend(segment_axes(segment))
 
     return {
         "frame_width": frame_width,
         "frame_height": frame_height,
         "axes": axes,
-        "center": _camera_point(camera_rotation, center, (min_corner + max_corner) * 0.5),
+        "center": _camera_point(camera_rotation, center, (all_min_corner + all_max_corner) * 0.5),
     }
 
 
@@ -435,15 +599,17 @@ def _create_black_material():
     return material
 
 
-def _create_line_render_objects(scene, objects):
+def _create_line_render_objects(scene, objects, hidden_objects=None):
     white_material = _create_white_material()
     temporary_objects = []
     original_hide_render = []
+    hidden_objects = hidden_objects or objects
 
-    for obj in objects:
+    for obj in hidden_objects:
         original_hide_render.append((obj, obj.hide_render))
         obj.hide_render = True
 
+    for obj in objects:
         line_obj = obj.copy()
         line_obj.data = obj.data.copy()
         line_obj.animation_data_clear()
@@ -526,11 +692,16 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
     camera_rotation = camera.rotation_euler.to_matrix()
     material = _create_black_material()
     temporary_objects = []
-    offset = camera.data.ortho_scale * 0.04
+    base_offset = camera.data.ortho_scale * 0.04
+    offset_step = camera.data.ortho_scale * 0.035
+    max_stack_offset = camera.data.ortho_scale * 0.16
     tick = camera.data.ortho_scale * 0.012
     bevel_depth = camera.data.ortho_scale * 0.0008
     text_size = camera.data.ortho_scale * 0.035
-    center_point = dimension_data["center"]
+    assembly_center = dimension_data["center"]
+    frame_width = dimension_data["frame_width"]
+    frame_height = dimension_data["frame_height"]
+    placed_boxes_by_bucket = {}
 
     for index, axis_dimension in enumerate(dimension_data["axes"]):
         if axis_dimension["value"] <= 0.01:
@@ -542,15 +713,57 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
         normal_x, normal_y = -direction_y, direction_x
         mid = (p1 + p2) * 0.5
 
-        if ((mid.x - center_point.x) * normal_x) + ((mid.y - center_point.y) * normal_y) < 0.0:
+        if ((mid.x - assembly_center.x) * normal_x) + ((mid.y - assembly_center.y) * normal_y) < 0.0:
             normal_x = -normal_x
             normal_y = -normal_y
 
-        normal = Vector((normal_x, normal_y, 0.0))
-        q1 = p1 + (normal * offset)
-        q2 = p2 + (normal * offset)
+        preferred_normal = Vector((normal_x, normal_y, 0.0))
+        direction = Vector((direction_x, direction_y, 0.0))
+        text_width = len(_format_dimension(axis_dimension["value"])) * text_size * 0.58
+        text_height = text_size
+        chosen = None
+
+        for side_index, side_multiplier in enumerate((1.0, -1.0)):
+            normal = preferred_normal * side_multiplier
+            max_offset = max_stack_offset if side_index == 0 else max_stack_offset * 1.5
+            offset = base_offset
+
+            while offset <= max_offset:
+                q1 = p1 + (normal * offset)
+                q2 = p2 + (normal * offset)
+                label_point = ((q1 + q2) * 0.5) + (normal * (text_size * 0.65))
+                box = _dimension_layout_box(q1, q2, label_point, text_width, text_height, normal, direction)
+                bucket = _dimension_collision_bucket(direction, normal)
+                placed_boxes = placed_boxes_by_bucket.get(bucket, [])
+                overlaps = any(_boxes_overlap(box, placed_box) for placed_box in placed_boxes)
+                fits = _box_inside_frame(box, frame_width, frame_height)
+
+                if not overlaps and fits:
+                    chosen = (normal, q1, q2, label_point, box, bucket)
+                    break
+
+                offset += offset_step
+
+            if chosen is not None:
+                break
+
+        if chosen is None:
+            normal = preferred_normal
+            q1 = p1 + (normal * base_offset)
+            q2 = p2 + (normal * base_offset)
+            label_point = ((q1 + q2) * 0.5) + (normal * (text_size * 0.65))
+            chosen = (
+                normal,
+                q1,
+                q2,
+                label_point,
+                _dimension_layout_box(q1, q2, label_point, text_width, text_height, normal, direction),
+                _dimension_collision_bucket(direction, normal),
+            )
+
+        normal, q1, q2, label_point, box, bucket = chosen
+        placed_boxes_by_bucket.setdefault(bucket, []).append(box)
         tick_vector = normal * tick
-        label_point = ((q1 + q2) * 0.5) + (normal * (text_size * 0.65))
 
         world_segments = [
             (_camera_overlay_point(camera_rotation, center, p1), _camera_overlay_point(camera_rotation, center, q1)),
@@ -600,7 +813,7 @@ def _remove_dimension_render_objects(temporary_objects, material):
         bpy.data.materials.remove(material)
 
 
-def _render_view(context, view_name, center, objects, truss_objects, temp_directory):
+def _render_view(context, view_name, center, objects, truss_segments, structure_rotation, temp_directory):
     scene = context.scene
     camera_data = bpy.data.cameras.new(f"Stagehand PDF {view_name} Camera Data")
     camera = bpy.data.objects.new(f"Stagehand PDF {view_name} Camera", camera_data)
@@ -620,7 +833,7 @@ def _render_view(context, view_name, center, objects, truss_objects, temp_direct
 
     output_path = Path(temp_directory) / f"{view_name.lower()}.png"
     try:
-        dimension_data = _view_dimension_data(scene, camera, center, truss_objects, view_name)
+        dimension_data = _view_dimension_data(scene, camera, center, truss_segments, view_name, structure_rotation)
         dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, center, dimension_data)
         scene.camera = camera
         scene.render.filepath = str(output_path)
@@ -697,10 +910,73 @@ def _normalize_2d(x, y):
     return x / length, y / length
 
 
-def _write_pdf(filepath, rendered_views, title):
+def _dimension_layout_box(q1, q2, label_point, text_width, text_height, normal, direction):
+    del q1, q2
+
+    points = [label_point]
+    tick_padding = max(text_height * 0.15, 0.01)
+    along_padding = text_width * 0.5
+    normal_padding = text_height * 0.55
+
+    extra_points = []
+    for point in points:
+        extra_points.extend([
+            point + direction * along_padding,
+            point - direction * along_padding,
+            point + normal * normal_padding,
+            point - normal * normal_padding,
+        ])
+
+    points.extend(extra_points)
+    min_x = min(point.x for point in points) - tick_padding
+    max_x = max(point.x for point in points) + tick_padding
+    min_y = min(point.y for point in points) - tick_padding
+    max_y = max(point.y for point in points) + tick_padding
+    return min_x, min_y, max_x, max_y
+
+
+def _boxes_overlap(first, second):
+    return not (
+        first[2] < second[0]
+        or second[2] < first[0]
+        or first[3] < second[1]
+        or second[3] < first[1]
+    )
+
+
+def _box_inside_frame(box, frame_width, frame_height):
+    half_width = frame_width * 0.5
+    half_height = frame_height * 0.5
+    return (
+        box[0] >= -half_width
+        and box[2] <= half_width
+        and box[1] >= -half_height
+        and box[3] <= half_height
+    )
+
+
+def _dimension_collision_bucket(direction, normal):
+    if abs(direction.x) >= abs(direction.y):
+        orientation = "horizontal"
+    else:
+        orientation = "vertical"
+
+    if orientation == "horizontal":
+        side = "top" if normal.y >= 0.0 else "bottom"
+    else:
+        side = "right" if normal.x >= 0.0 else "left"
+
+    return orientation, side
+
+
+def _page_content_stream(rendered_views, title, image_object_numbers):
     labels = ("Front", "Left", "Top", "Iso")
     slot_width = (PAGE_WIDTH - (PAGE_MARGIN * 2.0) - PAGE_GUTTER) / 2.0
     slot_height = (PAGE_HEIGHT - (PAGE_MARGIN * 2.0) - TITLE_HEIGHT - PAGE_GUTTER) / 2.0
+    xobject_entries = " ".join(
+        f"/Im{index + 1} {object_number} 0 R"
+        for index, object_number in enumerate(image_object_numbers)
+    )
 
     content = [
         "q",
@@ -730,23 +1006,71 @@ def _write_pdf(filepath, rendered_views, title):
         ])
 
     content.append("Q")
-    content_stream = "\n".join(content)
+    return "\n".join(content), xobject_entries
+
+
+def _write_pdf(filepath, pages, title):
+    labels = ("Front", "Left", "Top", "Iso")
+    object_entries = [None, None, None]
+    page_object_numbers = []
+    pending_pages = []
+    next_object_number = 4
+
+    for page_index, rendered_views in enumerate(pages, start=1):
+        page_object_number = next_object_number
+        content_object_number = page_object_number + 1
+        image_object_numbers = [
+            content_object_number + index + 1
+            for index in range(len(labels))
+        ]
+        next_object_number = content_object_number + len(labels) + 1
+        page_title = title if len(pages) == 1 else f"{title} - Structure {page_index}"
+        content_stream, xobject_entries = _page_content_stream(
+            rendered_views,
+            page_title,
+            image_object_numbers,
+        )
+
+        page_object_numbers.append(page_object_number)
+        pending_pages.append((
+            page_object_number,
+            content_object_number,
+            image_object_numbers,
+            xobject_entries,
+            content_stream,
+            rendered_views,
+        ))
+
+    object_entries[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    page_refs = " ".join(f"{object_number} 0 R" for object_number in page_object_numbers)
+    object_entries[1] = f"<< /Type /Pages /Kids [{page_refs}] /Count {len(pages)} >>".encode("ascii")
+    object_entries[2] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+
+    for (
+        page_object_number,
+        content_object_number,
+        image_object_numbers,
+        xobject_entries,
+        content_stream,
+        rendered_views,
+    ) in pending_pages:
+        page_object = (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] "
+            f"/Resources << /Font << /F1 3 0 R >> "
+            f"/XObject << {xobject_entries} >> >> "
+            f"/Contents {content_object_number} 0 R >>"
+        ).encode("ascii")
+        object_entries.append(page_object)
+        object_entries.append(_pdf_stream(content_stream))
+
+        for label in labels:
+            object_entries.append(_pdf_image_stream(rendered_views[label]))
 
     objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        (
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] "
-            b"/Resources << /Font << /F1 4 0 R >> "
-            b"/XObject << /Im1 6 0 R /Im2 7 0 R /Im3 8 0 R /Im4 9 0 R >> >> "
-            b"/Contents 5 0 R >>"
-        ),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        _pdf_stream(content_stream),
+        entry
+        for entry in object_entries
+        if entry is not None
     ]
-
-    for label in labels:
-        objects.append(_pdf_image_stream(rendered_views[label]))
 
     output = bytearray(b"%PDF-1.4\n")
     offsets = []
@@ -799,8 +1123,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, "No visible mesh objects found for PDF drawings")
             return {'CANCELLED'}
         truss_objects = [obj for obj in objects if _is_truss_object(obj)]
-
-        center, dimensions = _object_bounds(objects)
+        truss_groups = _connected_truss_groups(truss_objects) if truss_objects else [objects]
         scene = context.scene
 
         original_camera = scene.camera
@@ -832,7 +1155,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             ),
         )
 
-        rendered_views = {}
+        rendered_pages = []
         temporary_line_objects = []
         white_material = None
         original_hide_render = []
@@ -845,23 +1168,40 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
             _set_render_engine(scene)
             _configure_line_render(scene, context.view_layer)
-            temporary_line_objects, white_material, original_hide_render = _create_line_render_objects(
-                scene,
-                objects,
-            )
-
             with tempfile.TemporaryDirectory() as temp_directory:
-                for view_name in ("Front", "Left", "Top", "Iso"):
-                    rendered_views[view_name] = _render_view(
-                        context,
-                        view_name,
-                        center,
+                for group_index, group_objects in enumerate(truss_groups, start=1):
+                    page_temp_directory = Path(temp_directory) / f"structure_{group_index}"
+                    page_temp_directory.mkdir(exist_ok=True)
+                    temporary_line_objects, white_material, original_hide_render = _create_line_render_objects(
+                        scene,
+                        group_objects,
                         objects,
-                        truss_objects,
-                        temp_directory,
                     )
+                    group_center, _group_dimensions = _object_bounds(group_objects)
+                    group_segments = _build_truss_segments(group_objects) if truss_objects else []
+                    group_rotation = _structure_rotation(group_objects)
+                    rendered_views = {}
 
-            _write_pdf(self.filepath, rendered_views, _project_name())
+                    try:
+                        for view_name in ("Front", "Left", "Top", "Iso"):
+                            rendered_views[view_name] = _render_view(
+                                context,
+                                view_name,
+                                group_center,
+                                group_objects,
+                                group_segments,
+                                group_rotation,
+                                page_temp_directory,
+                            )
+                    finally:
+                        _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
+                        temporary_line_objects = []
+                        white_material = None
+                        original_hide_render = []
+
+                    rendered_pages.append(rendered_views)
+
+            _write_pdf(self.filepath, rendered_pages, _project_name())
         except Exception as exc:
             self.report({'ERROR'}, f"Unable to generate PDF drawings: {exc}")
             return {'CANCELLED'}
