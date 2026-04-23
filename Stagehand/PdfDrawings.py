@@ -333,6 +333,40 @@ def _camera_point(camera_rotation, center, point):
     return camera_rotation.inverted() @ (point - center)
 
 
+def _dimension_signature(axis_dimension, tolerance):
+    p1 = axis_dimension["p1"]
+    p2 = axis_dimension["p2"]
+    mid = (p1 + p2) * 0.5
+    direction_x, direction_y = _normalize_2d(p2.x - p1.x, p2.y - p1.y)
+    normal_x, normal_y = -direction_y, direction_x
+    along = mid.x * direction_x + mid.y * direction_y
+    normal = mid.x * normal_x + mid.y * normal_y
+    length = math.hypot(p2.x - p1.x, p2.y - p1.y)
+
+    return (
+        _format_dimension(axis_dimension["value"]),
+        round(length / tolerance),
+        round(along / tolerance),
+        round(normal / tolerance),
+    )
+
+
+def _remove_duplicate_dimensions(axis_dimensions, camera_scale):
+    tolerance = max(camera_scale * 0.025, 0.001)
+    seen = set()
+    filtered_dimensions = []
+
+    for axis_dimension in axis_dimensions:
+        signature = _dimension_signature(axis_dimension, tolerance)
+        if signature in seen:
+            continue
+
+        seen.add(signature)
+        filtered_dimensions.append(axis_dimension)
+
+    return filtered_dimensions
+
+
 def _view_dimension_data(scene, camera, center, truss_segments, view_name, structure_rotation):
     if not truss_segments:
         return None
@@ -485,6 +519,7 @@ def _view_dimension_data(scene, camera, center, truss_segments, view_name, struc
     axes = []
     for segment in truss_segments:
         axes.extend(segment_axes(segment))
+    axes = _remove_duplicate_dimensions(axes, camera.data.ortho_scale)
 
     return {
         "frame_width": frame_width,
@@ -762,7 +797,7 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
     max_stack_offset = camera.data.ortho_scale * 0.16
     tick = camera.data.ortho_scale * 0.012
     bevel_depth = camera.data.ortho_scale * 0.0008
-    text_size = camera.data.ortho_scale * 0.035
+    text_size = camera.data.ortho_scale * 0.023
     assembly_center = dimension_data["center"]
     overlay_depth = dimension_data["overlay_depth"]
     placed_boxes_by_bucket = {}
