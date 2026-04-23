@@ -6,7 +6,7 @@ from pathlib import Path
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from . import Connections
 
@@ -113,11 +113,7 @@ def _world_box(objects):
 
 def _segment_local_box(segment_objects, rotation=None):
     if rotation is None:
-        primary_obj = max(
-            segment_objects,
-            key=lambda obj: max(obj.dimensions.x, obj.dimensions.y, obj.dimensions.z),
-        )
-        rotation = primary_obj.matrix_world.to_quaternion().to_matrix()
+        rotation = Matrix.Identity(3)
     inverse_rotation = rotation.inverted()
     origin = segment_objects[0].matrix_world.translation
     min_corner = Vector((math.inf, math.inf, math.inf))
@@ -136,16 +132,16 @@ def _segment_local_box(segment_objects, rotation=None):
 
     return {
         "dimensions": max_corner - min_corner,
+        "min_corner": min_corner,
+        "max_corner": max_corner,
         "rotation": rotation,
+        "origin": origin,
     }
 
 
 def _structure_rotation(objects):
-    primary_obj = max(
-        objects,
-        key=lambda obj: max(obj.dimensions.x, obj.dimensions.y, obj.dimensions.z),
-    )
-    return primary_obj.matrix_world.to_quaternion().to_matrix()
+    del objects
+    return Matrix.Identity(3)
 
 
 def _object_uid(obj):
@@ -285,6 +281,33 @@ def _projected_box(objects, camera_rotation):
     return min_corner, max_corner
 
 
+def _fit_camera_to_projected_objects(scene, camera, objects, view_center, padding=1.16):
+    if not objects:
+        return False, view_center
+
+    camera_rotation = camera.rotation_euler.to_matrix()
+    min_corner, max_corner = _projected_box(objects, camera_rotation)
+    dimensions = max_corner - min_corner
+    if not all(math.isfinite(value) for value in (dimensions.x, dimensions.y)):
+        return False, view_center
+
+    render = scene.render
+    frame_aspect = render.resolution_x / max(render.resolution_y, 1)
+    required_scale = max(camera.data.ortho_scale, max(dimensions.y, dimensions.x / frame_aspect, 0.5) * padding)
+    projected_center = (min_corner + max_corner) * 0.5
+    world_to_camera_rotation = camera_rotation.inverted()
+    view_center_projected = world_to_camera_rotation @ view_center
+    new_view_center_projected = Vector((projected_center.x, projected_center.y, view_center_projected.z))
+    new_view_center = camera_rotation @ new_view_center_projected
+    new_camera_location = new_view_center + (camera.location - view_center)
+    scale_changed = abs(required_scale - camera.data.ortho_scale) > 0.0001
+    location_changed = (new_camera_location - camera.location).length > 0.0001
+
+    camera.location = new_camera_location
+    camera.data.ortho_scale = required_scale
+    return scale_changed or location_changed, new_view_center
+
+
 def _set_camera_view(scene, camera, center, objects, view_direction):
     direction = view_direction.normalized()
     camera_rotation = direction.to_track_quat('-Z', 'Y').to_euler()
@@ -317,6 +340,7 @@ def _view_dimension_data(scene, camera, center, truss_segments, view_name, struc
     camera_rotation = camera.rotation_euler.to_matrix()
     frame_height = camera.data.ortho_scale
     frame_width = frame_height * (scene.render.resolution_x / max(scene.render.resolution_y, 1))
+    overlay_depth = (camera.location - center).length * 0.5
     axes_by_view = {
         "Front": ("X", "Z"),
         "Left": ("Y", "Z"),
@@ -333,6 +357,8 @@ def _view_dimension_data(scene, camera, center, truss_segments, view_name, struc
         def local_value_for_axis(axis):
             axis_index = {"X": 0, "Y": 1, "Z": 2}[axis]
             return local_box["dimensions"][axis_index]
+
+        longest_local_value = max(local_box["dimensions"])
 
         def point_for(axis_values):
             return Vector((
@@ -369,6 +395,46 @@ def _view_dimension_data(scene, camera, center, truss_segments, view_name, struc
                 "p1": p1 - projected_center,
                 "p2": p2 - projected_center,
                 "value": local_value_for_axis(axis),
+            }
+
+        def projected_principal_dimension():
+            axis_index = max(range(3), key=lambda index: local_box["dimensions"][index])
+            axis_names = ("X", "Y", "Z")
+            local_min = local_box["min_corner"]
+            local_max = local_box["max_corner"]
+            local_mid = (local_min + local_max) * 0.5
+            other_axis_indices = [index for index in range(3) if index != axis_index]
+            candidates = []
+
+            for first_side in (local_min[other_axis_indices[0]], local_max[other_axis_indices[0]]):
+                for second_side in (local_min[other_axis_indices[1]], local_max[other_axis_indices[1]]):
+                    p1_local = local_mid.copy()
+                    p2_local = local_mid.copy()
+                    p1_local[axis_index] = local_min[axis_index]
+                    p2_local[axis_index] = local_max[axis_index]
+                    p1_local[other_axis_indices[0]] = first_side
+                    p2_local[other_axis_indices[0]] = first_side
+                    p1_local[other_axis_indices[1]] = second_side
+                    p2_local[other_axis_indices[1]] = second_side
+
+                    p1_world = local_box["origin"] + (local_box["rotation"] @ p1_local)
+                    p2_world = local_box["origin"] + (local_box["rotation"] @ p2_local)
+                    p1_projected = camera_rotation.inverted() @ p1_world
+                    p2_projected = camera_rotation.inverted() @ p2_world
+                    p1_camera = Vector((p1_projected.x, p1_projected.y, 0.0))
+                    p2_camera = Vector((p2_projected.x, p2_projected.y, 0.0))
+                    mid_camera = (p1_camera + p2_camera) * 0.5
+                    candidates.append((mid_camera, p1_camera, p2_camera))
+
+            p1, p2 = max(
+                candidates,
+                key=lambda candidate: (candidate[0] - assembly_projected_center).length_squared,
+            )[1:]
+
+            return {
+                "p1": p1 - projected_center,
+                "p2": p2 - projected_center,
+                "value": local_value_for_axis(axis_names[axis_index]),
             }
 
         if view_name == "Front":
@@ -411,12 +477,10 @@ def _view_dimension_data(scene, camera, center, truss_segments, view_name, struc
                 ),
             )
         else:
-            dimensions = tuple(
-                axis_dimension(axis)
-                for axis in axes_by_view.get(view_name, ("X", "Z"))
-            )
+            dimensions = (projected_principal_dimension(),)
 
-        return (max(dimensions, key=lambda dimension: dimension["value"]),)
+        dimensions = tuple(dimension for dimension in dimensions if dimension is not None)
+        return (max(dimensions, key=lambda dimension: dimension["value"]),) if dimensions else ()
 
     axes = []
     for segment in truss_segments:
@@ -425,6 +489,7 @@ def _view_dimension_data(scene, camera, center, truss_segments, view_name, struc
     return {
         "frame_width": frame_width,
         "frame_height": frame_height,
+        "overlay_depth": overlay_depth,
         "axes": axes,
         "center": _camera_point(camera_rotation, center, (all_min_corner + all_max_corner) * 0.5),
     }
@@ -643,8 +708,8 @@ def _remove_line_render_objects(temporary_objects, white_material, original_hide
         bpy.data.materials.remove(white_material)
 
 
-def _camera_overlay_point(camera_rotation, center, point):
-    return center + (camera_rotation @ Vector((point.x, point.y, 0.0)))
+def _camera_overlay_point(camera_rotation, center, point, overlay_depth=0.0):
+    return center + (camera_rotation @ Vector((point.x, point.y, overlay_depth)))
 
 
 def _add_dimension_curve(scene, name, points, material, bevel_depth):
@@ -699,8 +764,7 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
     bevel_depth = camera.data.ortho_scale * 0.0008
     text_size = camera.data.ortho_scale * 0.035
     assembly_center = dimension_data["center"]
-    frame_width = dimension_data["frame_width"]
-    frame_height = dimension_data["frame_height"]
+    overlay_depth = dimension_data["overlay_depth"]
     placed_boxes_by_bucket = {}
 
     for index, axis_dimension in enumerate(dimension_data["axes"]):
@@ -736,9 +800,8 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
                 bucket = _dimension_collision_bucket(direction, normal)
                 placed_boxes = placed_boxes_by_bucket.get(bucket, [])
                 overlaps = any(_boxes_overlap(box, placed_box) for placed_box in placed_boxes)
-                fits = _box_inside_frame(box, frame_width, frame_height)
 
-                if not overlaps and fits:
+                if not overlaps:
                     chosen = (normal, q1, q2, label_point, box, bucket)
                     break
 
@@ -766,16 +829,16 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
         tick_vector = normal * tick
 
         world_segments = [
-            (_camera_overlay_point(camera_rotation, center, p1), _camera_overlay_point(camera_rotation, center, q1)),
-            (_camera_overlay_point(camera_rotation, center, p2), _camera_overlay_point(camera_rotation, center, q2)),
-            (_camera_overlay_point(camera_rotation, center, q1), _camera_overlay_point(camera_rotation, center, q2)),
+            (_camera_overlay_point(camera_rotation, center, p1, overlay_depth), _camera_overlay_point(camera_rotation, center, q1, overlay_depth)),
+            (_camera_overlay_point(camera_rotation, center, p2, overlay_depth), _camera_overlay_point(camera_rotation, center, q2, overlay_depth)),
+            (_camera_overlay_point(camera_rotation, center, q1, overlay_depth), _camera_overlay_point(camera_rotation, center, q2, overlay_depth)),
             (
-                _camera_overlay_point(camera_rotation, center, q1 - tick_vector),
-                _camera_overlay_point(camera_rotation, center, q1 + tick_vector),
+                _camera_overlay_point(camera_rotation, center, q1 - tick_vector, overlay_depth),
+                _camera_overlay_point(camera_rotation, center, q1 + tick_vector, overlay_depth),
             ),
             (
-                _camera_overlay_point(camera_rotation, center, q2 - tick_vector),
-                _camera_overlay_point(camera_rotation, center, q2 + tick_vector),
+                _camera_overlay_point(camera_rotation, center, q2 - tick_vector, overlay_depth),
+                _camera_overlay_point(camera_rotation, center, q2 + tick_vector, overlay_depth),
             ),
         ]
 
@@ -790,7 +853,7 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
             scene,
             f"Stagehand PDF Dimension Text {index}",
             _format_dimension(axis_dimension["value"]),
-            _camera_overlay_point(camera_rotation, center, label_point),
+            _camera_overlay_point(camera_rotation, center, label_point, overlay_depth),
             camera,
             material,
             text_size,
@@ -826,15 +889,39 @@ def _render_view(context, view_name, center, objects, truss_segments, structure_
         "Iso": Vector((-1.0, -1.0, -0.75)),
     }[view_name]
 
-    _set_camera_view(scene, camera, center, objects, view_direction)
+    view_center = center.copy()
+    _set_camera_view(scene, camera, view_center, objects, view_direction)
     _expand_camera_for_dimensions(scene, camera)
     dimension_objects = []
     dimension_material = None
 
     output_path = Path(temp_directory) / f"{view_name.lower()}.png"
     try:
-        dimension_data = _view_dimension_data(scene, camera, center, truss_segments, view_name, structure_rotation)
-        dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, center, dimension_data)
+        fit_changed = False
+        for _fit_pass in range(5):
+            _remove_dimension_render_objects(dimension_objects, dimension_material)
+            dimension_objects = []
+            dimension_material = None
+            dimension_data = _view_dimension_data(scene, camera, view_center, truss_segments, view_name, structure_rotation)
+            dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
+            context.view_layer.update()
+            fit_changed, view_center = _fit_camera_to_projected_objects(
+                scene,
+                camera,
+                list(objects) + dimension_objects,
+                view_center,
+            )
+            if not fit_changed:
+                break
+
+        if fit_changed or not dimension_objects:
+            _remove_dimension_render_objects(dimension_objects, dimension_material)
+            dimension_objects = []
+            dimension_material = None
+            dimension_data = _view_dimension_data(scene, camera, view_center, truss_segments, view_name, structure_rotation)
+            dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
+            context.view_layer.update()
+
         scene.camera = camera
         scene.render.filepath = str(output_path)
         bpy.ops.render.render(write_still=True)
@@ -941,17 +1028,6 @@ def _boxes_overlap(first, second):
         or second[2] < first[0]
         or first[3] < second[1]
         or second[3] < first[1]
-    )
-
-
-def _box_inside_frame(box, frame_width, frame_height):
-    half_width = frame_width * 0.5
-    half_height = frame_height * 0.5
-    return (
-        box[0] >= -half_width
-        and box[2] <= half_width
-        and box[1] >= -half_height
-        and box[3] <= half_height
     )
 
 
