@@ -10,6 +10,7 @@ bl_info = {
 
 # give Python access to Blender's functionality
 import bpy
+from .RegistrationUtils import safe_register_class, safe_unregister_class
 
 class StageHandOptionsPanel(bpy.types.Panel):  # class naming convention ‘CATEGORY_PT_name’
 
@@ -35,11 +36,11 @@ class StageHandOptionsPanel(bpy.types.Panel):  # class naming convention ‘CATE
 
 
 def register():
-    bpy.utils.register_class(StageHandOptionsPanel)
+    safe_register_class(StageHandOptionsPanel)
 
 
 def unregister():
-    bpy.utils.unregister_class(StageHandOptionsPanel)
+    safe_unregister_class(StageHandOptionsPanel)
 
 ##maybe you can remove this in the final package?
 if __name__ == "__main__" or __name__== "<run_path>":

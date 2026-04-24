@@ -2,7 +2,9 @@ import bpy
 from bpy_extras import view3d_utils
 from mathutils import Quaternion, Vector
 
+from . import Connections
 from .LinkTypes import are_link_types_compatible
+from .RegistrationUtils import safe_register_class, safe_remove_keymaps, safe_unregister_class
 
 
 addon_keymaps = []
@@ -164,6 +166,7 @@ class STAGEHAND_OT_move_with_snap(bpy.types.Operator):
             return {'RUNNING_MODAL'}
 
         if event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            Connections.refresh_connections_for_objects(self.moving_objects)
             return {'FINISHED'}
 
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
@@ -191,16 +194,14 @@ def register_keymap():
 
 
 def unregister_keymap():
-    for km, kmi in addon_keymaps:
-        km.keymap_items.remove(kmi)
-    addon_keymaps.clear()
+    safe_remove_keymaps(addon_keymaps)
 
 
 def register():
-    bpy.utils.register_class(STAGEHAND_OT_move_with_snap)
+    safe_register_class(STAGEHAND_OT_move_with_snap)
     register_keymap()
 
 
 def unregister():
     unregister_keymap()
-    bpy.utils.unregister_class(STAGEHAND_OT_move_with_snap)
+    safe_unregister_class(STAGEHAND_OT_move_with_snap)

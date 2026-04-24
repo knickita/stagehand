@@ -11,6 +11,13 @@ from mathutils import Quaternion, Vector
 from . import Connections
 from .LinkTypes import are_link_types_compatible
 from . import LoadCatalogue
+from .RegistrationUtils import (
+    safe_define_property,
+    safe_register_class,
+    safe_remove_keymaps,
+    safe_remove_property,
+    safe_unregister_class,
+)
 
 
 addon_keymaps = []
@@ -670,72 +677,70 @@ def register_keymap():
 
 
 def unregister_keymap():
-    for km, kmi in addon_keymaps:
-        km.keymap_items.remove(kmi)
-    addon_keymaps.clear()
+    safe_remove_keymaps(addon_keymaps)
 
 
 def register():
     global _draw_handler
 
-    bpy.utils.register_class(STAGEHAND_OT_toggle_link_mode)
-    bpy.utils.register_class(STAGEHAND_OT_add_from_link_popup)
-    bpy.utils.register_class(STAGEHAND_OT_pick_link_for_add)
-    bpy.types.WindowManager.stagehand_link_mode_enabled = bpy.props.BoolProperty(
+    safe_register_class(STAGEHAND_OT_toggle_link_mode)
+    safe_register_class(STAGEHAND_OT_add_from_link_popup)
+    safe_register_class(STAGEHAND_OT_pick_link_for_add)
+    safe_define_property(bpy.types.WindowManager, "stagehand_link_mode_enabled", bpy.props.BoolProperty(
         name="Stagehand Link Mode Enabled",
         default=False,
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_link_mode_object_name = bpy.props.StringProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_link_mode_object_name", bpy.props.StringProperty(
         name="Stagehand Link Mode Object Name",
         default="",
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_clicked_object_name = bpy.props.StringProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_clicked_object_name", bpy.props.StringProperty(
         name="Stagehand Clicked Object Name",
         default="",
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_clicked_link_index = bpy.props.IntProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_clicked_link_index", bpy.props.IntProperty(
         name="Stagehand Clicked Link Index",
         default=-1,
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_clicked_link_type = bpy.props.IntProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_clicked_link_type", bpy.props.IntProperty(
         name="Stagehand Clicked Link Type",
         default=-1,
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_selecting_link_mode_enabled = bpy.props.BoolProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_selecting_link_mode_enabled", bpy.props.BoolProperty(
         name="Stagehand Selecting Link Mode Enabled",
         default=False,
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_selecting_target_object_name = bpy.props.StringProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_selecting_target_object_name", bpy.props.StringProperty(
         name="Stagehand Selecting Target Object Name",
         default="",
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_selecting_target_link_index = bpy.props.IntProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_selecting_target_link_index", bpy.props.IntProperty(
         name="Stagehand Selecting Target Link Index",
         default=-1,
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_selecting_pending_anchor_object_name = bpy.props.StringProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_selecting_pending_anchor_object_name", bpy.props.StringProperty(
         name="Stagehand Selecting Pending Anchor Object Name",
         default="",
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_selecting_selected_link_index = bpy.props.IntProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_selecting_selected_link_index", bpy.props.IntProperty(
         name="Stagehand Selecting Selected Link Index",
         default=-1,
         options={'HIDDEN'},
-    )
-    bpy.types.WindowManager.stagehand_selecting_pending_object_names = bpy.props.StringProperty(
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_selecting_pending_object_names", bpy.props.StringProperty(
         name="Stagehand Selecting Pending Object Names",
         default="",
         options={'HIDDEN'},
-    )
+    ))
 
     register_keymap()
 
@@ -752,22 +757,25 @@ def unregister():
     global _draw_handler
 
     if _draw_handler is not None:
-        bpy.types.SpaceView3D.draw_handler_remove(_draw_handler, 'WINDOW')
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_draw_handler, 'WINDOW')
+        except (RuntimeError, ValueError):
+            pass
         _draw_handler = None
 
     unregister_keymap()
 
-    del bpy.types.WindowManager.stagehand_clicked_link_type
-    del bpy.types.WindowManager.stagehand_clicked_link_index
-    del bpy.types.WindowManager.stagehand_clicked_object_name
-    del bpy.types.WindowManager.stagehand_selecting_pending_object_names
-    del bpy.types.WindowManager.stagehand_selecting_selected_link_index
-    del bpy.types.WindowManager.stagehand_selecting_pending_anchor_object_name
-    del bpy.types.WindowManager.stagehand_selecting_target_link_index
-    del bpy.types.WindowManager.stagehand_selecting_target_object_name
-    del bpy.types.WindowManager.stagehand_selecting_link_mode_enabled
-    del bpy.types.WindowManager.stagehand_link_mode_object_name
-    del bpy.types.WindowManager.stagehand_link_mode_enabled
-    bpy.utils.unregister_class(STAGEHAND_OT_pick_link_for_add)
-    bpy.utils.unregister_class(STAGEHAND_OT_add_from_link_popup)
-    bpy.utils.unregister_class(STAGEHAND_OT_toggle_link_mode)
+    safe_remove_property(bpy.types.WindowManager, "stagehand_clicked_link_type")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_clicked_link_index")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_clicked_object_name")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_selecting_pending_object_names")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_selecting_selected_link_index")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_selecting_pending_anchor_object_name")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_selecting_target_link_index")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_selecting_target_object_name")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_selecting_link_mode_enabled")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_link_mode_object_name")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_link_mode_enabled")
+    safe_unregister_class(STAGEHAND_OT_pick_link_for_add)
+    safe_unregister_class(STAGEHAND_OT_add_from_link_popup)
+    safe_unregister_class(STAGEHAND_OT_toggle_link_mode)

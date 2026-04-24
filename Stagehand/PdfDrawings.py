@@ -9,6 +9,7 @@ from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix, Quaternion, Vector
 
 from . import Connections
+from .RegistrationUtils import safe_register_class, safe_unregister_class
 
 
 PAGE_WIDTH = 842.0
@@ -1299,9 +1300,9 @@ classes = (
 
 def register():
     for cls in classes:
-        bpy.utils.register_class(cls)
+        safe_register_class(cls)
 
 
 def unregister():
     for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
+        safe_unregister_class(cls)

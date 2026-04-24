@@ -1,4 +1,5 @@
 import bpy
+from .RegistrationUtils import safe_append_menu, safe_register_class, safe_remove_menu, safe_unregister_class
 
 
 # --- Menu ---
@@ -19,9 +20,9 @@ def draw_custom_menu(self, context):
 
 # --- Register / Unregister ---
 def register():    
-    bpy.utils.register_class(Stagehand_MT_menu)
-    bpy.types.VIEW3D_MT_editor_menus.append(draw_custom_menu)
+    safe_register_class(Stagehand_MT_menu)
+    safe_append_menu(bpy.types.VIEW3D_MT_editor_menus, draw_custom_menu)
 
 def unregister():
-    bpy.types.VIEW3D_MT_editor_menus.remove(draw_custom_menu)
-    bpy.utils.unregister_class(Stagehand_MT_menu)
+    safe_remove_menu(bpy.types.VIEW3D_MT_editor_menus, draw_custom_menu)
+    safe_unregister_class(Stagehand_MT_menu)

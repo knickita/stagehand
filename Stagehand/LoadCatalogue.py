@@ -4,6 +4,7 @@ from pathlib import Path
 import bpy
 
 from .AddStagehandObject import apply_stagehand_catalogue_data
+from .RegistrationUtils import safe_register_class, safe_unregister_class
 
 
 CATALOGUE_BY_ID = {}
@@ -229,10 +230,7 @@ def _load_catalogue():
 
 def _unregister_dynamic_classes():
     for cls in reversed(REGISTERED_CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except RuntimeError:
-            pass
+        safe_unregister_class(cls)
 
     REGISTERED_CLASSES.clear()
 
@@ -245,13 +243,13 @@ def reload_catalogue_operators():
 
     for asset_id in sorted(CATALOGUE_BY_ID):
         operator_class = _build_operator(CATALOGUE_BY_ID[asset_id])
-        bpy.utils.register_class(operator_class)
+        safe_register_class(operator_class)
         REGISTERED_CLASSES.append(operator_class)
 
 
 def register():
     for cls in BASE_CLASSES:
-        bpy.utils.register_class(cls)
+        safe_register_class(cls)
 
     reload_catalogue_operators()
 
@@ -260,4 +258,4 @@ def unregister():
     _unregister_dynamic_classes()
 
     for cls in reversed(BASE_CLASSES):
-        bpy.utils.unregister_class(cls)
+        safe_unregister_class(cls)

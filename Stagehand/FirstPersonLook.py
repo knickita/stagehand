@@ -1,5 +1,6 @@
 import bpy
 from mathutils import Vector, Quaternion
+from .RegistrationUtils import safe_register_class, safe_remove_keymaps, safe_unregister_class
 
 addon_keymaps = []
 
@@ -164,17 +165,14 @@ def get_prefs():
 
 
 def unregister_keymap():
-    for km, kmi in addon_keymaps:
-        km.keymap_items.remove(kmi)
-    addon_keymaps.clear()
+    safe_remove_keymaps(addon_keymaps)
 
 
 def register():    
-    bpy.utils.register_class(FirstPersonLook)
+    safe_register_class(FirstPersonLook)
     register_keymap()
 
 
 def unregister():
     unregister_keymap()
-    if hasattr(FirstPersonLook, "bl_rna"):
-        bpy.utils.unregister_class(FirstPersonLook)
+    safe_unregister_class(FirstPersonLook)

@@ -5,16 +5,29 @@ bl_info = {
     "blender": (3, 0, 0)
 }
 
+import importlib
+import sys
+
 # pylint: disable=fixme, import-error
-from . import AddStagehandObject
-from . import Connections
-from . import FirstPersonLook
-from . import LinkMode
-from . import LoadCatalogue
-from . import MenuConfiguration
-from . import OptionsPanel
-from . import PdfDrawings
-from . import SnapLogics
+
+
+def _load_submodule(module_name):
+    qualified_name = f"{__name__}.{module_name}"
+    existing_module = sys.modules.get(qualified_name)
+    if existing_module is not None:
+        return importlib.reload(existing_module)
+    return importlib.import_module(f".{module_name}", __name__)
+
+
+AddStagehandObject = _load_submodule("AddStagehandObject")
+Connections = _load_submodule("Connections")
+FirstPersonLook = _load_submodule("FirstPersonLook")
+LinkMode = _load_submodule("LinkMode")
+LoadCatalogue = _load_submodule("LoadCatalogue")
+MenuConfiguration = _load_submodule("MenuConfiguration")
+OptionsPanel = _load_submodule("OptionsPanel")
+PdfDrawings = _load_submodule("PdfDrawings")
+SnapLogics = _load_submodule("SnapLogics")
 
 classes = (    
     AddStagehandObject,
@@ -30,8 +43,18 @@ classes = (
 
 
 def register():
-    for cls in classes:
-        cls.register()
+    registered_modules = []
+    try:
+        for cls in classes:
+            cls.register()
+            registered_modules.append(cls)
+    except Exception:
+        for cls in reversed(registered_modules):
+            try:
+                cls.unregister()
+            except Exception:
+                continue
+        raise
 
 
 def unregister():

@@ -2,6 +2,13 @@ import bpy
 import uuid
 
 from .LinkTypes import get_compatible_link_types, link_type_label
+from .RegistrationUtils import (
+    safe_define_property,
+    safe_register_class,
+    safe_remove_keymaps,
+    safe_remove_property,
+    safe_unregister_class,
+)
 
 
 addon_keymaps = []
@@ -397,16 +404,18 @@ def register_keymap():
 
 
 def unregister_keymap():
-    for km, kmi in addon_keymaps:
-        km.keymap_items.remove(kmi)
-    addon_keymaps.clear()
+    safe_remove_keymaps(addon_keymaps)
 
 
 def register():
     for cls in classes:
-        bpy.utils.register_class(cls)
+        safe_register_class(cls)
 
-    bpy.types.Object.stagehand = bpy.props.PointerProperty(type=StagehandObject)
+    safe_define_property(
+        bpy.types.Object,
+        "stagehand",
+        bpy.props.PointerProperty(type=StagehandObject),
+    )
     register_keymap()
     if not bpy.app.timers.is_registered(prevent_stagehand_edit_mode):
         bpy.app.timers.register(prevent_stagehand_edit_mode, first_interval=0.2)
@@ -417,7 +426,7 @@ def unregister():
         bpy.app.timers.unregister(prevent_stagehand_edit_mode)
 
     unregister_keymap()
-    del bpy.types.Object.stagehand
+    safe_remove_property(bpy.types.Object, "stagehand")
 
     for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
+        safe_unregister_class(cls)

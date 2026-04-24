@@ -1,21 +1,37 @@
 import uuid
+import time
 from collections import defaultdict
 from math import radians
 
 import bpy
+from bpy.app.handlers import persistent
 from bpy_extras import view3d_utils
 from mathutils import Matrix, Quaternion, Vector
 
 from .AddStagehandObject import ensure_stagehand_link_uid, ensure_stagehand_uid
 from .LinkTypes import are_link_types_compatible
+from .RegistrationUtils import (
+    safe_add_handler,
+    safe_register_class,
+    safe_remove_handler,
+    safe_remove_keymaps,
+    safe_unregister_class,
+)
 
 
 CONNECTION_MAINTENANCE_INTERVAL = 0.5
+CONNECTION_REFRESH_POLL_INTERVAL = 0.05
+CONNECTION_REFRESH_SETTLE_INTERVAL = 0.1
 AUTO_CONNECT_DISTANCE_THRESHOLD = 0.0001
 AUTO_CONNECT_ANGLE_THRESHOLD = radians(0.1)
 LINK_ALIGNMENT_FLIP = Quaternion((0.0, 0.0, 1.0), radians(180.0))
-_LAST_KNOWN_MATRICES = {}
+_DIRTY_CONNECTION_OBJECT_UIDS = set()
+_DIRTY_CONNECTION_REFRESH_DEADLINE = 0.0
 addon_keymaps = []
+
+
+def _data_objects():
+    return getattr(bpy.data, "objects", None)
 
 
 def is_stagehand_object(obj):
@@ -33,7 +49,11 @@ def get_object_uid(obj):
 
 
 def iter_stagehand_objects():
-    for obj in bpy.data.objects:
+    objects = _data_objects()
+    if objects is None:
+        return
+
+    for obj in objects:
         if is_stagehand_object(obj):
             yield obj
 
@@ -45,10 +65,6 @@ def iter_object_links(obj):
     for index, link in enumerate(obj.stagehand.links):
         ensure_stagehand_link_uid(link)
         yield index, link
-
-
-def _matrix_signature(matrix):
-    return tuple(round(value, 9) for row in matrix for value in row)
 
 
 def _link_transform(obj, link):
@@ -75,6 +91,14 @@ def _link_forward(rotation):
 def link_alignment_rotation_delta(link_rotation, target_rotation):
     desired_link_rotation = target_rotation @ LINK_ALIGNMENT_FLIP
     return desired_link_rotation @ link_rotation.inverted()
+
+
+def _link_alignment_angle(link, rotation, other_link, other_rotation):
+    if link.cylindricalType or other_link.cylindricalType:
+        return _link_forward(rotation).angle(-_link_forward(other_rotation), 0.0)
+
+    desired_rotation = other_rotation @ LINK_ALIGNMENT_FLIP
+    return desired_rotation.rotation_difference(rotation).angle
 
 
 def _rotate_object_around_pivot(obj, rotation_delta, pivot):
@@ -108,7 +132,7 @@ def _link_alignment_metrics(obj, link_index, other_obj, other_link_index):
     center, rotation = _link_transform(obj, link)
     other_center, other_rotation = _link_transform(other_obj, other_link)
     distance = (other_center - center).length
-    angle = _link_forward(rotation).angle(-_link_forward(other_rotation), 0.0)
+    angle = _link_alignment_angle(link, rotation, other_link, other_rotation)
     return distance, angle
 
 
@@ -445,99 +469,220 @@ def _iter_compatible_unconnected_links(obj):
         yield index, link
 
 
-def _find_best_nearby_match(obj):
-    best_candidate = None
-    best_distance = None
+def _unique_stagehand_objects(objects):
+    unique_objects = []
+    seen_uids = set()
 
-    for link_index, link in _iter_compatible_unconnected_links(obj):
-        for other_obj in iter_stagehand_objects():
-            if other_obj == obj:
+    for obj in objects:
+        if not is_stagehand_object(obj):
+            continue
+
+        uid = get_object_uid(obj)
+        if not uid or uid in seen_uids:
+            continue
+
+        seen_uids.add(uid)
+        unique_objects.append(obj)
+
+    return unique_objects
+
+
+def _disconnect_invalid_connections(objects):
+    for obj in _unique_stagehand_objects(objects):
+        for index, link in iter_object_links(obj):
+            if not link.connectedObjectUid:
                 continue
 
-            for other_link_index, other_link in _iter_compatible_unconnected_links(other_obj):
-                if not are_link_types_compatible(link.type, other_link.type):
+            other_obj, other_link, other_link_index = get_connected_link(obj, index)
+            if other_obj is None or other_link is None:
+                clear_link_connection(obj, index)
+                continue
+
+            distance, angle = _link_alignment_metrics(obj, index, other_obj, other_link_index)
+            if distance is None:
+                clear_link_connection(obj, index)
+                continue
+
+            if distance <= AUTO_CONNECT_DISTANCE_THRESHOLD and angle <= AUTO_CONNECT_ANGLE_THRESHOLD:
+                continue
+
+            disconnect_link(obj, index)
+
+
+def _iter_connection_candidates(objects):
+    refresh_objects = _unique_stagehand_objects(objects)
+    refresh_uids = {get_object_uid(obj) for obj in refresh_objects}
+
+    for obj in refresh_objects:
+        obj_uid = get_object_uid(obj)
+        for link_index, link in _iter_compatible_unconnected_links(obj):
+            for other_obj in iter_stagehand_objects():
+                if other_obj == obj:
                     continue
 
-                distance, angle = _link_alignment_metrics(obj, link_index, other_obj, other_link_index)
-                if distance is None:
-                    continue
-                if distance > AUTO_CONNECT_DISTANCE_THRESHOLD or angle > AUTO_CONNECT_ANGLE_THRESHOLD:
+                other_uid = get_object_uid(other_obj)
+                if not other_uid:
                     continue
 
-                if best_distance is None or distance < best_distance:
-                    best_distance = distance
-                    best_candidate = (link_index, other_obj, other_link_index)
+                if other_uid in refresh_uids and other_uid <= obj_uid:
+                    continue
 
-    return best_candidate
+                for other_link_index, other_link in _iter_compatible_unconnected_links(other_obj):
+                    if not are_link_types_compatible(link.type, other_link.type):
+                        continue
+
+                    distance, angle = _link_alignment_metrics(obj, link_index, other_obj, other_link_index)
+                    if distance is None:
+                        continue
+                    if distance > AUTO_CONNECT_DISTANCE_THRESHOLD or angle > AUTO_CONNECT_ANGLE_THRESHOLD:
+                        continue
+
+                    yield (
+                        distance,
+                        angle,
+                        obj_uid,
+                        other_uid,
+                        link_index,
+                        other_link_index,
+                        obj,
+                        other_obj,
+                    )
 
 
-def _refresh_connections_for_moved_object(obj):
-    connected_indices = []
-    for index, link in iter_object_links(obj):
-        if not link.connectedObjectUid:
+def refresh_connections_for_objects(objects):
+    refresh_objects = _unique_stagehand_objects(objects)
+    if not refresh_objects:
+        return
+
+    prune_stale_connections()
+    _disconnect_invalid_connections(refresh_objects)
+
+    candidates = sorted(
+        _iter_connection_candidates(refresh_objects),
+        key=lambda item: (item[0], item[1], item[2], item[3], item[4], item[5]),
+    )
+    for _distance, _angle, _obj_uid, _other_uid, link_index, other_link_index, obj, other_obj in candidates:
+        link = get_link(obj, link_index)
+        other_link = get_link(other_obj, other_link_index)
+        if link is None or other_link is None:
             continue
-
-        other_obj, other_link, other_link_index = get_connected_link(obj, index)
-        if other_obj is None or other_link is None:
-            clear_link_connection(obj, index)
+        if link.connectedObjectUid or other_link.connectedObjectUid:
             continue
-
-        distance, angle = _link_alignment_metrics(obj, index, other_obj, other_link_index)
-        if distance is None:
-            clear_link_connection(obj, index)
-            continue
-
-        if distance <= AUTO_CONNECT_DISTANCE_THRESHOLD and angle <= AUTO_CONNECT_ANGLE_THRESHOLD:
-            connected_indices.append((index, other_obj, other_link_index, distance))
-            continue
-
-        disconnect_link(obj, index)
-
-    if connected_indices:
-        connected_indices.sort(key=lambda item: item[3])
-        link_index, other_obj, other_link_index, _distance = connected_indices[0]
-        _align_object_link_to_target(obj, link_index, other_obj, other_link_index)
         connect_links(obj, link_index, other_obj, other_link_index)
-        return
-
-    best_match = _find_best_nearby_match(obj)
-    if best_match is None:
-        return
-
-    link_index, other_obj, other_link_index = best_match
-    _align_object_link_to_target(obj, link_index, other_obj, other_link_index)
-    connect_links(obj, link_index, other_obj, other_link_index)
 
 
-def _refresh_moved_object_connections():
-    live_uids = set()
-    moved_objects = []
+def _iter_pending_operators():
+    context = bpy.context
+    window = getattr(context, "window", None)
+    if window is not None:
+        for operator in getattr(window, "modal_operators", ()):
+            yield operator
 
-    for obj in iter_stagehand_objects():
-        uid = get_object_uid(obj)
-        live_uids.add(uid)
-        signature = _matrix_signature(obj.matrix_world)
-        previous_signature = _LAST_KNOWN_MATRICES.get(uid)
-        if previous_signature is None:
-            _LAST_KNOWN_MATRICES[uid] = signature
+
+def _transform_operator_active():
+    for operator in _iter_pending_operators():
+        operator_id = str(getattr(operator, "bl_idname", "")).lower()
+        if operator_id.startswith("transform_ot_"):
+            return True
+        if operator_id == "stagehand_ot_move_with_snap":
+            return True
+    return False
+
+
+def mark_objects_dirty(objects, delay=CONNECTION_REFRESH_SETTLE_INTERVAL):
+    global _DIRTY_CONNECTION_REFRESH_DEADLINE
+
+    marked_any = False
+    for obj in objects:
+        if not is_stagehand_object(obj):
             continue
 
-        if signature != previous_signature:
-            moved_objects.append(obj)
+        uid = get_object_uid(obj)
+        if not uid:
+            continue
 
-    for uid in list(_LAST_KNOWN_MATRICES.keys()):
-        if uid not in live_uids:
-            del _LAST_KNOWN_MATRICES[uid]
+        _DIRTY_CONNECTION_OBJECT_UIDS.add(uid)
+        marked_any = True
 
-    for obj in moved_objects:
-        _refresh_connections_for_moved_object(obj)
-        _LAST_KNOWN_MATRICES[get_object_uid(obj)] = _matrix_signature(obj.matrix_world)
+    if not marked_any:
+        return
+
+    _DIRTY_CONNECTION_REFRESH_DEADLINE = time.monotonic() + max(delay, 0.0)
+    if not bpy.app.timers.is_registered(dirty_connection_refresh_timer):
+        bpy.app.timers.register(
+            dirty_connection_refresh_timer,
+            first_interval=CONNECTION_REFRESH_POLL_INTERVAL,
+        )
+
+
+def mark_all_objects_dirty(delay=CONNECTION_REFRESH_SETTLE_INTERVAL):
+    mark_objects_dirty(iter_stagehand_objects(), delay=delay)
+
+
+def _process_dirty_connection_refresh():
+    refresh_objects = []
+    while _DIRTY_CONNECTION_OBJECT_UIDS:
+        uid = _DIRTY_CONNECTION_OBJECT_UIDS.pop()
+        obj = find_object_by_uid(uid)
+        if obj is not None:
+            refresh_objects.append(obj)
+
+    refresh_connections_for_objects(refresh_objects)
+
+
+def dirty_connection_refresh_timer():
+    try:
+        if not _DIRTY_CONNECTION_OBJECT_UIDS:
+            return None
+
+        if _transform_operator_active():
+            return CONNECTION_REFRESH_POLL_INTERVAL
+
+        if time.monotonic() < _DIRTY_CONNECTION_REFRESH_DEADLINE:
+            return CONNECTION_REFRESH_POLL_INTERVAL
+
+        _process_dirty_connection_refresh()
+    except RuntimeError:
+        return CONNECTION_REFRESH_POLL_INTERVAL
+
+    if _DIRTY_CONNECTION_OBJECT_UIDS:
+        return CONNECTION_REFRESH_POLL_INTERVAL
+    return None
+
+
+def initial_connection_refresh_timer():
+    if _data_objects() is None:
+        return CONNECTION_REFRESH_POLL_INTERVAL
+
+    mark_all_objects_dirty(delay=0.0)
+    return None
+
+
+@persistent
+def stagehand_depsgraph_update_post(_scene, depsgraph):
+    dirty_objects = []
+    for update in getattr(depsgraph, "updates", ()):
+        updated_id = getattr(update, "id", None)
+        if not isinstance(updated_id, bpy.types.Object):
+            continue
+        if not getattr(update, "is_updated_transform", False):
+            continue
+        if not is_stagehand_object(updated_id):
+            continue
+        dirty_objects.append(updated_id)
+
+    if dirty_objects:
+        mark_objects_dirty(dirty_objects)
+
+
+@persistent
+def stagehand_undo_redo_post(_dummy):
+    mark_all_objects_dirty(delay=0.0)
 
 
 def connection_maintenance_timer():
     try:
         prune_stale_connections()
-        _refresh_moved_object_connections()
     except RuntimeError:
         pass
 
@@ -594,23 +739,39 @@ def register_keymap():
 
 
 def unregister_keymap():
-    for km, kmi in addon_keymaps:
-        km.keymap_items.remove(kmi)
-    addon_keymaps.clear()
+    safe_remove_keymaps(addon_keymaps)
 
 
 def register():
-    bpy.utils.register_class(STAGEHAND_OT_select_connected_objects)
+    safe_register_class(STAGEHAND_OT_select_connected_objects)
     register_keymap()
+    safe_add_handler(bpy.app.handlers.depsgraph_update_post, stagehand_depsgraph_update_post)
+    safe_add_handler(bpy.app.handlers.undo_post, stagehand_undo_redo_post)
+    safe_add_handler(bpy.app.handlers.redo_post, stagehand_undo_redo_post)
+    safe_add_handler(bpy.app.handlers.load_post, stagehand_undo_redo_post)
     if not bpy.app.timers.is_registered(connection_maintenance_timer):
         bpy.app.timers.register(
             connection_maintenance_timer,
             first_interval=CONNECTION_MAINTENANCE_INTERVAL,
         )
+    if not bpy.app.timers.is_registered(initial_connection_refresh_timer):
+        bpy.app.timers.register(
+            initial_connection_refresh_timer,
+            first_interval=CONNECTION_REFRESH_POLL_INTERVAL,
+        )
 
 
 def unregister():
     unregister_keymap()
+    safe_remove_handler(bpy.app.handlers.depsgraph_update_post, stagehand_depsgraph_update_post)
+    safe_remove_handler(bpy.app.handlers.undo_post, stagehand_undo_redo_post)
+    safe_remove_handler(bpy.app.handlers.redo_post, stagehand_undo_redo_post)
+    safe_remove_handler(bpy.app.handlers.load_post, stagehand_undo_redo_post)
+    if bpy.app.timers.is_registered(initial_connection_refresh_timer):
+        bpy.app.timers.unregister(initial_connection_refresh_timer)
+    if bpy.app.timers.is_registered(dirty_connection_refresh_timer):
+        bpy.app.timers.unregister(dirty_connection_refresh_timer)
+    _DIRTY_CONNECTION_OBJECT_UIDS.clear()
     if bpy.app.timers.is_registered(connection_maintenance_timer):
         bpy.app.timers.unregister(connection_maintenance_timer)
-    bpy.utils.unregister_class(STAGEHAND_OT_select_connected_objects)
+    safe_unregister_class(STAGEHAND_OT_select_connected_objects)
