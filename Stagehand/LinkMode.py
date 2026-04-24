@@ -123,9 +123,7 @@ def _apply_preview_alignment(context, imported_object, imported_link_index):
     imported_link = imported_object.stagehand.links[imported_link_index]
     target_center, target_rotation = _link_transform(target_object, target_link)
     imported_center, imported_rotation = _link_transform(imported_object, imported_link)
-    target_forward = _link_forward(target_rotation)
-    imported_forward = _link_forward(imported_rotation)
-    rotation_delta = imported_forward.rotation_difference(-target_forward)
+    rotation_delta = Connections.link_alignment_rotation_delta(imported_rotation, target_rotation)
     _rotate_objects_around_pivot(pending_objects, rotation_delta, imported_center)
     imported_center, _imported_rotation = _link_transform(imported_object, imported_link)
     _translate_objects(pending_objects, target_center - imported_center)

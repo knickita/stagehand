@@ -13,6 +13,7 @@ from .LinkTypes import are_link_types_compatible
 CONNECTION_MAINTENANCE_INTERVAL = 0.5
 AUTO_CONNECT_DISTANCE_THRESHOLD = 0.0001
 AUTO_CONNECT_ANGLE_THRESHOLD = radians(0.1)
+LINK_ALIGNMENT_FLIP = Quaternion((0.0, 0.0, 1.0), radians(180.0))
 _LAST_KNOWN_MATRICES = {}
 addon_keymaps = []
 
@@ -71,6 +72,11 @@ def _link_forward(rotation):
     return forward.normalized()
 
 
+def link_alignment_rotation_delta(link_rotation, target_rotation):
+    desired_link_rotation = target_rotation @ LINK_ALIGNMENT_FLIP
+    return desired_link_rotation @ link_rotation.inverted()
+
+
 def _rotate_object_around_pivot(obj, rotation_delta, pivot):
     pivot_matrix = Matrix.Translation(pivot)
     rotation_matrix = rotation_delta.to_matrix().to_4x4()
@@ -85,7 +91,7 @@ def _align_object_link_to_target(obj, link_index, target_obj, target_link_index)
 
     link_center, link_rotation = _link_transform(obj, link)
     target_center, target_rotation = _link_transform(target_obj, target_link)
-    rotation_delta = _link_forward(link_rotation).rotation_difference(-_link_forward(target_rotation))
+    rotation_delta = link_alignment_rotation_delta(link_rotation, target_rotation)
     _rotate_object_around_pivot(obj, rotation_delta, link_center)
 
     corrected_center, _corrected_rotation = _link_transform(obj, link)
