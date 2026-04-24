@@ -10,6 +10,7 @@ from mathutils import Matrix, Quaternion, Vector
 
 from .AddStagehandObject import ensure_stagehand_link_uid, ensure_stagehand_uid
 from .LinkTypes import are_link_types_compatible
+from . import ProjectDatabase
 from .RegistrationUtils import (
     safe_add_handler,
     safe_register_class,
@@ -22,16 +23,22 @@ from .RegistrationUtils import (
 CONNECTION_MAINTENANCE_INTERVAL = 0.5
 CONNECTION_REFRESH_POLL_INTERVAL = 0.05
 CONNECTION_REFRESH_SETTLE_INTERVAL = 0.1
+TRANSFORM_WATCH_INTERVAL = 0.1
 AUTO_CONNECT_DISTANCE_THRESHOLD = 0.0001
 AUTO_CONNECT_ANGLE_THRESHOLD = radians(0.1)
 LINK_ALIGNMENT_FLIP = Quaternion((0.0, 0.0, 1.0), radians(180.0))
 _DIRTY_CONNECTION_OBJECT_UIDS = set()
 _DIRTY_CONNECTION_REFRESH_DEADLINE = 0.0
+_LAST_KNOWN_MATRICES = {}
 addon_keymaps = []
 
 
 def _data_objects():
     return getattr(bpy.data, "objects", None)
+
+
+def _matrix_signature(matrix):
+    return tuple(round(value, 9) for row in matrix for value in row)
 
 
 def is_stagehand_object(obj):
@@ -40,6 +47,123 @@ def is_stagehand_object(obj):
         and getattr(obj, "stagehand", None) is not None
         and obj.stagehand.is_stagehand_object
     )
+
+
+def _clear_legacy_link_connection(link):
+    link.connectedObjectUid = ""
+    link.connectedLinkUid = ""
+    link.connectedLinkIndex = -1
+
+
+def _get_database_connections(create=False):
+    return ProjectDatabase.get_connections(create=create)
+
+
+def _set_database_connections(connections):
+    ProjectDatabase.set_connections(connections)
+
+
+def _get_database_link_parents(create=False):
+    return ProjectDatabase.get_link_parents(create=create)
+
+
+def _set_database_link_parents(link_parents):
+    ProjectDatabase.set_link_parents(link_parents)
+
+
+def _get_database_object_names(create=False):
+    return ProjectDatabase.get_object_names(create=create)
+
+
+def _set_database_object_names(object_names):
+    ProjectDatabase.set_object_names(object_names)
+
+
+def _set_database_connection_pair(link_uid_a, link_uid_b):
+    if not link_uid_a or not link_uid_b:
+        return
+
+    connections = _get_database_connections(create=True)
+    if connections.get(link_uid_a) == link_uid_b and connections.get(link_uid_b) == link_uid_a:
+        return
+
+    connections[link_uid_a] = link_uid_b
+    connections[link_uid_b] = link_uid_a
+    _set_database_connections(connections)
+
+
+def _remove_database_connection(link_uid):
+    if not link_uid:
+        return
+
+    connections = _get_database_connections(create=False)
+    if not connections:
+        return
+
+    other_link_uid = connections.pop(link_uid, "")
+    if other_link_uid and connections.get(other_link_uid) == link_uid:
+        del connections[other_link_uid]
+    _set_database_connections(connections)
+
+
+def _get_connected_link_uid(link):
+    if link is None:
+        return ""
+    link_uid = ensure_stagehand_link_uid(link)
+    connections = _get_database_connections(create=False)
+    return str(connections.get(link_uid, ""))
+
+
+def _is_link_connected(link):
+    return bool(_get_connected_link_uid(link))
+
+
+def _set_link_parent(link_uid, object_uid):
+    if not link_uid or not object_uid:
+        return
+
+    link_parents = _get_database_link_parents(create=True)
+    if link_parents.get(link_uid) == object_uid:
+        return
+
+    link_parents[link_uid] = object_uid
+    _set_database_link_parents(link_parents)
+
+
+def _remove_link_parent(link_uid):
+    if not link_uid:
+        return
+
+    link_parents = _get_database_link_parents(create=False)
+    if link_uid not in link_parents:
+        return
+
+    del link_parents[link_uid]
+    _set_database_link_parents(link_parents)
+
+
+def _set_object_name(object_uid, object_name):
+    if not object_uid or not object_name:
+        return
+
+    object_names = _get_database_object_names(create=True)
+    if object_names.get(object_uid) == object_name:
+        return
+
+    object_names[object_uid] = object_name
+    _set_database_object_names(object_names)
+
+
+def _remove_object_name(object_uid):
+    if not object_uid:
+        return
+
+    object_names = _get_database_object_names(create=False)
+    if object_uid not in object_names:
+        return
+
+    del object_names[object_uid]
+    _set_database_object_names(object_names)
 
 
 def get_object_uid(obj):
@@ -144,6 +268,15 @@ def find_object_by_uid(uid):
     if not uid:
         return None
 
+    object_names = _get_database_object_names(create=False)
+    object_name = object_names.get(uid, "")
+    if object_name:
+        objects = _data_objects()
+        if objects is not None:
+            obj = objects.get(object_name)
+            if obj is not None and is_stagehand_object(obj) and get_object_uid(obj) == uid:
+                return obj
+
     for obj in iter_stagehand_objects():
         if get_object_uid(obj) == uid:
             return obj
@@ -172,43 +305,46 @@ def find_link_by_uid(obj, link_uid):
     return None, -1
 
 
+def get_connected_link_uid(link):
+    return _get_connected_link_uid(link)
+
+
+def is_link_connected(link):
+    return _is_link_connected(link)
+
+
+def get_link_parent_object_uid(link_uid):
+    return str(_get_database_link_parents(create=False).get(link_uid, ""))
+
+
 def clear_link_connection(obj, link_index):
     link = get_link(obj, link_index)
     if link is None:
         return
 
-    link.connectedObjectUid = ""
-    link.connectedLinkUid = ""
-    link.connectedLinkIndex = -1
+    _remove_database_connection(ensure_stagehand_link_uid(link))
+    _clear_legacy_link_connection(link)
 
 
 def disconnect_link(obj, link_index):
     link = get_link(obj, link_index)
-    if link is None or not link.connectedObjectUid:
+    if link is None:
+        return
+
+    other_link_uid = _get_connected_link_uid(link)
+    if not other_link_uid:
         clear_link_connection(obj, link_index)
         return
 
-    other_obj = find_object_by_uid(link.connectedObjectUid)
-    other_link_uid = link.connectedLinkUid
-    other_link_index = link.connectedLinkIndex
+    other_obj = find_object_by_uid(_get_database_link_parents(create=False).get(other_link_uid, ""))
     clear_link_connection(obj, link_index)
 
     if other_obj is None:
         return
 
-    other_link = None
-    if other_link_uid:
-        other_link, resolved_index = find_link_by_uid(other_obj, other_link_uid)
-        if other_link is not None:
-            other_link_index = resolved_index
-
-    if other_link is None:
-        other_link = get_link(other_obj, other_link_index)
-
+    other_link, _other_link_index = find_link_by_uid(other_obj, other_link_uid)
     if other_link is not None:
-        other_link.connectedObjectUid = ""
-        other_link.connectedLinkUid = ""
-        other_link.connectedLinkIndex = -1
+        _clear_legacy_link_connection(other_link)
 
 
 def connect_links(obj_a, link_index_a, obj_b, link_index_b):
@@ -228,32 +364,32 @@ def connect_links(obj_a, link_index_a, obj_b, link_index_b):
     link_uid_a = ensure_stagehand_link_uid(link_a)
     link_uid_b = ensure_stagehand_link_uid(link_b)
 
-    link_a.connectedObjectUid = uid_b
-    link_a.connectedLinkUid = link_uid_b
-    link_a.connectedLinkIndex = link_index_b
-    link_b.connectedObjectUid = uid_a
-    link_b.connectedLinkUid = link_uid_a
-    link_b.connectedLinkIndex = link_index_a
+    _set_object_name(uid_a, obj_a.name_full)
+    _set_object_name(uid_b, obj_b.name_full)
+    _set_link_parent(link_uid_a, uid_a)
+    _set_link_parent(link_uid_b, uid_b)
+    _set_database_connection_pair(link_uid_a, link_uid_b)
+    _clear_legacy_link_connection(link_a)
+    _clear_legacy_link_connection(link_b)
     return True
 
 
 def get_connected_link(obj, link_index):
     link = get_link(obj, link_index)
-    if link is None or not link.connectedObjectUid:
+    if link is None:
         return None, None, None
 
-    other_obj = find_object_by_uid(link.connectedObjectUid)
+    other_link_uid = _get_connected_link_uid(link)
+    if not other_link_uid:
+        _clear_legacy_link_connection(link)
+        return None, None, None
+
+    other_obj_uid = _get_database_link_parents(create=False).get(other_link_uid, "")
+    other_obj = find_object_by_uid(other_obj_uid)
     if other_obj is None:
         return None, None, None
 
-    other_link = None
-    other_link_index = -1
-    if link.connectedLinkUid:
-        other_link, other_link_index = find_link_by_uid(other_obj, link.connectedLinkUid)
-
-    if other_link is None and link.connectedLinkIndex >= 0:
-        other_link = get_link(other_obj, link.connectedLinkIndex)
-        other_link_index = link.connectedLinkIndex
+    other_link, other_link_index = find_link_by_uid(other_obj, other_link_uid)
 
     if other_link is None:
         return other_obj, None, -1
@@ -311,27 +447,24 @@ def _pick_stagehand_object(context, event):
     return obj
 
 
-def _migrate_legacy_connection_indexes():
+def _rebuild_database_indexes():
+    object_names = {}
+    link_parents = {}
+
     for obj in iter_stagehand_objects():
-        ensure_stagehand_uid(obj)
-        for index, link in iter_object_links(obj):
-            if not link.connectedObjectUid or link.connectedLinkUid:
-                continue
+        object_uid = get_object_uid(obj)
+        object_names[object_uid] = obj.name_full
 
-            other_obj = find_object_by_uid(link.connectedObjectUid)
-            if other_obj is None:
-                clear_link_connection(obj, index)
-                continue
+        for _index, link in iter_object_links(obj):
+            link_parents[ensure_stagehand_link_uid(link)] = object_uid
 
-            other_link = get_link(other_obj, link.connectedLinkIndex)
-            if other_link is None:
-                clear_link_connection(obj, index)
-                continue
-
-            link.connectedLinkUid = ensure_stagehand_link_uid(other_link)
+    _set_database_object_names(object_names)
+    _set_database_link_parents(link_parents)
 
 
 def _repair_duplicate_ids():
+    _rebuild_database_indexes()
+
     groups = defaultdict(list)
     for obj in iter_stagehand_objects():
         groups[get_object_uid(obj)].append(obj)
@@ -356,8 +489,8 @@ def _repair_duplicate_ids():
                     {
                         "link_index": link_index,
                         "old_link_uid": link.uid,
-                        "connected_object_uid": link.connectedObjectUid,
-                        "connected_link_uid": link.connectedLinkUid,
+                        "connected_object_uid": get_link_parent_object_uid(_get_connected_link_uid(link)),
+                        "connected_link_uid": _get_connected_link_uid(link),
                     }
                 )
 
@@ -376,9 +509,11 @@ def _repair_duplicate_ids():
                 new_link_uid = str(uuid.uuid4())
                 link.uid = new_link_uid
                 link_uid_remap[(original_uid, duplicate_index, old_link_uid)] = new_link_uid
-                link.connectedObjectUid = ""
-                link.connectedLinkUid = ""
-                link.connectedLinkIndex = -1
+                _remove_database_connection(old_link_uid)
+                _remove_link_parent(old_link_uid)
+                _clear_legacy_link_connection(link)
+
+    _rebuild_database_indexes()
 
     for obj_name, snapshot in duplicate_snapshots.items():
         obj = bpy.data.objects.get(obj_name)
@@ -410,61 +545,49 @@ def _repair_duplicate_ids():
                 clear_link_connection(obj, link_snapshot["link_index"])
                 continue
 
-            link.connectedObjectUid = target_duplicate_uid
-            link.connectedLinkUid = target_duplicate_link_uid
-            link.connectedLinkIndex = target_link_index
+            connect_links(obj, link_snapshot["link_index"], target_obj, target_link_index)
 
 
 def prune_stale_connections():
-    _migrate_legacy_connection_indexes()
+    _rebuild_database_indexes()
     _repair_duplicate_ids()
 
     live_uids = {get_object_uid(obj) for obj in iter_stagehand_objects()}
+    connections = _get_database_connections(create=False)
 
     for obj in iter_stagehand_objects():
         uid = get_object_uid(obj)
         for index, link in iter_object_links(obj):
-            if not link.connectedObjectUid:
+            link_uid = ensure_stagehand_link_uid(link)
+            other_link_uid = str(connections.get(link_uid, ""))
+            if not other_link_uid:
+                _clear_legacy_link_connection(link)
                 continue
 
-            if link.connectedObjectUid not in live_uids:
+            other_obj_uid = get_link_parent_object_uid(other_link_uid)
+            if not other_obj_uid or other_obj_uid not in live_uids:
                 clear_link_connection(obj, index)
                 continue
 
-            other_obj = find_object_by_uid(link.connectedObjectUid)
+            other_obj = find_object_by_uid(other_obj_uid)
             if other_obj is None:
                 clear_link_connection(obj, index)
                 continue
 
-            other_link = None
-            other_link_index = -1
-            if link.connectedLinkUid:
-                other_link, other_link_index = find_link_by_uid(other_obj, link.connectedLinkUid)
-
-            if other_link is None and link.connectedLinkIndex >= 0:
-                other_link = get_link(other_obj, link.connectedLinkIndex)
-                other_link_index = link.connectedLinkIndex
-                if other_link is not None:
-                    link.connectedLinkUid = ensure_stagehand_link_uid(other_link)
-
+            other_link, other_link_index = find_link_by_uid(other_obj, other_link_uid)
             if other_link is None:
                 clear_link_connection(obj, index)
                 continue
 
-            if other_link.connectedObjectUid != uid:
+            if _get_connected_link_uid(other_link) != link_uid:
                 clear_link_connection(obj, index)
                 continue
-
-            if other_link.connectedLinkUid and other_link.connectedLinkUid != ensure_stagehand_link_uid(link):
-                clear_link_connection(obj, index)
-                continue
-
-            link.connectedLinkIndex = other_link_index
+            _clear_legacy_link_connection(link)
 
 
 def _iter_compatible_unconnected_links(obj):
     for index, link in iter_object_links(obj):
-        if link.connectedObjectUid:
+        if _is_link_connected(link):
             continue
         yield index, link
 
@@ -490,7 +613,7 @@ def _unique_stagehand_objects(objects):
 def _disconnect_invalid_connections(objects):
     for obj in _unique_stagehand_objects(objects):
         for index, link in iter_object_links(obj):
-            if not link.connectedObjectUid:
+            if not _is_link_connected(link):
                 continue
 
             other_obj, other_link, other_link_index = get_connected_link(obj, index)
@@ -566,23 +689,42 @@ def refresh_connections_for_objects(objects):
         other_link = get_link(other_obj, other_link_index)
         if link is None or other_link is None:
             continue
-        if link.connectedObjectUid or other_link.connectedObjectUid:
+        if _is_link_connected(link) or _is_link_connected(other_link):
             continue
         connect_links(obj, link_index, other_obj, other_link_index)
 
 
 def _iter_pending_operators():
+    seen_ids = set()
     context = bpy.context
     window = getattr(context, "window", None)
     if window is not None:
         for operator in getattr(window, "modal_operators", ()):
+            operator_key = id(operator)
+            if operator_key in seen_ids:
+                continue
+            seen_ids.add(operator_key)
+            yield operator
+
+    window_manager = getattr(context, "window_manager", None)
+    if window_manager is not None:
+        for operator in getattr(window_manager, "operators", ()):
+            operator_key = id(operator)
+            if operator_key in seen_ids:
+                continue
+            seen_ids.add(operator_key)
             yield operator
 
 
+def _pending_operator_ids():
+    return [str(getattr(operator, "bl_idname", "")).lower() for operator in _iter_pending_operators()]
+
+
 def _transform_operator_active():
-    for operator in _iter_pending_operators():
-        operator_id = str(getattr(operator, "bl_idname", "")).lower()
+    for operator_id in _pending_operator_ids():
         if operator_id.startswith("transform_ot_"):
+            return True
+        if operator_id.startswith("object_ot_duplicate"):
             return True
         if operator_id == "stagehand_ot_move_with_snap":
             return True
@@ -642,7 +784,7 @@ def dirty_connection_refresh_timer():
             return CONNECTION_REFRESH_POLL_INTERVAL
 
         _process_dirty_connection_refresh()
-    except RuntimeError:
+    except Exception:
         return CONNECTION_REFRESH_POLL_INTERVAL
 
     if _DIRTY_CONNECTION_OBJECT_UIDS:
@@ -654,6 +796,7 @@ def initial_connection_refresh_timer():
     if _data_objects() is None:
         return CONNECTION_REFRESH_POLL_INTERVAL
 
+    ProjectDatabase.get_database_object(create=True)
     mark_all_objects_dirty(delay=0.0)
     return None
 
@@ -680,13 +823,42 @@ def stagehand_undo_redo_post(_dummy):
     mark_all_objects_dirty(delay=0.0)
 
 
+def _poll_stagehand_transform_changes():
+    live_uids = set()
+    changed_objects = []
+
+    for obj in iter_stagehand_objects():
+        uid = get_object_uid(obj)
+        if not uid:
+            continue
+
+        live_uids.add(uid)
+        signature = _matrix_signature(obj.matrix_world)
+        previous_signature = _LAST_KNOWN_MATRICES.get(uid)
+        if previous_signature is None:
+            _LAST_KNOWN_MATRICES[uid] = signature
+            continue
+
+        if signature != previous_signature:
+            _LAST_KNOWN_MATRICES[uid] = signature
+            changed_objects.append(obj)
+
+    for uid in list(_LAST_KNOWN_MATRICES.keys()):
+        if uid not in live_uids:
+            del _LAST_KNOWN_MATRICES[uid]
+
+    if changed_objects:
+        mark_objects_dirty(changed_objects)
+
+
 def connection_maintenance_timer():
     try:
+        _poll_stagehand_transform_changes()
         prune_stale_connections()
-    except RuntimeError:
+    except Exception:
         pass
 
-    return CONNECTION_MAINTENANCE_INTERVAL
+    return TRANSFORM_WATCH_INTERVAL
 
 
 class STAGEHAND_OT_select_connected_objects(bpy.types.Operator):

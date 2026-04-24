@@ -20,6 +20,7 @@ def _load_submodule(module_name):
 
 
 AddStagehandObject = _load_submodule("AddStagehandObject")
+ProjectDatabase = _load_submodule("ProjectDatabase")
 Connections = _load_submodule("Connections")
 FirstPersonLook = _load_submodule("FirstPersonLook")
 LinkMode = _load_submodule("LinkMode")
@@ -31,6 +32,7 @@ SnapLogics = _load_submodule("SnapLogics")
 
 classes = (    
     AddStagehandObject,
+    ProjectDatabase,
     Connections,
     FirstPersonLook,
     LinkMode,

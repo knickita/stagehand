@@ -225,7 +225,7 @@ def _build_link_segments(obj):
     line_segments = []
     filled_triangles = []
     for link in obj.stagehand.links:
-        if link.connectedObjectUid:
+        if Connections.is_link_connected(link):
             continue
 
         radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
@@ -261,7 +261,7 @@ def _build_link_segments_for_items(link_items, color):
 def _iter_clickable_links(obj):
     context = bpy.context
     for index, link in enumerate(obj.stagehand.links):
-        if link.connectedObjectUid:
+        if Connections.is_link_connected(link):
             continue
 
         if link.cylindricalType:
@@ -277,7 +277,7 @@ def _iter_clickable_links(obj):
 def _iter_compatible_links(obj, target_link_type):
     context = bpy.context
     for index, link in enumerate(obj.stagehand.links):
-        if link.connectedObjectUid:
+        if Connections.is_link_connected(link):
             continue
         if not are_link_types_compatible(link.type, target_link_type):
             continue
@@ -438,7 +438,7 @@ def _draw_link_mode():
             )
             if 0 <= selected_link_index < len(pending_anchor_object.stagehand.links):
                 selected_link = pending_anchor_object.stagehand.links[selected_link_index]
-                if not selected_link.connectedObjectUid and are_link_types_compatible(selected_link.type, target_link.type):
+                if not Connections.is_link_connected(selected_link) and are_link_types_compatible(selected_link.type, target_link.type):
                     selected_center, selected_rotation = _link_transform(pending_anchor_object, selected_link)
                     selected_radius = selected_link.displayRadius if selected_link.displayRadius > 0.0 else 0.1
                     draw_groups.append(

@@ -37,7 +37,7 @@ def _link_transform(obj, link):
 
 def _iter_available_links(obj):
     for index, link in enumerate(obj.stagehand.links):
-        if link.connectedObjectUid:
+        if Connections.is_link_connected(link):
             continue
         center, rotation = _link_transform(obj, link)
         yield index, link, center, rotation

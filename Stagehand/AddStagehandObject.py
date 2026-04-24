@@ -335,6 +335,7 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         stagehand = context.object.stagehand
+        from . import Connections
         readonly_column = layout.column()
         readonly_column.enabled = False
 
@@ -372,10 +373,11 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
                 item_box.prop(link_item, "displayRadius")
                 item_box.prop(link_item, "length")
                 item_box.prop(link_item, "posDir")
-                if link_item.connectedObjectUid:
-                    item_box.label(text=f"Connected UID: {link_item.connectedObjectUid}")
-                    if link_item.connectedLinkUid:
-                        item_box.label(text=f"Connected Link UID: {link_item.connectedLinkUid}")
+                connected_link_uid = Connections.get_connected_link_uid(link_item)
+                if connected_link_uid:
+                    connected_object_uid = Connections.get_link_parent_object_uid(connected_link_uid)
+                    item_box.label(text=f"Connected UID: {connected_object_uid}")
+                    item_box.label(text=f"Connected Link UID: {connected_link_uid}")
 
 
 classes = (
