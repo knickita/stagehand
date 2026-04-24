@@ -53,6 +53,39 @@ def _tag_imported_object(obj, asset_data):
     apply_stagehand_catalogue_data(obj, asset_data)
 
 
+def _iter_stagehand_scene_objects():
+    for obj in bpy.data.objects:
+        stagehand = getattr(obj, "stagehand", None)
+        if stagehand is None or not stagehand.is_stagehand_object:
+            continue
+        yield obj
+
+
+def refresh_scene_objects_from_catalogue():
+    refreshed_count = 0
+    skipped_count = 0
+
+    for obj in _iter_stagehand_scene_objects():
+        asset_id = int(obj.stagehand.asset_id)
+        if asset_id < 0:
+            continue
+
+        asset_data = CATALOGUE_BY_ID.get(asset_id)
+        if asset_data is None:
+            skipped_count += 1
+            continue
+
+        apply_stagehand_catalogue_data(obj, asset_data, preserve_links=True)
+        refreshed_count += 1
+
+    if refreshed_count or skipped_count:
+        from . import Connections
+
+        Connections.prune_stale_connections()
+
+    return refreshed_count, skipped_count
+
+
 def _import_asset(asset_data):
     mesh_path, attempted_paths = _resolve_mesh_path(asset_data["mesh3d"])
     if mesh_path is None:
@@ -123,15 +156,25 @@ class STAGEHAND_OT_reload_catalogue(bpy.types.Operator):
     bl_description = "Reload Stagehand catalogue assets"
 
     def execute(self, context):
-        del context
-
         try:
             reload_catalogue_operators()
+            refreshed_count, skipped_count = refresh_scene_objects_from_catalogue()
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"Loaded {len(CATALOGUE_BY_ID)} Stagehand assets")
+        if context.screen is not None:
+            for area in context.screen.areas:
+                if area.type in {'VIEW_3D', 'PROPERTIES'}:
+                    area.tag_redraw()
+
+        message = (
+            f"Loaded {len(CATALOGUE_BY_ID)} Stagehand assets and refreshed "
+            f"{refreshed_count} scene objects"
+        )
+        if skipped_count:
+            message += f" ({skipped_count} without catalogue match)"
+        self.report({'INFO'}, message)
         return {'FINISHED'}
 
 

@@ -728,7 +728,7 @@
             "uniqueId": 9,
             "mesh3d": "Models/litecQX30-dado",
             "tags": [
-                "trusscube"
+                "trussjoint"
             ],
             "links": [
                 {
@@ -828,7 +828,9 @@
             "name": "base 90 kg",
             "uniqueId": 10,
             "mesh3d": "Models/base-90kg",
-            "tags": [],
+            "tags": [
+                "trussjoint"
+            ],
             "links": [
                 {
                     "posdir": [
@@ -3420,7 +3422,7 @@
             "uniqueId": 34,
             "mesh3d": "Models/litecQX40-dado",
             "tags": [
-                "trusscube"
+                "trussjoint"
             ],
             "links": [
                 {
@@ -3521,7 +3523,7 @@
             "uniqueId": 35,
             "mesh3d": "Models/litec-carrello",
             "tags": [
-                "trusscube"
+                "trussjoint"
             ],
             "links": [
                 {

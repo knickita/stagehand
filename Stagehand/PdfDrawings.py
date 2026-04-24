@@ -71,8 +71,8 @@ def _is_truss_object(obj):
     return _has_tag(obj, "truss")
 
 
-def _is_trusscube_object(obj):
-    return _has_tag(obj, "trusscube")
+def _is_trussjoint_object(obj):
+    return _has_tag(obj, "trussjoint") or _has_tag(obj, "trusscube")
 
 
 def _object_bounds(objects):
@@ -167,14 +167,14 @@ def _segment_key(objects):
 
 def _build_truss_segments(truss_objects):
     visible_truss_uids = {_object_uid(obj) for obj in truss_objects}
-    trusscube_objects = [obj for obj in truss_objects if _is_trusscube_object(obj)]
-    segments = [[obj] for obj in trusscube_objects]
+    trussjoint_objects = [obj for obj in truss_objects if _is_trussjoint_object(obj)]
+    segments = [[obj] for obj in trussjoint_objects]
     seen_segments = set()
 
-    for obj in trusscube_objects:
+    for obj in trussjoint_objects:
         seen_segments.add((_object_uid(obj),))
 
-    for start_obj in trusscube_objects:
+    for start_obj in trussjoint_objects:
         start_uid = _object_uid(start_obj)
         for neighbor in _connected_truss_neighbors(start_obj, visible_truss_uids):
             path = [start_obj, neighbor]
@@ -189,8 +189,8 @@ def _build_truss_segments(truss_objects):
 
                 visited.add(current_uid)
 
-                if _is_trusscube_object(current_obj):
-                    segment = [obj for obj in path if not _is_trusscube_object(obj)]
+                if _is_trussjoint_object(current_obj):
+                    segment = [obj for obj in path if not _is_trussjoint_object(obj)]
                     key = _segment_key(segment)
                     if segment and key not in seen_segments:
                         seen_segments.add(key)
@@ -204,7 +204,7 @@ def _build_truss_segments(truss_objects):
                 ]
 
                 if not next_objects:
-                    segment = [obj for obj in path if not _is_trusscube_object(obj)]
+                    segment = [obj for obj in path if not _is_trussjoint_object(obj)]
                     key = _segment_key(segment)
                     if segment and key not in seen_segments:
                         seen_segments.add(key)

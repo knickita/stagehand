@@ -106,6 +106,82 @@ def _clear_collection(collection):
         collection.remove(len(collection) - 1)
 
 
+def _round_link_float(value):
+    return round(float(value), 6)
+
+
+def _link_signature(type_value, cylindrical_type, display_radius, length, pos_dir):
+    return (
+        int(type_value),
+        bool(cylindrical_type),
+        _round_link_float(display_radius),
+        _round_link_float(length),
+        tuple(_round_link_float(value) for value in pos_dir),
+    )
+
+
+def _catalogue_link_signature(link_data):
+    return _link_signature(
+        link_data.get("type", 0),
+        link_data.get("cylindricaltype", False),
+        link_data.get("displayradius", 0.0),
+        link_data.get("length", 0.0),
+        link_data.get("posdir", ()),
+    )
+
+
+def _snapshot_stagehand_links(links):
+    snapshots = []
+
+    for index, link in enumerate(links):
+        snapshots.append(
+            {
+                "index": index,
+                "uid": str(link.uid),
+                "type": int(link.type),
+                "cylindricalType": bool(link.cylindricalType),
+                "displayRadius": float(link.displayRadius),
+                "length": float(link.length),
+                "posDir": tuple(float(value) for value in link.posDir),
+                "connectedObjectUid": str(link.connectedObjectUid),
+                "connectedLinkUid": str(link.connectedLinkUid),
+                "connectedLinkIndex": int(link.connectedLinkIndex),
+            }
+        )
+
+    return snapshots
+
+
+def _snapshot_link_signature(snapshot):
+    return _link_signature(
+        snapshot["type"],
+        snapshot["cylindricalType"],
+        snapshot["displayRadius"],
+        snapshot["length"],
+        snapshot["posDir"],
+    )
+
+
+def _pop_preserved_link_state(link_states, link_data, link_index):
+    target_signature = _catalogue_link_signature(link_data)
+
+    for candidate_index, candidate in enumerate(link_states):
+        if candidate["index"] != link_index:
+            continue
+        if _snapshot_link_signature(candidate) == target_signature:
+            return link_states.pop(candidate_index)
+
+    for candidate_index, candidate in enumerate(link_states):
+        if _snapshot_link_signature(candidate) == target_signature:
+            return link_states.pop(candidate_index)
+
+    for candidate_index, candidate in enumerate(link_states):
+        if candidate["index"] == link_index:
+            return link_states.pop(candidate_index)
+
+    return None
+
+
 def ensure_stagehand_uid(obj):
     if not obj.stagehand.uid:
         obj.stagehand.uid = str(uuid.uuid4())
@@ -118,10 +194,39 @@ def ensure_stagehand_link_uid(link):
     return link.uid
 
 
-def apply_stagehand_catalogue_data(obj, asset_data=None):
+def _apply_stagehand_link_data(link_item, link_data, preserved_state=None):
+    if preserved_state is not None and preserved_state["uid"]:
+        link_item.uid = preserved_state["uid"]
+
+    ensure_stagehand_link_uid(link_item)
+    link_item.type = int(link_data.get("type", 0))
+    link_item.cylindricalType = bool(link_data.get("cylindricaltype", False))
+    link_item.displayRadius = float(link_data.get("displayradius", 0.0))
+    link_item.length = float(link_data.get("length", 0.0))
+
+    pos_dir = tuple(float(value) for value in link_data.get("posdir", []))
+    if len(pos_dir) == 7:
+        link_item.posDir = pos_dir
+
+    if preserved_state is None:
+        link_item.connectedObjectUid = ""
+        link_item.connectedLinkUid = ""
+        link_item.connectedLinkIndex = -1
+        return
+
+    link_item.connectedObjectUid = preserved_state["connectedObjectUid"]
+    link_item.connectedLinkUid = preserved_state["connectedLinkUid"]
+    link_item.connectedLinkIndex = preserved_state["connectedLinkIndex"]
+
+
+def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
     stagehand = obj.stagehand
     stagehand.is_stagehand_object = True
     ensure_stagehand_uid(obj)
+
+    preserved_link_states = []
+    if preserve_links and asset_data is not None:
+        preserved_link_states = _snapshot_stagehand_links(stagehand.links)
 
     if asset_data is None:
         stagehand.asset_id = -1
@@ -141,20 +246,16 @@ def apply_stagehand_catalogue_data(obj, asset_data=None):
         tag_item.value = str(tag_value)
 
     _clear_collection(stagehand.links)
-    for link_data in asset_data.get("links", []):
+    for link_index, link_data in enumerate(asset_data.get("links", [])):
         link_item = stagehand.links.add()
-        ensure_stagehand_link_uid(link_item)
-        link_item.type = int(link_data.get("type", 0))
-        link_item.cylindricalType = bool(link_data.get("cylindricaltype", False))
-        link_item.displayRadius = float(link_data.get("displayradius", 0.0))
-        link_item.length = float(link_data.get("length", 0.0))
-
-        pos_dir = tuple(float(value) for value in link_data.get("posdir", []))
-        if len(pos_dir) == 7:
-            link_item.posDir = pos_dir
-        link_item.connectedObjectUid = ""
-        link_item.connectedLinkUid = ""
-        link_item.connectedLinkIndex = -1
+        preserved_state = None
+        if preserve_links:
+            preserved_state = _pop_preserved_link_state(
+                preserved_link_states,
+                link_data,
+                link_index,
+            )
+        _apply_stagehand_link_data(link_item, link_data, preserved_state=preserved_state)
 
 
 def prevent_stagehand_edit_mode():
