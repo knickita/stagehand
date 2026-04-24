@@ -6,7 +6,7 @@ from pathlib import Path
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 from . import Connections
 
@@ -140,8 +140,10 @@ def _segment_local_box(segment_objects, rotation=None):
 
 
 def _structure_rotation(objects):
-    del objects
-    return Matrix.Identity(3)
+    if not objects:
+        return Matrix.Identity(3)
+
+    return objects[0].matrix_world.to_quaternion().to_matrix()
 
 
 def _object_uid(obj):
@@ -281,6 +283,34 @@ def _projected_box(objects, camera_rotation):
     return min_corner, max_corner
 
 
+def _camera_rotation_from_direction(direction, up):
+    direction = direction.normalized()
+    base_quaternion = direction.to_track_quat('-Z', 'Y')
+    axis = direction
+    desired_up = up - (axis * up.dot(axis))
+    camera_up = base_quaternion @ Vector((0.0, 1.0, 0.0))
+    current_up = camera_up - (axis * camera_up.dot(axis))
+
+    if desired_up.length_squared <= 0.000001 or current_up.length_squared <= 0.000001:
+        return base_quaternion.to_euler()
+
+    desired_up.normalize()
+    current_up.normalize()
+    roll = math.atan2(axis.dot(current_up.cross(desired_up)), current_up.dot(desired_up))
+    return (Quaternion(axis, roll) @ base_quaternion).to_euler()
+
+
+def _view_direction_and_up(view_name, structure_rotation):
+    direction, up = {
+        "Front": (Vector((0.0, -1.0, 0.0)), Vector((0.0, 0.0, 1.0))),
+        "Left": (Vector((1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0))),
+        "Top": (Vector((0.0, 0.0, -1.0)), Vector((0.0, 1.0, 0.0))),
+        "Iso": (Vector((-1.0, -1.0, -0.75)), Vector((0.0, 0.0, 1.0))),
+    }[view_name]
+
+    return structure_rotation @ direction, structure_rotation @ up
+
+
 def _fit_camera_to_projected_objects(scene, camera, objects, view_center, padding=1.16):
     if not objects:
         return False, view_center
@@ -308,9 +338,9 @@ def _fit_camera_to_projected_objects(scene, camera, objects, view_center, paddin
     return scale_changed or location_changed, new_view_center
 
 
-def _set_camera_view(scene, camera, center, objects, view_direction):
+def _set_camera_view(scene, camera, center, objects, view_direction, view_up):
     direction = view_direction.normalized()
-    camera_rotation = direction.to_track_quat('-Z', 'Y').to_euler()
+    camera_rotation = _camera_rotation_from_direction(direction, view_up)
     projected_dimensions = _projected_bounds(objects, camera_rotation.to_matrix())
     max_dimension = max(projected_dimensions.x, projected_dimensions.y, projected_dimensions.z, 0.1)
     distance = max_dimension * 4.0
@@ -385,55 +415,18 @@ def _view_dimension_data(scene, camera, center, truss_segments, view_name, struc
     assembly_projected_center = camera_rotation.inverted() @ ((all_min_corner + all_max_corner) * 0.5)
 
     def segment_axes(segment_objects):
-        min_corner, max_corner = _world_box(segment_objects)
         local_box = _segment_local_box(segment_objects, structure_rotation)
+        projected_center = camera_rotation.inverted() @ center
 
         def local_value_for_axis(axis):
             axis_index = {"X": 0, "Y": 1, "Z": 2}[axis]
             return local_box["dimensions"][axis_index]
 
-        longest_local_value = max(local_box["dimensions"])
+        def local_world_point(local_point):
+            return local_box["origin"] + (local_box["rotation"] @ local_point)
 
-        def point_for(axis_values):
-            return Vector((
-                axis_values.get("X", min_corner.x),
-                axis_values.get("Y", min_corner.y),
-                axis_values.get("Z", min_corner.z),
-            ))
-
-        def axis_dimension(axis):
-            if axis == "X":
-                p1 = point_for({"X": min_corner.x})
-                p2 = point_for({"X": max_corner.x})
-            elif axis == "Y":
-                p1 = point_for({"Y": min_corner.y, "X": max_corner.x})
-                p2 = point_for({"Y": max_corner.y, "X": max_corner.x})
-            else:
-                p1 = point_for({"Z": min_corner.z, "X": max_corner.x, "Y": max_corner.y})
-                p2 = point_for({"Z": max_corner.z, "X": max_corner.x, "Y": max_corner.y})
-
-            return {
-                "p1": _camera_point(camera_rotation, center, p1),
-                "p2": _camera_point(camera_rotation, center, p2),
-                "value": local_value_for_axis(axis),
-            }
-
-        projected_min, projected_max = _projected_box(segment_objects, camera_rotation)
-        projected_center = camera_rotation.inverted() @ center
-        projected_mid = (projected_min + projected_max) * 0.5
-        outside_x = projected_max.x if projected_mid.x >= assembly_projected_center.x else projected_min.x
-        outside_y = projected_max.y if projected_mid.y >= assembly_projected_center.y else projected_min.y
-
-        def projected_dimension(axis, p1, p2):
-            return {
-                "p1": p1 - projected_center,
-                "p2": p2 - projected_center,
-                "value": local_value_for_axis(axis),
-            }
-
-        def projected_principal_dimension():
-            axis_index = max(range(3), key=lambda index: local_box["dimensions"][index])
-            axis_names = ("X", "Y", "Z")
+        def projected_axis_dimension(axis):
+            axis_index = {"X": 0, "Y": 1, "Z": 2}[axis]
             local_min = local_box["min_corner"]
             local_max = local_box["max_corner"]
             local_mid = (local_min + local_max) * 0.5
@@ -451,67 +444,35 @@ def _view_dimension_data(scene, camera, center, truss_segments, view_name, struc
                     p1_local[other_axis_indices[1]] = second_side
                     p2_local[other_axis_indices[1]] = second_side
 
-                    p1_world = local_box["origin"] + (local_box["rotation"] @ p1_local)
-                    p2_world = local_box["origin"] + (local_box["rotation"] @ p2_local)
-                    p1_projected = camera_rotation.inverted() @ p1_world
-                    p2_projected = camera_rotation.inverted() @ p2_world
+                    p1_projected = camera_rotation.inverted() @ local_world_point(p1_local)
+                    p2_projected = camera_rotation.inverted() @ local_world_point(p2_local)
                     p1_camera = Vector((p1_projected.x, p1_projected.y, 0.0))
                     p2_camera = Vector((p2_projected.x, p2_projected.y, 0.0))
+                    direction_x, direction_y = _normalize_2d(p2_camera.x - p1_camera.x, p2_camera.y - p1_camera.y)
+                    normal = Vector((-direction_y, direction_x, 0.0))
                     mid_camera = (p1_camera + p2_camera) * 0.5
-                    candidates.append((mid_camera, p1_camera, p2_camera))
+                    outside_score = abs((mid_camera - assembly_projected_center).dot(normal))
+                    candidates.append((outside_score, p1_camera, p2_camera))
 
-            p1, p2 = max(
-                candidates,
-                key=lambda candidate: (candidate[0] - assembly_projected_center).length_squared,
-            )[1:]
+            if not candidates:
+                return None
 
+            p1_camera, p2_camera = max(candidates, key=lambda candidate: candidate[0])[1:]
             return {
-                "p1": p1 - projected_center,
-                "p2": p2 - projected_center,
-                "value": local_value_for_axis(axis_names[axis_index]),
+                "p1": p1_camera - projected_center,
+                "p2": p2_camera - projected_center,
+                "value": local_value_for_axis(axis),
             }
 
         if view_name == "Front":
-            dimensions = (
-                projected_dimension(
-                    "X",
-                    Vector((projected_min.x, outside_y, 0.0)),
-                    Vector((projected_max.x, outside_y, 0.0)),
-                ),
-                projected_dimension(
-                    "Z",
-                    Vector((outside_x, projected_min.y, 0.0)),
-                    Vector((outside_x, projected_max.y, 0.0)),
-                ),
-            )
+            dimensions = tuple(projected_axis_dimension(axis) for axis in ("X", "Z"))
         elif view_name == "Left":
-            dimensions = (
-                projected_dimension(
-                    "Y",
-                    Vector((projected_min.x, outside_y, 0.0)),
-                    Vector((projected_max.x, outside_y, 0.0)),
-                ),
-                projected_dimension(
-                    "Z",
-                    Vector((outside_x, projected_min.y, 0.0)),
-                    Vector((outside_x, projected_max.y, 0.0)),
-                ),
-            )
+            dimensions = tuple(projected_axis_dimension(axis) for axis in ("Y", "Z"))
         elif view_name == "Top":
-            dimensions = (
-                projected_dimension(
-                    "X",
-                    Vector((projected_min.x, outside_y, 0.0)),
-                    Vector((projected_max.x, outside_y, 0.0)),
-                ),
-                projected_dimension(
-                    "Y",
-                    Vector((outside_x, projected_min.y, 0.0)),
-                    Vector((outside_x, projected_max.y, 0.0)),
-                ),
-            )
+            dimensions = tuple(projected_axis_dimension(axis) for axis in ("X", "Y"))
         else:
-            dimensions = (projected_principal_dimension(),)
+            primary_axis = max(("X", "Y", "Z"), key=local_value_for_axis)
+            dimensions = (projected_axis_dimension(primary_axis),)
 
         dimensions = tuple(dimension for dimension in dimensions if dimension is not None)
         return (max(dimensions, key=lambda dimension: dimension["value"]),) if dimensions else ()
@@ -917,15 +878,9 @@ def _render_view(context, view_name, center, objects, truss_segments, structure_
     camera = bpy.data.objects.new(f"Stagehand PDF {view_name} Camera", camera_data)
     scene.collection.objects.link(camera)
 
-    view_direction = {
-        "Front": Vector((0.0, -1.0, 0.0)),
-        "Left": Vector((1.0, 0.0, 0.0)),
-        "Top": Vector((0.0, 0.0, -1.0)),
-        "Iso": Vector((-1.0, -1.0, -0.75)),
-    }[view_name]
-
+    view_direction, view_up = _view_direction_and_up(view_name, structure_rotation)
     view_center = center.copy()
-    _set_camera_view(scene, camera, view_center, objects, view_direction)
+    _set_camera_view(scene, camera, view_center, objects, view_direction, view_up)
     _expand_camera_for_dimensions(scene, camera)
     dimension_objects = []
     dimension_material = None
