@@ -914,6 +914,8 @@ def _transform_operator_active():
             return True
         if operator_id == "stagehand_ot_move_with_snap":
             return True
+        if operator_id == "stagehand_ot_duplicate_with_snap":
+            return True
     return False
 
 
