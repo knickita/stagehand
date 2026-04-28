@@ -26,6 +26,7 @@ FirstPersonLook = _load_submodule("FirstPersonLook")
 LinkMode = _load_submodule("LinkMode")
 LoadCatalogue = _load_submodule("LoadCatalogue")
 MenuConfiguration = _load_submodule("MenuConfiguration")
+MvrImport = _load_submodule("MvrImport")
 OptionsPanel = _load_submodule("OptionsPanel")
 PdfDrawings = _load_submodule("PdfDrawings")
 SnapLogics = _load_submodule("SnapLogics")
@@ -37,6 +38,7 @@ classes = (
     FirstPersonLook,
     LinkMode,
     LoadCatalogue,
+    MvrImport,
     PdfDrawings,
     MenuConfiguration,
     OptionsPanel,
