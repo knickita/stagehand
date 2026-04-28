@@ -2,6 +2,7 @@ import math
 import os
 import tempfile
 import zlib
+from collections import OrderedDict
 from pathlib import Path
 
 import bpy
@@ -9,6 +10,7 @@ from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix, Quaternion, Vector
 
 from . import Connections
+from .LinkTypes import StagehandLinkType
 from .RegistrationUtils import safe_register_class, safe_unregister_class
 
 
@@ -958,6 +960,10 @@ def _pdf_escape(value):
     return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
+def _pdf_text_line(font_size, x, y, text):
+    return f"BT /F1 {font_size} Tf {x:.2f} {y:.2f} Td ({_pdf_escape(text)}) Tj ET"
+
+
 def _pdf_stream(data):
     if isinstance(data, str):
         data = data.encode("latin-1")
@@ -972,6 +978,346 @@ def _pdf_image_stream(image):
         f"/BitsPerComponent 8 /Filter /FlateDecode /Length {len(compressed)} >>\n"
     ).encode("ascii")
     return header + b"stream\n" + compressed + b"\nendstream"
+
+
+def _bom_entry_data(obj):
+    stagehand = getattr(obj, "stagehand", None)
+    if stagehand is not None and getattr(stagehand, "is_stagehand_object", False):
+        item_name = str(stagehand.catalogueName).strip() or obj.name_full
+        asset_id = int(getattr(stagehand, "asset_id", -1))
+        return {
+            "key": ("stagehand", asset_id, item_name.casefold()),
+            "name": item_name,
+        }
+
+    return {
+        "key": ("mesh", obj.name_full.casefold()),
+        "name": obj.name_full,
+    }
+
+
+def _collect_bom_entries(objects):
+    grouped_entries = OrderedDict()
+
+    for obj in objects:
+        entry_data = _bom_entry_data(obj)
+        entry = grouped_entries.get(entry_data["key"])
+        if entry is None:
+            entry = {
+                "name": entry_data["name"],
+                "quantity": 0,
+            }
+            grouped_entries[entry_data["key"]] = entry
+
+        entry["quantity"] += 1
+
+    return sorted(
+        grouped_entries.values(),
+        key=lambda entry: (entry["name"].casefold(), entry["quantity"]),
+    )
+
+
+def _object_truss_z_dimension(obj):
+    box = _segment_local_box([obj], obj.matrix_world.to_quaternion().to_matrix())
+    dimensions = box["dimensions"]
+    return abs(dimensions.z)
+
+
+def _is_truss_object_for_link_type(obj, link_type):
+    if not _is_truss_object(obj) or _is_trussjoint_object(obj):
+        return False
+
+    for _index, link in Connections.iter_object_links(obj):
+        if int(link.type) == int(link_type):
+            return True
+
+    return False
+
+
+def _collect_truss_length_entries(objects, link_type):
+    truss_objects = [obj for obj in objects if _is_truss_object_for_link_type(obj, link_type)]
+    object_by_uid = {_object_uid(obj): obj for obj in truss_objects}
+    unvisited_uids = set(object_by_uid)
+    grouped_lengths = {}
+
+    while unvisited_uids:
+        start_uid = min(unvisited_uids)
+        pending = [object_by_uid[start_uid]]
+        component = []
+        unvisited_uids.remove(start_uid)
+
+        while pending:
+            current_obj = pending.pop()
+            component.append(current_obj)
+
+            for _link_index, other_obj, _other_link_index, _other_link in Connections.iter_connected_links(current_obj):
+                other_uid = _object_uid(other_obj)
+                if other_uid not in unvisited_uids:
+                    continue
+                if not _is_truss_object_for_link_type(other_obj, link_type):
+                    continue
+
+                unvisited_uids.remove(other_uid)
+                pending.append(other_obj)
+
+        length_value = round(sum(_object_truss_z_dimension(obj) for obj in component), 4)
+        entry = grouped_lengths.get(length_value)
+        if entry is None:
+            entry = {
+                "length": length_value,
+                "label": _format_dimension(length_value),
+                "quantity": 0,
+            }
+            grouped_lengths[length_value] = entry
+
+        entry["quantity"] += 1
+
+    return [grouped_lengths[key] for key in sorted(grouped_lengths)]
+
+
+def _active_link_indexes(obj):
+    active_indexes = []
+
+    for index, _link in Connections.iter_object_links(obj):
+        other_obj, other_link, _other_link_index = Connections.get_connected_link(obj, index)
+        if other_obj is not None and other_link is not None:
+            active_indexes.append(index)
+
+    return active_indexes
+
+
+def _cube_category(active_indexes):
+    active_set = set(active_indexes)
+    active_count = len(active_set)
+    opposite_pairs = ({0, 1}, {2, 3}, {4, 5})
+    opposite_pair_count = sum(1 for pair in opposite_pairs if pair.issubset(active_set))
+
+    if active_count == 0:
+        return "senza vie"
+    if active_count == 1:
+        return "1 via"
+    if active_count == 2:
+        return "2 vie dritte" if opposite_pair_count == 1 else "2 vie ad angolo"
+    if active_count == 3:
+        return "3 vie a T" if opposite_pair_count >= 1 else "3 vie ad angolo"
+    if active_count == 4:
+        return "4 vie a croce" if opposite_pair_count >= 2 else "4 vie a T"
+    if active_count == 5:
+        return "5 vie"
+    return "6 vie"
+
+
+def _collect_cube_type_entries(objects, asset_id):
+    category_order = [
+        "senza vie",
+        "1 via",
+        "2 vie dritte",
+        "2 vie ad angolo",
+        "3 vie a T",
+        "3 vie ad angolo",
+        "4 vie a croce",
+        "4 vie a T",
+        "5 vie",
+        "6 vie",
+    ]
+    category_counts = OrderedDict((category, 0) for category in category_order)
+
+    for obj in objects:
+        stagehand = getattr(obj, "stagehand", None)
+        if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
+            continue
+        if int(getattr(stagehand, "asset_id", -1)) != asset_id:
+            continue
+
+        category_counts[_cube_category(_active_link_indexes(obj))] += 1
+
+    return [
+        {"label": category, "quantity": quantity}
+        for category, quantity in category_counts.items()
+        if quantity > 0
+    ]
+
+
+def _collect_fastener_totals(objects):
+    connection_keys = set()
+    total_ovetti_tratte = 0
+    total_chiodi_coppiglie_tratte = 0
+    total_chiodi_coppiglie_cubi = 0
+    counted_link_types = {int(StagehandLinkType.LITEC30), int(StagehandLinkType.LITEC40)}
+
+    for obj in objects:
+        stagehand = getattr(obj, "stagehand", None)
+        if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
+            continue
+
+        for index, link in Connections.iter_object_links(obj):
+            if int(link.type) not in counted_link_types:
+                continue
+
+            other_obj, other_link, _other_link_index = Connections.get_connected_link(obj, index)
+            if other_obj is None or other_link is None or int(other_link.type) not in counted_link_types:
+                continue
+
+            key = tuple(sorted((f"{_object_uid(obj)}:{index}", f"{_object_uid(other_obj)}:{_other_link_index}")))
+            if key in connection_keys:
+                continue
+
+            connection_keys.add(key)
+            if _is_trussjoint_object(obj) or _is_trussjoint_object(other_obj):
+                total_chiodi_coppiglie_cubi += 4
+            else:
+                total_ovetti_tratte += 4
+                total_chiodi_coppiglie_tratte += 8
+
+    return {
+        "ovetti_tratte": total_ovetti_tratte,
+        "chiodi_coppiglie_tratte": total_chiodi_coppiglie_tratte,
+        "chiodi_coppiglie_cubi_basi": total_chiodi_coppiglie_cubi,
+    }
+
+
+def _collect_structure_details(objects):
+    return {
+        "litec30_lengths": _collect_truss_length_entries(objects, StagehandLinkType.LITEC30),
+        "litec40_lengths": _collect_truss_length_entries(objects, StagehandLinkType.LITEC40),
+        "cube30_types": _collect_cube_type_entries(objects, 9),
+        "cube40_types": _collect_cube_type_entries(objects, 34),
+        "fasteners": _collect_fastener_totals(objects),
+    }
+
+
+def _truncate_pdf_text(text, max_characters):
+    if len(text) <= max_characters:
+        return text
+    return f"{text[:max(0, max_characters - 3)].rstrip()}..."
+
+
+def _bom_page_content_stream(rows, page_title):
+    top_y = PAGE_HEIGHT - PAGE_MARGIN
+    table_top = top_y - 42.0
+    row_height = 18.0
+    table_width = PAGE_WIDTH - (PAGE_MARGIN * 2.0)
+    item_column_x = PAGE_MARGIN + 12.0
+    quantity_column_x = PAGE_WIDTH - PAGE_MARGIN - 54.0
+    quantity_divider_x = PAGE_WIDTH - PAGE_MARGIN - 72.0
+    table_bottom = table_top - (row_height * (len(rows) + 1))
+
+    content = [
+        "q",
+        _pdf_text_line(18, PAGE_MARGIN, top_y - 7.0, page_title),
+        _pdf_text_line(14, PAGE_MARGIN, top_y - 29.0, "Elenco materiale"),
+        f"{PAGE_MARGIN:.2f} {table_bottom:.2f} {table_width:.2f} {table_top - table_bottom:.2f} re S",
+    ]
+
+    for line_index in range(1, len(rows) + 1):
+        y = table_top - (row_height * line_index)
+        content.append(
+            f"{PAGE_MARGIN:.2f} {y:.2f} m {PAGE_WIDTH - PAGE_MARGIN:.2f} {y:.2f} l S"
+        )
+
+    content.extend([
+        f"{quantity_divider_x:.2f} {table_bottom:.2f} m {quantity_divider_x:.2f} {table_top:.2f} l S",
+        _pdf_text_line(11, item_column_x, table_top - 12.0, "Item"),
+        _pdf_text_line(11, quantity_column_x, table_top - 12.0, "Qty"),
+    ])
+
+    for row_index, row in enumerate(rows, start=1):
+        baseline_y = table_top - (row_height * row_index) - 12.0
+        content.extend([
+            _pdf_text_line(10, item_column_x, baseline_y, _truncate_pdf_text(row["name"], 88)),
+            _pdf_text_line(10, quantity_column_x, baseline_y, str(row["quantity"])),
+        ])
+
+    content.append("Q")
+    return "\n".join(content)
+
+
+def _bom_page_streams(title, bom_entries):
+    if not bom_entries:
+        bom_entries = [{"name": "No visible items", "quantity": 0}]
+
+    rows_per_page = 25
+    page_streams = []
+
+    for page_index, start in enumerate(range(0, len(bom_entries), rows_per_page), start=1):
+        page_rows = bom_entries[start:start + rows_per_page]
+        page_title = title
+        if page_index > 1:
+            page_title = f"{page_title} (cont. {page_index})"
+        page_streams.append(_bom_page_content_stream(page_rows, page_title))
+
+    return page_streams
+
+
+def _detail_page_content_stream(details):
+    top_y = PAGE_HEIGHT - PAGE_MARGIN
+    left_x = PAGE_MARGIN
+    line_height = 17.0
+    y = top_y - 7.0
+    content = ["q"]
+
+    def add_line(text, font_size=10, extra_gap=0.0):
+        nonlocal y
+        content.append(_pdf_text_line(font_size, left_x, y, text))
+        y -= line_height + extra_gap
+
+    def format_meters_label(length_value):
+        centimeters = length_value * 100.0
+        if centimeters >= 100.0:
+            meters = centimeters / 100.0
+            if abs(meters - round(meters)) <= 0.0001:
+                return f"{int(round(meters))} metri"
+            return f"{meters:.2f} metri"
+        if abs(centimeters - round(centimeters)) <= 0.0001:
+            return f"{int(round(centimeters))} cm"
+        return f"{centimeters:.0f} cm"
+
+    add_line("Dettagli Struttture", font_size=18, extra_gap=10.0)
+    add_line("Lunghezze americane da 30", font_size=13, extra_gap=2.0)
+
+    if details["litec30_lengths"]:
+        for entry in details["litec30_lengths"]:
+            add_line(f"- {entry['quantity']} da {format_meters_label(entry['length'])}")
+    else:
+        add_line("- Nessuna")
+
+    y -= 8.0
+    add_line("Tipi di cubi da 30", font_size=13, extra_gap=2.0)
+    if details["cube30_types"]:
+        for entry in details["cube30_types"]:
+            add_line(f"- {entry['quantity']} da {entry['label']}")
+    else:
+        add_line("- Nessuna")
+
+    y -= 8.0
+    add_line("Lunghezze americane da 40", font_size=13, extra_gap=2.0)
+    if details["litec40_lengths"]:
+        for entry in details["litec40_lengths"]:
+            add_line(f"- {entry['quantity']} da {format_meters_label(entry['length'])}")
+    else:
+        add_line("- Nessuna")
+
+    y -= 8.0
+    add_line("Tipi di cubi da 40", font_size=13, extra_gap=2.0)
+    if details["cube40_types"]:
+        for entry in details["cube40_types"]:
+            add_line(f"- {entry['quantity']} da {entry['label']}")
+    else:
+        add_line("- Nessuna")
+
+    y -= 8.0
+    add_line(f"{details['fasteners']['ovetti_tratte']} totale ovetti per le tratte", font_size=12)
+    add_line(
+        f"{details['fasteners']['chiodi_coppiglie_tratte']} totale chiodi e coppiglie per le tratte",
+        font_size=12,
+    )
+    add_line(
+        f"{details['fasteners']['chiodi_coppiglie_cubi_basi']} totale chiodi e coppiglie per i cubi e le basi",
+        font_size=12,
+    )
+
+    content.append("Q")
+    return "\n".join(content)
 
 
 def _format_dimension(value):
@@ -1076,12 +1422,64 @@ def _page_content_stream(rendered_views, title, image_object_numbers):
     return "\n".join(content), xobject_entries
 
 
-def _write_pdf(filepath, pages, title):
+def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None):
     labels = ("Front", "Left", "Top", "Iso")
     object_entries = [None, None, None]
     page_object_numbers = []
     pending_pages = []
     next_object_number = 4
+
+    bom_streams = _bom_page_streams(title, bom_entries or [])
+
+    if bom_streams:
+        bom_stream = bom_streams[0]
+        page_object_number = next_object_number
+        content_object_number = page_object_number + 1
+        next_object_number = content_object_number + 1
+
+        page_object_numbers.append(page_object_number)
+        pending_pages.append((
+            "bom",
+            page_object_number,
+            content_object_number,
+            [],
+            "",
+            bom_stream,
+            None,
+        ))
+
+    if details_data is not None:
+        detail_stream = _detail_page_content_stream(details_data)
+        page_object_number = next_object_number
+        content_object_number = page_object_number + 1
+        next_object_number = content_object_number + 1
+
+        page_object_numbers.append(page_object_number)
+        pending_pages.append((
+            "details",
+            page_object_number,
+            content_object_number,
+            [],
+            "",
+            detail_stream,
+            None,
+        ))
+
+    for bom_stream in bom_streams[1:]:
+        page_object_number = next_object_number
+        content_object_number = page_object_number + 1
+        next_object_number = content_object_number + 1
+
+        page_object_numbers.append(page_object_number)
+        pending_pages.append((
+            "bom",
+            page_object_number,
+            content_object_number,
+            [],
+            "",
+            bom_stream,
+            None,
+        ))
 
     for page_index, rendered_views in enumerate(pages, start=1):
         page_object_number = next_object_number
@@ -1100,6 +1498,7 @@ def _write_pdf(filepath, pages, title):
 
         page_object_numbers.append(page_object_number)
         pending_pages.append((
+            "views",
             page_object_number,
             content_object_number,
             image_object_numbers,
@@ -1110,10 +1509,11 @@ def _write_pdf(filepath, pages, title):
 
     object_entries[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
     page_refs = " ".join(f"{object_number} 0 R" for object_number in page_object_numbers)
-    object_entries[1] = f"<< /Type /Pages /Kids [{page_refs}] /Count {len(pages)} >>".encode("ascii")
+    object_entries[1] = f"<< /Type /Pages /Kids [{page_refs}] /Count {len(page_object_numbers)} >>".encode("ascii")
     object_entries[2] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
 
     for (
+        page_type,
         page_object_number,
         content_object_number,
         image_object_numbers,
@@ -1121,17 +1521,25 @@ def _write_pdf(filepath, pages, title):
         content_stream,
         rendered_views,
     ) in pending_pages:
-        page_object = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] "
-            f"/Resources << /Font << /F1 3 0 R >> "
-            f"/XObject << {xobject_entries} >> >> "
-            f"/Contents {content_object_number} 0 R >>"
-        ).encode("ascii")
+        if page_type == "views":
+            page_object = (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] "
+                f"/Resources << /Font << /F1 3 0 R >> "
+                f"/XObject << {xobject_entries} >> >> "
+                f"/Contents {content_object_number} 0 R >>"
+            ).encode("ascii")
+        else:
+            page_object = (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] "
+                f"/Resources << /Font << /F1 3 0 R >> >> "
+                f"/Contents {content_object_number} 0 R >>"
+            ).encode("ascii")
         object_entries.append(page_object)
         object_entries.append(_pdf_stream(content_stream))
 
-        for label in labels:
-            object_entries.append(_pdf_image_stream(rendered_views[label]))
+        if page_type == "views":
+            for label in labels:
+                object_entries.append(_pdf_image_stream(rendered_views[label]))
 
     objects = [
         entry
@@ -1189,6 +1597,8 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         if not objects:
             self.report({'ERROR'}, "No visible mesh objects found for PDF drawings")
             return {'CANCELLED'}
+        bom_entries = _collect_bom_entries(objects)
+        details_data = _collect_structure_details(objects)
         truss_objects = [obj for obj in objects if _is_truss_object(obj)]
         truss_groups = _connected_truss_groups(truss_objects) if truss_objects else [objects]
         scene = context.scene
@@ -1268,7 +1678,13 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
                     rendered_pages.append(rendered_views)
 
-            _write_pdf(self.filepath, rendered_pages, _project_name())
+            _write_pdf(
+                self.filepath,
+                rendered_pages,
+                _project_name(),
+                bom_entries=bom_entries,
+                details_data=details_data,
+            )
         except Exception as exc:
             self.report({'ERROR'}, f"Unable to generate PDF drawings: {exc}")
             return {'CANCELLED'}
