@@ -8,12 +8,6 @@ from .RegistrationUtils import safe_register_class, safe_remove_keymaps, safe_un
 
 
 addon_keymaps = []
-SNAP_DEBUG = True
-
-
-def _debug_report(operator, message):
-    if SNAP_DEBUG:
-        operator.report({'INFO'}, f"Stagehand Snap: {message}")
 
 
 def _is_stagehand_object(obj):
@@ -52,7 +46,10 @@ def _iter_available_links(obj):
 def _find_best_snap_pair(moving_objects):
     moving_names = {obj.name_full for obj in moving_objects}
     best_pair = None
+    best_screen_distance = float('inf')
     best_distance = float('inf')
+    best_angle = float('inf')
+    context = bpy.context
 
     moving_links = []
     for obj in moving_objects:
@@ -73,9 +70,36 @@ def _find_best_snap_pair(moving_objects):
                 if not are_link_types_compatible(moving_link.type, target_link.type):
                     continue
 
-                distance = (target_center - moving_center).length
-                if distance < best_distance:
+                distance, angle = Connections.link_alignment_metrics(
+                    moving_obj,
+                    moving_link_index,
+                    target_obj,
+                    target_link_index,
+                )
+                if distance is None:
+                    continue
+                if angle > Connections.AUTO_CONNECT_ANGLE_THRESHOLD:
+                    continue
+
+                moving_screen = view3d_utils.location_3d_to_region_2d(
+                    context.region,
+                    context.region_data,
+                    moving_center,
+                )
+                target_screen = view3d_utils.location_3d_to_region_2d(
+                    context.region,
+                    context.region_data,
+                    target_center,
+                )
+                if moving_screen is None or target_screen is None:
+                    screen_distance = float('inf')
+                else:
+                    screen_distance = (target_screen - moving_screen).length
+
+                if (screen_distance, distance, angle) < (best_screen_distance, best_distance, best_angle):
+                    best_screen_distance = screen_distance
                     best_distance = distance
+                    best_angle = angle
                     best_pair = (
                         moving_obj,
                         moving_link_index,
@@ -91,11 +115,9 @@ def _find_best_snap_pair(moving_objects):
 
 
 def _screen_to_plane_point(context, event, plane_origin, plane_normal):
-    region = context.region
-    rv3d = context.region_data
     coord = (event.mouse_region_x, event.mouse_region_y)
-    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-    ray_direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+    ray_origin = view3d_utils.region_2d_to_origin_3d(context.region, context.region_data, coord)
+    ray_direction = view3d_utils.region_2d_to_vector_3d(context.region, context.region_data, coord)
 
     denominator = ray_direction.dot(plane_normal)
     if abs(denominator) < 1e-6:
@@ -105,28 +127,31 @@ def _screen_to_plane_point(context, event, plane_origin, plane_normal):
     return ray_origin + (ray_direction * distance)
 
 
-def _begin_snap_motion(operator, context, event, moving_objects):
-    operator.moving_objects = moving_objects
-    operator.initial_matrices = {obj.name_full: obj.matrix_world.copy() for obj in moving_objects}
-    operator.plane_origin = context.active_object.matrix_world.to_translation().copy()
-    operator.plane_normal = context.region_data.view_rotation @ Vector((0, 0, -1))
-    operator.start_plane_point = _screen_to_plane_point(context, event, operator.plane_origin, operator.plane_normal)
-    operator.snap_was_used = False
-    operator.debug_mousemove_reports = 0
+class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
+    bl_idname = "stagehand.link_move_mode"
+    bl_label = "Stagehand Link Move"
+    bl_description = "Move selected Stagehand objects with link snapping and confirm with click"
+    bl_options = {'REGISTER', 'UNDO'}
 
-    _debug_report(
-        operator,
-        "modal start "
-        f"objects={[obj.name_full for obj in moving_objects]} "
-        f"mouse=({event.mouse_region_x},{event.mouse_region_y}) "
-        f"plane_origin=({operator.plane_origin.x:.3f},{operator.plane_origin.y:.3f},{operator.plane_origin.z:.3f})",
-    )
+    def invoke(self, context, event):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            return {'CANCELLED'}
 
-    context.window_manager.modal_handler_add(operator)
-    return {'RUNNING_MODAL'}
+        moving_objects = _selected_stagehand_objects(context)
+        if not moving_objects:
+            self.report({'WARNING'}, "Select at least one Stagehand object")
+            return {'CANCELLED'}
 
+        Connections.prune_stale_connections()
+        self.moving_objects = moving_objects
+        self.initial_matrices = {obj.name_full: obj.matrix_world.copy() for obj in moving_objects}
+        self.plane_origin = context.active_object.matrix_world.to_translation().copy()
+        self.plane_normal = context.region_data.view_rotation @ Vector((0, 0, -1))
+        self.start_plane_point = _screen_to_plane_point(context, event, self.plane_origin, self.plane_normal)
 
-class _StagehandSnapMoveMixin:
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
     def _restore_initial_transforms(self):
         for obj in self.moving_objects:
             initial_matrix = self.initial_matrices.get(obj.name_full)
@@ -145,35 +170,26 @@ class _StagehandSnapMoveMixin:
     def _apply_current_motion(self, context, event):
         current_plane_point = _screen_to_plane_point(context, event, self.plane_origin, self.plane_normal)
         delta = current_plane_point - self.start_plane_point
-        if getattr(self, "debug_mousemove_reports", 0) < 5 or event.ctrl:
-            _debug_report(
-                self,
-                "mousemove "
-                f"mouse=({event.mouse_region_x},{event.mouse_region_y}) "
-                f"delta=({delta.x:.3f},{delta.y:.3f},{delta.z:.3f}) "
-                f"len={delta.length:.3f} ctrl={event.ctrl}",
-            )
-            self.debug_mousemove_reports = getattr(self, "debug_mousemove_reports", 0) + 1
         self._translate_objects(delta)
 
-        if event.ctrl:
-            best_pair = _find_best_snap_pair(self.moving_objects)
-            if best_pair is not None:
-                (
-                    _moving_obj,
-                    _moving_link_index,
-                    _moving_link,
-                    moving_center,
-                    _target_obj,
-                    _target_link_index,
-                    _target_link,
-                    target_center,
-                ) = best_pair
+        best_pair = _find_best_snap_pair(self.moving_objects)
+        if best_pair is None:
+            return
 
-                snap_delta = target_center - moving_center
-                for obj in self.moving_objects:
-                    obj.matrix_world.translation += snap_delta
-                self.snap_was_used = True
+        (
+            _moving_obj,
+            _moving_link_index,
+            _moving_link,
+            moving_center,
+            _target_obj,
+            _target_link_index,
+            _target_link,
+            target_center,
+        ) = best_pair
+
+        snap_delta = target_center - moving_center
+        for obj in self.moving_objects:
+            obj.matrix_world.translation += snap_delta
 
     def modal(self, context, event):
         if event.type == 'MOUSEMOVE':
@@ -181,87 +197,14 @@ class _StagehandSnapMoveMixin:
             return {'RUNNING_MODAL'}
 
         if event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
-            _debug_report(
-                self,
-                f"confirm snap_was_used={getattr(self, 'snap_was_used', False)}",
-            )
-            if getattr(self, "snap_was_used", False):
-                Connections.refresh_connections_for_objects(self.moving_objects)
+            Connections.refresh_connections_for_objects(self.moving_objects)
             return {'FINISHED'}
 
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
-            _debug_report(self, "cancel")
             self._restore_initial_transforms()
-            if getattr(self, "delete_on_cancel", False):
-                for obj in list(self.moving_objects):
-                    bpy.data.objects.remove(obj, do_unlink=True)
             return {'CANCELLED'}
 
         return {'RUNNING_MODAL'}
-
-
-class STAGEHAND_OT_move_with_snap(_StagehandSnapMoveMixin, bpy.types.Operator):
-    bl_idname = "stagehand.move_with_snap"
-    bl_label = "Stagehand Snap Move"
-    bl_description = "Move Stagehand objects and snap to compatible links while holding Ctrl"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def invoke(self, context, event):
-        _debug_report(
-            self,
-            "move invoke "
-            f"area={getattr(context.area, 'type', None)} "
-            f"active={getattr(context.active_object, 'name_full', None)} "
-            f"selected={[obj.name_full for obj in context.selected_objects]}",
-        )
-        if context.area is None or context.area.type != 'VIEW_3D':
-            _debug_report(self, "move cancelled: not in VIEW_3D")
-            return {'CANCELLED'}
-
-        moving_objects = _selected_stagehand_objects(context)
-        if not moving_objects:
-            _debug_report(self, "no Stagehand selection, delegating to native transform.translate")
-            return bpy.ops.transform.translate('INVOKE_DEFAULT')
-
-        self.delete_on_cancel = False
-        return _begin_snap_motion(self, context, event, moving_objects)
-
-
-class STAGEHAND_OT_duplicate_with_snap(_StagehandSnapMoveMixin, bpy.types.Operator):
-    bl_idname = "stagehand.duplicate_with_snap"
-    bl_label = "Stagehand Snap Duplicate"
-    bl_description = "Duplicate Stagehand objects and snap to compatible links while holding Ctrl"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def invoke(self, context, event):
-        _debug_report(
-            self,
-            "duplicate invoke "
-            f"area={getattr(context.area, 'type', None)} "
-            f"active={getattr(context.active_object, 'name_full', None)} "
-            f"selected={[obj.name_full for obj in context.selected_objects]}",
-        )
-        if context.area is None or context.area.type != 'VIEW_3D':
-            _debug_report(self, "duplicate cancelled: not in VIEW_3D")
-            return {'CANCELLED'}
-
-        source_objects = _selected_stagehand_objects(context)
-        if not source_objects:
-            _debug_report(self, "no Stagehand selection, delegating to native duplicate_move")
-            return bpy.ops.object.duplicate_move('INVOKE_DEFAULT')
-
-        bpy.ops.object.duplicate()
-        duplicated_objects = _selected_stagehand_objects(context)
-        if not duplicated_objects:
-            _debug_report(self, "duplicate cancelled: no duplicated Stagehand objects selected")
-            return {'CANCELLED'}
-
-        _debug_report(
-            self,
-            f"duplicated objects={[obj.name_full for obj in duplicated_objects]}",
-        )
-        self.delete_on_cancel = True
-        return _begin_snap_motion(self, context, event, duplicated_objects)
 
 
 def register_keymap():
@@ -273,19 +216,11 @@ def register_keymap():
     for keymap_name, space_type in (('3D View', 'VIEW_3D'), ('Object Mode', 'EMPTY')):
         km = kc.keymaps.new(name=keymap_name, space_type=space_type)
         kmi = km.keymap_items.new(
-            STAGEHAND_OT_move_with_snap.bl_idname,
-            type='G',
+            STAGEHAND_OT_link_move_mode.bl_idname,
+            type='L',
             value='PRESS',
         )
         addon_keymaps.append((km, kmi))
-
-        duplicate_kmi = km.keymap_items.new(
-            STAGEHAND_OT_duplicate_with_snap.bl_idname,
-            type='D',
-            value='PRESS',
-            shift=True,
-        )
-        addon_keymaps.append((km, duplicate_kmi))
 
 
 def unregister_keymap():
@@ -293,12 +228,10 @@ def unregister_keymap():
 
 
 def register():
-    safe_register_class(STAGEHAND_OT_move_with_snap)
-    safe_register_class(STAGEHAND_OT_duplicate_with_snap)
+    safe_register_class(STAGEHAND_OT_link_move_mode)
     register_keymap()
 
 
 def unregister():
     unregister_keymap()
-    safe_unregister_class(STAGEHAND_OT_duplicate_with_snap)
-    safe_unregister_class(STAGEHAND_OT_move_with_snap)
+    safe_unregister_class(STAGEHAND_OT_link_move_mode)

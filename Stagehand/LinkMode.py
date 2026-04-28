@@ -29,31 +29,6 @@ CYAN_COLOR = (0.0, 1.0, 1.0, 1.0)
 CLICK_PIXEL_RADIUS = 18.0
 
 
-def _short_uid(uid):
-    return str(uid)[:8] if uid else "-"
-
-
-def _debug_link_mode_object(obj, label):
-    if obj is None or not _is_stagehand_object(obj):
-        return
-
-    items = []
-    for index, link in enumerate(obj.stagehand.links):
-        connected_link_uid = Connections.get_connected_link_uid(link)
-        connected_parent_uid = Connections.get_link_parent_object_uid(connected_link_uid)
-        items.append(
-            f"{index}:uid={_short_uid(link.uid)},"
-            f"conn={_short_uid(connected_link_uid)},"
-            f"parent={_short_uid(connected_parent_uid)},"
-            f"connected={bool(connected_link_uid)}"
-        )
-
-    Connections._report_info(
-        f"Stagehand LinkMode {label}: {obj.name_full} "
-        f"obj_uid={_short_uid(obj.stagehand.uid)}: " + "; ".join(items)
-    )
-
-
 def _is_stagehand_object(obj):
     return (
         obj is not None
@@ -548,7 +523,6 @@ class STAGEHAND_OT_toggle_link_mode(bpy.types.Operator):
             if context.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
             _set_link_mode(context, True, active_object)
-            _debug_link_mode_object(active_object, "enabled")
 
         for area in context.screen.areas:
             if area.type == 'VIEW_3D':

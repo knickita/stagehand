@@ -33,17 +33,6 @@ _DIRTY_CONNECTION_REFRESH_DEADLINE = 0.0
 _LAST_KNOWN_MATRICES = {}
 _LAST_STAGEHAND_OBJECT_NAMES = set()
 addon_keymaps = []
-CONNECTION_DEBUG = False
-
-
-def _report_info(message):
-    if not CONNECTION_DEBUG:
-        return
-
-    try:
-        bpy.ops.stagehand.debug_connection_report(message=message)
-    except Exception:
-        print(message)
 
 
 def _data_objects():
@@ -274,6 +263,17 @@ def _link_alignment_metrics(obj, link_index, other_obj, other_link_index):
     return distance, angle
 
 
+def link_alignment_metrics(obj, link_index, other_obj, other_link_index):
+    return _link_alignment_metrics(obj, link_index, other_obj, other_link_index)
+
+
+def links_are_aligned(obj, link_index, other_obj, other_link_index):
+    distance, angle = _link_alignment_metrics(obj, link_index, other_obj, other_link_index)
+    if distance is None:
+        return False
+    return distance <= AUTO_CONNECT_DISTANCE_THRESHOLD and angle <= AUTO_CONNECT_ANGLE_THRESHOLD
+
+
 def _sorted_uid_group(objects):
     return sorted(objects, key=lambda obj: obj.name_full)
 
@@ -336,11 +336,6 @@ def clear_link_connection(obj, link_index):
     if link is None:
         return
 
-    _report_info(
-        "Stagehand clear link: "
-        f"{obj.name_full}[{link_index}] uid={ensure_stagehand_link_uid(link)[:8]} "
-        f"connected={_get_connected_link_uid(link)[:8] or '-'}"
-    )
     _remove_database_connection(ensure_stagehand_link_uid(link))
     _clear_legacy_link_connection(link)
 
@@ -355,11 +350,6 @@ def disconnect_link(obj, link_index):
         clear_link_connection(obj, link_index)
         return
 
-    _report_info(
-        "Stagehand disconnect link: "
-        f"{obj.name_full}[{link_index}] uid={ensure_stagehand_link_uid(link)[:8]} "
-        f"other={other_link_uid[:8]}"
-    )
     other_obj = find_object_by_uid(_get_database_link_parents(create=False).get(other_link_uid, ""))
     clear_link_connection(obj, link_index)
 
@@ -501,14 +491,6 @@ def _repair_duplicate_ids():
     if not duplicate_groups:
         return
 
-    _report_info(
-        "Stagehand duplicate id repair: "
-        + ", ".join(
-            f"{uid[:8]}=>{[obj.name_full for obj in objects]}"
-            for uid, objects in duplicate_groups.items()
-        )
-    )
-
     duplicate_snapshots = {}
     object_uid_remap = {}
     link_uid_remap = {}
@@ -580,11 +562,9 @@ def _repair_duplicate_ids():
             connect_links(obj, link_snapshot["link_index"], target_obj, target_link_index)
 
 
-def _connection_is_working(obj, link_index, live_uids=None, report=False):
+def _connection_is_working(obj, link_index, live_uids=None):
     link = get_link(obj, link_index)
     if link is None:
-        if report:
-            _report_info(f"Stagehand connection check failed: {obj.name_full}[{link_index}] missing link")
         return False
 
     link_uid = ensure_stagehand_link_uid(link)
@@ -595,66 +575,25 @@ def _connection_is_working(obj, link_index, live_uids=None, report=False):
 
     other_obj_uid = get_link_parent_object_uid(other_link_uid)
     if not other_obj_uid:
-        if report:
-            _report_info(
-                "Stagehand connection check failed: "
-                f"{obj.name_full}[{link_index}] other_parent_missing other={other_link_uid[:8]}"
-            )
         return False
     if live_uids is not None and other_obj_uid not in live_uids:
-        if report:
-            _report_info(
-                "Stagehand connection check failed: "
-                f"{obj.name_full}[{link_index}] other_parent_not_live parent={other_obj_uid[:8]}"
-            )
         return False
 
     other_obj = find_object_by_uid(other_obj_uid)
     if other_obj is None:
-        if report:
-            _report_info(
-                "Stagehand connection check failed: "
-                f"{obj.name_full}[{link_index}] other_object_missing parent={other_obj_uid[:8]}"
-            )
         return False
 
     other_link, other_link_index = find_link_by_uid(other_obj, other_link_uid)
     if other_link is None:
-        if report:
-            _report_info(
-                "Stagehand connection check failed: "
-                f"{obj.name_full}[{link_index}] other_link_missing "
-                f"{other_obj.name_full} other={other_link_uid[:8]}"
-            )
         return False
     if _get_connected_link_uid(other_link) != link_uid:
-        if report:
-            _report_info(
-                "Stagehand connection check failed: "
-                f"{obj.name_full}[{link_index}] reciprocal_mismatch "
-                f"other={other_obj.name_full}[{other_link_index}] "
-                f"expected={link_uid[:8]} actual={_get_connected_link_uid(other_link)[:8] or '-'}"
-            )
         return False
 
     distance, angle = _link_alignment_metrics(obj, link_index, other_obj, other_link_index)
     if distance is None:
-        if report:
-            _report_info(
-                "Stagehand connection check failed: "
-                f"{obj.name_full}[{link_index}] metrics_missing "
-                f"other={other_obj.name_full}[{other_link_index}]"
-            )
         return False
 
     if distance > AUTO_CONNECT_DISTANCE_THRESHOLD or angle > AUTO_CONNECT_ANGLE_THRESHOLD:
-        if report:
-            _report_info(
-                "Stagehand connection check failed: "
-                f"{obj.name_full}[{link_index}] misaligned "
-                f"other={other_obj.name_full}[{other_link_index}] "
-                f"distance={distance:.6f} angle={angle:.6f}"
-            )
         return False
 
     return True
@@ -669,14 +608,9 @@ def _remove_connections_not_working(objects):
             if not _is_link_connected(link):
                 _clear_legacy_link_connection(link)
                 continue
-            if _connection_is_working(obj, index, live_uids=live_uids, report=True):
+            if _connection_is_working(obj, index, live_uids=live_uids):
                 _clear_legacy_link_connection(link)
                 continue
-            _report_info(
-                "Stagehand cleanup removing broken link: "
-                f"{obj.name_full}[{index}] uid={ensure_stagehand_link_uid(link)[:8]} "
-                f"conn={_get_connected_link_uid(link)[:8] or '-'}"
-            )
             disconnect_link(obj, index)
             removed_count += 1
 
@@ -780,39 +714,15 @@ def _connect_candidate_pairs(candidates):
     connected_count = 0
 
     for candidate in sorted(candidates, key=lambda item: item[:6]):
-        distance, angle = candidate[0], candidate[1]
         item_a, item_b = candidate[6], candidate[7]
         obj_a, link_index_a, link_a = item_a
         obj_b, link_index_b, link_b = item_b
 
         if _is_link_connected(link_a) or _is_link_connected(link_b):
-            _report_info(
-                "Stagehand skip candidate already connected: "
-                f"{obj_a.name_full}[{link_index_a}] <-> {obj_b.name_full}[{link_index_b}]"
-            )
             continue
-        _report_info(
-            "Stagehand connect candidate: "
-            f"{obj_a.name_full}[{link_index_a}:type={int(link_a.type)}] <-> "
-            f"{obj_b.name_full}[{link_index_b}:type={int(link_b.type)}], "
-            f"distance={distance:.6f}, angle={angle:.6f}"
-        )
         if connect_links(obj_a, link_index_a, obj_b, link_index_b):
             connected_any = True
             connected_count += 1
-            link_uid_a = ensure_stagehand_link_uid(link_a)
-            link_uid_b = ensure_stagehand_link_uid(link_b)
-            _report_info(
-                "Stagehand connected: "
-                f"{obj_a.name_full}[{link_index_a}] <-> {obj_b.name_full}[{link_index_b}], "
-                f"db={_get_connected_link_uid(link_a) == link_uid_b}/"
-                f"{_get_connected_link_uid(link_b) == link_uid_a}"
-            )
-        else:
-            _report_info(
-                "Stagehand connect failed: "
-                f"{obj_a.name_full}[{link_index_a}] <-> {obj_b.name_full}[{link_index_b}]"
-            )
 
     return connected_any, connected_count
 
@@ -827,14 +737,8 @@ def _connect_free_links_inside_group(objects):
             if candidate is not None:
                 candidates.append(candidate)
 
-    _connected_any, connected_count = _connect_candidate_pairs(candidates)
-    free_after = _free_link_items(objects)
-    _report_info(
-        "Stagehand group links: "
-        f"free_before={len(free_items)}, candidates={len(candidates)}, "
-        f"connected={connected_count}, free_after={len(free_after)}"
-    )
-    return free_after
+    _connect_candidate_pairs(candidates)
+    return _free_link_items(objects)
 
 
 def _connect_free_links_to_scene(free_items, group_objects):
@@ -854,20 +758,11 @@ def _connect_free_links_to_scene(free_items, group_objects):
             if candidate is not None:
                 candidates.append(candidate)
 
-    _connected_any, connected_count = _connect_candidate_pairs(candidates)
-    _report_info(
-        "Stagehand scene links: "
-        f"group_free={len(free_items)}, scene_free={len(scene_items)}, "
-        f"candidates={len(candidates)}, connected={connected_count}"
-    )
+    _connect_candidate_pairs(candidates)
 
 
 def UpdateConnections(objects):
     raw_objects = [obj for obj in (objects or ()) if is_stagehand_object(obj)]
-    object_names = ", ".join(obj.name_full for obj in raw_objects) or "none"
-    _report_info(
-        f"Stagehand UpdateConnections: {len(raw_objects)} object(s): {object_names}"
-    )
     if not raw_objects:
         _rebuild_database_indexes()
         _prune_orphan_database_connections()
@@ -878,8 +773,7 @@ def UpdateConnections(objects):
     _prune_orphan_database_connections()
     update_objects = _unique_stagehand_objects(raw_objects)
 
-    removed_count = _remove_connections_not_working(update_objects)
-    _report_info(f"Stagehand cleanup: removed={removed_count}")
+    _remove_connections_not_working(update_objects)
     free_links = _connect_free_links_inside_group(update_objects)
     _connect_free_links_to_scene(free_links, update_objects)
     return _free_link_items(update_objects)
@@ -911,10 +805,6 @@ def _transform_operator_active():
         if operator_id.startswith("transform_ot_"):
             return True
         if operator_id.startswith("object_ot_duplicate"):
-            return True
-        if operator_id == "stagehand_ot_move_with_snap":
-            return True
-        if operator_id == "stagehand_ot_duplicate_with_snap":
             return True
     return False
 
@@ -1117,22 +1007,6 @@ class STAGEHAND_OT_select_connected_objects(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class STAGEHAND_OT_debug_connection_report(bpy.types.Operator):
-    bl_idname = "stagehand.debug_connection_report"
-    bl_label = "Stagehand Connection Debug Report"
-    bl_options = {'INTERNAL'}
-
-    message: bpy.props.StringProperty(
-        name="Message",
-        default="",
-        options={'HIDDEN'},
-    )
-
-    def execute(self, _context):
-        self.report({'INFO'}, self.message)
-        return {'FINISHED'}
-
-
 def register_keymap():
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
@@ -1154,7 +1028,6 @@ def unregister_keymap():
 
 
 def register():
-    safe_register_class(STAGEHAND_OT_debug_connection_report)
     safe_register_class(STAGEHAND_OT_select_connected_objects)
     register_keymap()
     safe_add_handler(bpy.app.handlers.depsgraph_update_post, stagehand_depsgraph_update_post)
@@ -1190,4 +1063,3 @@ def unregister():
     if bpy.app.timers.is_registered(connection_maintenance_timer):
         bpy.app.timers.unregister(connection_maintenance_timer)
     safe_unregister_class(STAGEHAND_OT_select_connected_objects)
-    safe_unregister_class(STAGEHAND_OT_debug_connection_report)
