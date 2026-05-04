@@ -1,4 +1,5 @@
 from collections import deque
+import colorsys
 from dataclasses import dataclass, field
 
 import bpy
@@ -8,6 +9,7 @@ from mathutils import Vector
 POWER_LINES_OBJECT_NAME = "Stagehand Power Lines"
 POWER_LINES_MESH_NAME = "Stagehand Power Lines Mesh"
 POWER_LINES_MATERIAL_NAME = "Stagehand Cable Material"
+POWER_LINES_COLOR_ATTRIBUTE = "PowerLineColor"
 
 _CABLE_PROFILE_CACHE = {}
 _CABLE_CENTER_CACHE = {}
@@ -25,10 +27,14 @@ class _RenderNode:
 class _RenderLink:
     a: _RenderNode
     b: _RenderNode
-    lines: int
+    line_ids: tuple
     rotation: object
     direction: Vector
     length: float
+
+    @property
+    def lines(self):
+        return len(self.line_ids)
 
 
 @dataclass(frozen=True)
@@ -37,6 +43,7 @@ class _SocketTransform:
     rotation: object
     scale: tuple
     center: tuple
+    line_id: int
 
     def multiply_point(self, point):
         local_point = Vector((
@@ -207,11 +214,37 @@ def _transformed_cable_point(point, midpoint, rotation, length):
     return midpoint + (rotation @ local_point)
 
 
-def _append_cable_mesh(vertices, faces, render_link):
+def _single_cable_profile(center):
+    hexagon = [
+        Vector((-0.5, 0.0, -0.5)),
+        Vector((-0.25, 0.43, -0.5)),
+        Vector((0.25, 0.43, -0.5)),
+        Vector((0.5, 0.0, -0.5)),
+        Vector((0.25, -0.43, -0.5)),
+        Vector((-0.25, -0.43, -0.5)),
+    ]
+    profile_vertices = [
+        Vector((center.x + point.x, center.y + point.y, point.z))
+        for point in hexagon
+    ]
+    profile_vertices.extend(
+        Vector((center.x + point.x, center.y + point.y, point.z + 1.0))
+        for point in hexagon
+    )
+
+    profile_faces = []
+    for side_index in range(6):
+        next_side = (side_index + 1) % 6
+        profile_faces.append((side_index, side_index + 6, next_side + 6))
+        profile_faces.append((side_index, next_side + 6, next_side))
+
+    return profile_vertices, profile_faces
+
+
+def _append_cable_mesh(vertices, faces, face_line_ids, render_link):
     if render_link.lines <= 0 or render_link.length <= 0.0:
         return
 
-    profile_vertices, profile_faces = _cable_profile(render_link.lines)
     pos_a = render_link.a.position + (render_link.direction * render_link.a.scale * 0.5)
     pos_b = render_link.b.position - (render_link.direction * render_link.b.scale * 0.5)
     length = (pos_b - pos_a).length
@@ -219,15 +252,20 @@ def _append_cable_mesh(vertices, faces, render_link):
         return
 
     midpoint = (pos_a + pos_b) * 0.5
-    base_index = len(vertices)
-    vertices.extend(
-        tuple(_transformed_cable_point(point, midpoint, render_link.rotation, length))
-        for point in profile_vertices
-    )
-    faces.extend(
-        (base_index + face[0], base_index + face[1], base_index + face[2])
-        for face in profile_faces
-    )
+    centers = _cable_centers(render_link.lines)
+
+    for line_id, center in zip(render_link.line_ids, centers):
+        profile_vertices, profile_faces = _single_cable_profile(center)
+        base_index = len(vertices)
+        vertices.extend(
+            tuple(_transformed_cable_point(point, midpoint, render_link.rotation, length))
+            for point in profile_vertices
+        )
+        faces.extend(
+            (base_index + face[0], base_index + face[1], base_index + face[2])
+            for face in profile_faces
+        )
+        face_line_ids.extend([line_id] * len(profile_faces))
 
 
 def _socket_transform_for_link(render_node, render_link, is_output):
@@ -240,7 +278,7 @@ def _socket_transform_for_link(render_node, render_link, is_output):
     return endpoint, render_link.rotation, (0.02, 0.02, max(render_link.length, 0.0001))
 
 
-def _append_node_intersection_mesh(vertices, faces, render_node):
+def _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node):
     if not render_node.links or render_node.scale <= 0.0:
         return
 
@@ -251,20 +289,20 @@ def _append_node_intersection_mesh(vertices, faces, render_node):
         is_output = render_link.a is render_node
         endpoint, rotation, scale = _socket_transform_for_link(render_node, render_link, is_output)
         target = outputs if is_output else inputs
-        for center in _cable_centers(render_link.lines):
-            target.append(_SocketTransform(tuple(endpoint), rotation, scale, tuple(center)))
+        for line_id, center in zip(render_link.line_ids, _cable_centers(render_link.lines)):
+            target.append(_SocketTransform(tuple(endpoint), rotation, scale, tuple(center), line_id))
 
     if not inputs:
         return
 
-    _append_intersection_mesh(vertices, faces, inputs, outputs)
+    _append_intersection_mesh(vertices, faces, face_line_ids, inputs, outputs)
 
 
 def _transform_position(socket_transform):
     return socket_transform.multiply_point((0.0, 0.0, 0.0))
 
 
-def _append_intersection_mesh(vertices, faces, inputs_original, outputs_original):
+def _append_intersection_mesh(vertices, faces, face_line_ids, inputs_original, outputs_original):
     hexagon = [
         (-0.5, 0.0, 0.0),
         (-0.25, 0.43, 0.0),
@@ -290,6 +328,16 @@ def _append_intersection_mesh(vertices, faces, inputs_original, outputs_original
     outputs = []
 
     for input_index, output_index, _distance in distances:
+        if inputs_original[input_index].line_id != outputs_original[output_index].line_id:
+            continue
+        if input_index in input_used or output_index in output_used:
+            continue
+        inputs.append(inputs_original[input_index])
+        outputs.append(outputs_original[output_index])
+        input_used.add(input_index)
+        output_used.add(output_index)
+
+    for input_index, output_index, _distance in distances:
         if input_index in input_used or output_index in output_used:
             continue
         inputs.append(inputs_original[input_index])
@@ -298,15 +346,26 @@ def _append_intersection_mesh(vertices, faces, inputs_original, outputs_original
         output_used.add(output_index)
 
     if len(output_used) < len(outputs_original) and inputs_original:
-        input_index = 0
         for output_index, output in enumerate(outputs_original):
             if output_index in output_used:
                 continue
-            inputs.append(inputs_original[input_index])
+
+            matching_inputs = [
+                input_socket
+                for input_socket in inputs_original
+                if input_socket.line_id == output.line_id
+            ]
+            if matching_inputs:
+                output_position = _transform_position(output)
+                input_socket = min(
+                    matching_inputs,
+                    key=lambda socket: (_transform_position(socket) - output_position).length_squared,
+                )
+            else:
+                input_socket = inputs_original[output_index % len(inputs_original)]
+
+            inputs.append(input_socket)
             outputs.append(output)
-            input_index += 1
-            if input_index >= len(inputs_original):
-                input_index = 0
 
     pair_count = min(len(inputs), len(outputs))
     for pair_index in range(pair_count):
@@ -339,11 +398,13 @@ def _append_intersection_mesh(vertices, faces, inputs_original, outputs_original
                 base_index + output_a,
                 base_index + output_b,
             ))
+            face_line_ids.append(outputs[pair_index].line_id)
             faces.append((
                 base_index + output_b,
                 base_index + next_side,
                 base_index + side_index,
             ))
+            face_line_ids.append(outputs[pair_index].line_id)
 
 
 def _same_direction(a, b):
@@ -394,7 +455,8 @@ def _build_render_graph(solver):
                 break
 
         if actual_node != start_node:
-            line_count = len(solver.power_lines_per_node.get(actual_node, ()))
+            line_ids = tuple(sorted(solver.power_lines_per_node.get(actual_node, ())))
+            line_count = len(line_ids)
             node_a = ensure_node(start_node)
             node_b = ensure_node(actual_node, scale=calculate_node_scale(line_count))
             link_direction = node_b.position - node_a.position
@@ -403,7 +465,7 @@ def _build_render_graph(solver):
                 render_link = _RenderLink(
                     a=node_a,
                     b=node_b,
-                    lines=line_count,
+                    line_ids=line_ids,
                     rotation=_look_rotation(link_direction),
                     direction=link_direction,
                     length=(node_b.position - node_a.position).length,
@@ -418,11 +480,61 @@ def _build_render_graph(solver):
     return list(render_nodes.values()), render_links
 
 
+def _power_line_color(line_id):
+    hue = (float(line_id) * 0.618033988749895) % 1.0
+    red, green, blue = colorsys.hsv_to_rgb(hue, 0.72, 0.95)
+    return red, green, blue, 1.0
+
+
+def _apply_power_line_colors(mesh, face_line_ids):
+    if not face_line_ids:
+        return
+
+    color_attributes = getattr(mesh, "color_attributes", None)
+    if color_attributes is None:
+        return
+
+    color_attribute = color_attributes.new(
+        name=POWER_LINES_COLOR_ATTRIBUTE,
+        type='BYTE_COLOR',
+        domain='CORNER',
+    )
+
+    for polygon, line_id in zip(mesh.polygons, face_line_ids):
+        color = _power_line_color(line_id)
+        for loop_index in polygon.loop_indices:
+            color_attribute.data[loop_index].color = color
+
+
 def _material():
     material = bpy.data.materials.get(POWER_LINES_MATERIAL_NAME)
     if material is None:
         material = bpy.data.materials.new(POWER_LINES_MATERIAL_NAME)
-        material.diffuse_color = (0.01, 0.01, 0.012, 1.0)
+    material.diffuse_color = (0.95, 0.95, 0.95, 1.0)
+
+    material.use_nodes = True
+    node_tree = material.node_tree
+    if node_tree is None:
+        return material
+
+    nodes = node_tree.nodes
+    principled = nodes.get("Principled BSDF")
+    if principled is None:
+        return material
+
+    attribute_node = nodes.get("Stagehand Power Line Color")
+    if attribute_node is None:
+        attribute_node = nodes.new(type="ShaderNodeAttribute")
+        attribute_node.name = "Stagehand Power Line Color"
+        attribute_node.label = "Power Line Color"
+    attribute_node.attribute_name = POWER_LINES_COLOR_ATTRIBUTE
+
+    if not any(link.to_node is principled and link.to_socket == principled.inputs.get("Base Color") for link in node_tree.links):
+        base_color_input = principled.inputs.get("Base Color")
+        color_output = attribute_node.outputs.get("Color")
+        if base_color_input is not None and color_output is not None:
+            node_tree.links.new(color_output, base_color_input)
+
     return material
 
 
@@ -441,18 +553,20 @@ def build_power_lines_mesh(context, solver):
     render_nodes, render_links = _build_render_graph(solver)
     vertices = []
     faces = []
+    face_line_ids = []
 
     for render_link in render_links:
-        _append_cable_mesh(vertices, faces, render_link)
+        _append_cable_mesh(vertices, faces, face_line_ids, render_link)
 
     for render_node in render_nodes:
-        _append_node_intersection_mesh(vertices, faces, render_node)
+        _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node)
 
     _remove_existing_power_lines_object()
 
     mesh = bpy.data.meshes.new(POWER_LINES_MESH_NAME)
     mesh.from_pydata(vertices, [], faces)
     mesh.update(calc_edges=True)
+    _apply_power_line_colors(mesh, face_line_ids)
 
     power_lines_object = bpy.data.objects.new(POWER_LINES_OBJECT_NAME, mesh)
     power_lines_object["stagehand_generated_power_lines"] = True
