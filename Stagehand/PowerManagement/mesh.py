@@ -214,31 +214,29 @@ def _transformed_cable_point(point, midpoint, rotation, length):
     return midpoint + (rotation @ local_point)
 
 
-def _single_cable_profile(center):
-    hexagon = [
-        Vector((-0.5, 0.0, -0.5)),
-        Vector((-0.25, 0.43, -0.5)),
-        Vector((0.25, 0.43, -0.5)),
-        Vector((0.5, 0.0, -0.5)),
-        Vector((0.25, -0.43, -0.5)),
-        Vector((-0.25, -0.43, -0.5)),
-    ]
-    profile_vertices = [
-        Vector((center.x + point.x, center.y + point.y, point.z))
-        for point in hexagon
-    ]
-    profile_vertices.extend(
-        Vector((center.x + point.x, center.y + point.y, point.z + 1.0))
-        for point in hexagon
+def _nearest_center_index(point, centers):
+    return min(
+        range(len(centers)),
+        key=lambda index: (
+            ((point.x - centers[index].x) * (point.x - centers[index].x))
+            + ((point.y - centers[index].y) * (point.y - centers[index].y))
+        ),
     )
 
-    profile_faces = []
-    for side_index in range(6):
-        next_side = (side_index + 1) % 6
-        profile_faces.append((side_index, side_index + 6, next_side + 6))
-        profile_faces.append((side_index, next_side + 6, next_side))
 
-    return profile_vertices, profile_faces
+def _profile_face_line_ids(profile_vertices, centers, line_ids):
+    half_vertices = len(profile_vertices) // 2
+    face_line_ids = []
+
+    for index in range(half_vertices - 1):
+        midpoint = (profile_vertices[index] + profile_vertices[index + 1]) * 0.5
+        line_id = line_ids[_nearest_center_index(midpoint, centers)]
+        face_line_ids.extend((line_id, line_id))
+
+    midpoint = (profile_vertices[half_vertices - 1] + profile_vertices[0]) * 0.5
+    line_id = line_ids[_nearest_center_index(midpoint, centers)]
+    face_line_ids.extend((line_id, line_id))
+    return face_line_ids
 
 
 def _append_cable_mesh(vertices, faces, face_line_ids, render_link):
@@ -252,20 +250,18 @@ def _append_cable_mesh(vertices, faces, face_line_ids, render_link):
         return
 
     midpoint = (pos_a + pos_b) * 0.5
+    profile_vertices, profile_faces = _cable_profile(render_link.lines)
     centers = _cable_centers(render_link.lines)
-
-    for line_id, center in zip(render_link.line_ids, centers):
-        profile_vertices, profile_faces = _single_cable_profile(center)
-        base_index = len(vertices)
-        vertices.extend(
-            tuple(_transformed_cable_point(point, midpoint, render_link.rotation, length))
-            for point in profile_vertices
-        )
-        faces.extend(
-            (base_index + face[0], base_index + face[1], base_index + face[2])
-            for face in profile_faces
-        )
-        face_line_ids.extend([line_id] * len(profile_faces))
+    base_index = len(vertices)
+    vertices.extend(
+        tuple(_transformed_cable_point(point, midpoint, render_link.rotation, length))
+        for point in profile_vertices
+    )
+    faces.extend(
+        (base_index + face[0], base_index + face[1], base_index + face[2])
+        for face in profile_faces
+    )
+    face_line_ids.extend(_profile_face_line_ids(profile_vertices, centers, render_link.line_ids))
 
 
 def _socket_transform_for_link(render_node, render_link, is_output):
