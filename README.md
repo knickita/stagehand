@@ -10,3 +10,7 @@ See the Unity implementation: [stagehand-unity on GitHub](https://github.com/kni
 - `TAB`: Enter link mode, so that you can click on a link and add a compatible object in place
 
 - `SPACE`: you can write the name of the object you like to add
+
+## PDF generation performance
+
+PDF drawing export uses NumPy, when available in Blender's Python, to speed up image pixel conversion. If NumPy is not available, export falls back to a pure Python conversion loop and PDF generation can be significantly slower.

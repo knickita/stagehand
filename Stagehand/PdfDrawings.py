@@ -1,10 +1,13 @@
 import math
 import os
 import tempfile
+import time
 import zlib
 from collections import OrderedDict
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
+import blf
 import bpy
 from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix, Quaternion, Vector
@@ -12,6 +15,11 @@ from mathutils import Matrix, Quaternion, Vector
 from . import Connections
 from .LinkTypes import StagehandLinkType
 from .RegistrationUtils import safe_register_class, safe_unregister_class
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 
 PAGE_WIDTH = 842.0
@@ -23,9 +31,178 @@ RENDER_WIDTH = 1200
 RENDER_HEIGHT = 850
 CAMERA_FIT_MARGIN = 1.65
 DIMENSION_FIT_MARGIN = 1.28
+PDF_PROGRESS_METADATA_STEPS = 1
+PDF_PROGRESS_WRITE_STEPS = 1
+PDF_MAX_CONVERSION_WORKERS = os.cpu_count() or 1
 WHITE = (1.0, 1.0, 1.0)
 BLACK = (0.0, 0.0, 0.0)
 OPAQUE_WHITE = (1.0, 1.0, 1.0, 1.0)
+
+
+class _PdfPhaseProfiler:
+    def __init__(self):
+        self.phases = OrderedDict()
+
+    def record(self, name, duration):
+        self.phases[name] = self.phases.get(name, 0.0) + duration
+
+    def record_since(self, name, started_at):
+        self.record(name, time.perf_counter() - started_at)
+
+    def summary(self, limit=8):
+        if not self.phases:
+            return "no phase data"
+
+        ordered_phases = sorted(
+            self.phases.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return ", ".join(
+            f"{name} {duration:.1f}s"
+            for name, duration in ordered_phases[:limit]
+        )
+
+
+class _CursorProgressOverlay:
+    def __init__(self, context):
+        self.window_manager = context.window_manager
+        self.message = None
+        self.mouse_x = 24
+        self.mouse_y = 72
+        self.draw_handler = None
+
+    def begin(self):
+        if self.draw_handler is not None:
+            return
+
+        self.draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw,
+            (),
+            'WINDOW',
+            'POST_PIXEL',
+        )
+        self._redraw_windows()
+
+    def set_message(self, message):
+        self.message = message
+        self._redraw_windows()
+
+    def update_mouse(self, event):
+        if not hasattr(event, "mouse_region_x") or not hasattr(event, "mouse_region_y"):
+            return
+
+        if event.mouse_region_x < 0 or event.mouse_region_y < 0:
+            return
+
+        self.mouse_x = event.mouse_region_x
+        self.mouse_y = event.mouse_region_y
+        self._redraw_windows()
+
+    def finish(self):
+        if self.draw_handler is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(self.draw_handler, 'WINDOW')
+            self.draw_handler = None
+
+        self.message = None
+        self._redraw_windows()
+
+    def _draw(self):
+        if not self.message:
+            return
+
+        font_id = 0
+        x = self.mouse_x + 28
+        y = max(18, self.mouse_y - 18)
+
+        try:
+            blf.size(font_id, 13)
+        except TypeError:
+            blf.size(font_id, 13, 72)
+
+        blf.position(font_id, x + 1, y - 1, 0)
+        blf.color(font_id, 0.0, 0.0, 0.0, 0.85)
+        blf.draw(font_id, self.message)
+        blf.position(font_id, x, y, 0)
+        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
+        blf.draw(font_id, self.message)
+
+    def _redraw_windows(self):
+        if self.window_manager is None:
+            return
+
+        for window in getattr(self.window_manager, "windows", []):
+            screen = getattr(window, "screen", None)
+            if screen is None:
+                continue
+
+            for area in screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+
+
+class _ProgressReporter:
+    def __init__(self, context, total_steps):
+        self.window_manager = context.window_manager
+        self.workspace = getattr(context, "workspace", None)
+        self.overlay = _CursorProgressOverlay(context)
+        self.total_steps = max(1, total_steps)
+        self.current_step = 0
+        self.active = False
+
+    def begin(self, message=None):
+        if self.window_manager is None:
+            return
+
+        self.window_manager.progress_begin(0, self.total_steps)
+        self.active = True
+        self.overlay.begin()
+        self.set_message(message)
+
+    def advance(self, steps=1, message=None):
+        if not self.active:
+            return
+
+        self.current_step = min(self.total_steps, self.current_step + steps)
+        self.window_manager.progress_update(self.current_step)
+        self.set_message(message)
+
+    def set_message(self, message):
+        if not self.active:
+            return
+
+        progress = (self.current_step / self.total_steps) * 100.0
+        status = f"{message} ({progress:.0f}%)" if message else None
+        if self.workspace is not None and hasattr(self.workspace, "status_text_set"):
+            self.workspace.status_text_set(status)
+
+        self.overlay.set_message(status)
+        self._redraw_windows()
+
+    def update_mouse(self, event):
+        self.overlay.update_mouse(event)
+
+    def finish(self):
+        if not self.active:
+            return
+
+        if self.workspace is not None and hasattr(self.workspace, "status_text_set"):
+            self.workspace.status_text_set(None)
+        self.window_manager.progress_end()
+        self.overlay.finish()
+        self.active = False
+
+    def _redraw_windows(self):
+        if self.window_manager is None:
+            return
+
+        for window in getattr(self.window_manager, "windows", []):
+            screen = getattr(window, "screen", None)
+            if screen is None:
+                continue
+
+            for area in screen.areas:
+                area.tag_redraw()
 
 
 def _project_name():
@@ -875,21 +1052,38 @@ def _remove_dimension_render_objects(temporary_objects, material):
         bpy.data.materials.remove(material)
 
 
-def _render_view(context, view_name, center, objects, truss_segments, structure_rotation, temp_directory):
+def _render_view(
+    context,
+    view_name,
+    center,
+    objects,
+    truss_segments,
+    structure_rotation,
+    temp_directory,
+    profiler=None,
+    conversion_executor=None,
+):
+    view_started_at = time.perf_counter()
+    cleanup_started_at = None
     scene = context.scene
     camera_data = bpy.data.cameras.new(f"Stagehand PDF {view_name} Camera Data")
     camera = bpy.data.objects.new(f"Stagehand PDF {view_name} Camera", camera_data)
     scene.collection.objects.link(camera)
 
+    setup_started_at = time.perf_counter()
     view_direction, view_up = _view_direction_and_up(view_name, structure_rotation)
     view_center = center.copy()
     _set_camera_view(scene, camera, view_center, objects, view_direction, view_up)
     _expand_camera_for_dimensions(scene, camera)
+    if profiler is not None:
+        profiler.record_since("view setup", setup_started_at)
+
     dimension_objects = []
     dimension_material = None
 
     output_path = Path(temp_directory) / f"{view_name.lower()}.png"
     try:
+        fitting_started_at = time.perf_counter()
         fit_changed = False
         for _fit_pass in range(5):
             _remove_dimension_render_objects(dimension_objects, dimension_material)
@@ -914,25 +1108,80 @@ def _render_view(context, view_name, center, objects, truss_segments, structure_
             dimension_data = _view_dimension_data(scene, camera, view_center, truss_segments, view_name, structure_rotation)
             dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
             context.view_layer.update()
+        if profiler is not None:
+            profiler.record_since("dimension fitting", fitting_started_at)
 
         scene.camera = camera
         scene.render.filepath = str(output_path)
+        render_started_at = time.perf_counter()
         bpy.ops.render.render(write_still=True)
+        if profiler is not None:
+            profiler.record_since("render", render_started_at)
 
+        image_load_started_at = time.perf_counter()
         image = bpy.data.images.load(str(output_path))
+        if profiler is not None:
+            profiler.record_since("image load", image_load_started_at)
         try:
-            return _image_to_pdf_rgb(image)
+            pixel_read_started_at = time.perf_counter()
+            image_size = tuple(image.size)
+            pixels = list(image.pixels)
+            if profiler is not None:
+                profiler.record_since("pixel read", pixel_read_started_at)
+
+            if conversion_executor is None:
+                image_convert_started_at = time.perf_counter()
+                converted_image = _image_pixels_to_pdf_rgb(image_size, pixels)
+                if profiler is not None:
+                    profiler.record_since("image conversion", image_convert_started_at)
+                return converted_image
+
+            return conversion_executor.submit(_timed_image_pixels_to_pdf_rgb, image_size, pixels)
         finally:
             bpy.data.images.remove(image)
     finally:
+        cleanup_started_at = time.perf_counter()
         _remove_dimension_render_objects(dimension_objects, dimension_material)
         bpy.data.objects.remove(camera, do_unlink=True)
         bpy.data.cameras.remove(camera_data)
+        if profiler is not None:
+            profiler.record_since("view cleanup", cleanup_started_at)
+            profiler.record_since("view total", view_started_at)
 
 
 def _image_to_pdf_rgb(image):
-    width, height = image.size
-    pixels = list(image.pixels)
+    return _image_pixels_to_pdf_rgb(tuple(image.size), list(image.pixels))
+
+
+def _timed_image_pixels_to_pdf_rgb(image_size, pixels):
+    started_at = time.perf_counter()
+    return _image_pixels_to_pdf_rgb(image_size, pixels), time.perf_counter() - started_at
+
+
+def _image_pixels_to_pdf_rgb(image_size, pixels):
+    if np is not None:
+        return _image_pixels_to_pdf_rgb_numpy(image_size, pixels)
+
+    return _image_pixels_to_pdf_rgb_python(image_size, pixels)
+
+
+def _image_pixels_to_pdf_rgb_numpy(image_size, pixels):
+    width, height = image_size
+    pixel_array = np.asarray(pixels, dtype=np.float32).reshape((height, width, 4))
+    rgb_array = pixel_array[:, :, :3]
+    alpha_array = pixel_array[:, :, 3:4]
+    rgb_array = np.flipud((rgb_array * alpha_array) + (1.0 - alpha_array))
+    rgb_array = np.clip(rgb_array * 255.0, 0.0, 255.0).astype(np.uint8, copy=False)
+
+    return {
+        "width": width,
+        "height": height,
+        "data": rgb_array.tobytes(),
+    }
+
+
+def _image_pixels_to_pdf_rgb_python(image_size, pixels):
+    width, height = image_size
     data = bytearray(width * height * 3)
     target = 0
 
@@ -954,6 +1203,28 @@ def _image_to_pdf_rgb(image):
         "height": height,
         "data": bytes(data),
     }
+
+
+def _resolve_pdf_image(image_or_future, profiler=None):
+    if not isinstance(image_or_future, Future):
+        return image_or_future
+
+    wait_started_at = time.perf_counter()
+    image, conversion_duration = image_or_future.result()
+    if profiler is not None:
+        profiler.record_since("image conversion wait", wait_started_at)
+        profiler.record("image conversion worker", conversion_duration)
+    return image
+
+
+def _resolve_rendered_pages(rendered_pages, profiler=None):
+    resolve_started_at = time.perf_counter()
+    for rendered_views in rendered_pages:
+        for view_name, image_or_future in rendered_views.items():
+            rendered_views[view_name] = _resolve_pdf_image(image_or_future, profiler=profiler)
+
+    if profiler is not None:
+        profiler.record_since("image conversion resolve", resolve_started_at)
 
 
 def _pdf_escape(value):
@@ -1422,13 +1693,15 @@ def _page_content_stream(rendered_views, title, image_object_numbers):
     return "\n".join(content), xobject_entries
 
 
-def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None):
+def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None, profiler=None):
+    write_started_at = time.perf_counter()
     labels = ("Front", "Left", "Top", "Iso")
     object_entries = [None, None, None]
     page_object_numbers = []
     pending_pages = []
     next_object_number = 4
 
+    layout_started_at = time.perf_counter()
     bom_streams = _bom_page_streams(title, bom_entries or [])
 
     if bom_streams:
@@ -1506,12 +1779,15 @@ def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None):
             content_stream,
             rendered_views,
         ))
+    if profiler is not None:
+        profiler.record_since("pdf layout", layout_started_at)
 
     object_entries[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
     page_refs = " ".join(f"{object_number} 0 R" for object_number in page_object_numbers)
     object_entries[1] = f"<< /Type /Pages /Kids [{page_refs}] /Count {len(page_object_numbers)} >>".encode("ascii")
     object_entries[2] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
 
+    stream_started_at = time.perf_counter()
     for (
         page_type,
         page_object_number,
@@ -1540,7 +1816,10 @@ def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None):
         if page_type == "views":
             for label in labels:
                 object_entries.append(_pdf_image_stream(rendered_views[label]))
+    if profiler is not None:
+        profiler.record_since("pdf image compression", stream_started_at)
 
+    assembly_started_at = time.perf_counter()
     objects = [
         entry
         for entry in object_entries
@@ -1567,9 +1846,15 @@ def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None):
             f"startxref\n{xref_offset}\n%%EOF\n"
         ).encode("ascii")
     )
+    if profiler is not None:
+        profiler.record_since("pdf assembly", assembly_started_at)
 
+    disk_write_started_at = time.perf_counter()
     with open(filepath, "wb") as handle:
         handle.write(output)
+    if profiler is not None:
+        profiler.record_since("pdf disk write", disk_write_started_at)
+        profiler.record_since("pdf write total", write_started_at)
 
 
 class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
@@ -1593,15 +1878,101 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         return ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
+        if getattr(self, "_pdf_steps", None) is not None:
+            self.report({'WARNING'}, "PDF generation is already running")
+            return {'CANCELLED'}
+
         objects = _visible_mesh_objects(context)
         if not objects:
             self.report({'ERROR'}, "No visible mesh objects found for PDF drawings")
             return {'CANCELLED'}
-        bom_entries = _collect_bom_entries(objects)
-        details_data = _collect_structure_details(objects)
+
         truss_objects = [obj for obj in objects if _is_truss_object(obj)]
         truss_groups = _connected_truss_groups(truss_objects) if truss_objects else [objects]
+        conversion_workers = min(len(truss_groups) * 4, PDF_MAX_CONVERSION_WORKERS)
+        self._pdf_started_at = time.perf_counter()
+        self._pdf_profiler = _PdfPhaseProfiler()
+        self._pdf_conversion_executor = ThreadPoolExecutor(max_workers=max(1, conversion_workers))
+        self._pdf_timer = context.window_manager.event_timer_add(0.1, window=context.window)
+        self._pdf_steps = self._generate_pdf_steps(context, objects, truss_objects, truss_groups)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        progress = getattr(self, "_pdf_progress", None)
+        if progress is not None:
+            progress.update_mouse(event)
+
+        if event.type == 'ESC':
+            self._cancel_pdf_generation(context, "PDF generation cancelled")
+            return {'CANCELLED'}
+
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+
+        event_timer = getattr(event, "timer", None)
+        if event_timer is not None and event_timer != getattr(self, "_pdf_timer", None):
+            return {'PASS_THROUGH'}
+
+        try:
+            next(self._pdf_steps)
+        except StopIteration:
+            elapsed = time.perf_counter() - getattr(self, "_pdf_started_at", time.perf_counter())
+            profile_summary = getattr(self, "_pdf_profiler", _PdfPhaseProfiler()).summary()
+            self._finish_pdf_generation(context)
+            self.report({'INFO'}, f"PDF drawings created in {elapsed:.1f} seconds: {os.path.basename(self.filepath)}")
+            self.report({'INFO'}, f"PDF timing: {profile_summary}")
+            print(f"Stagehand PDF timing: total {elapsed:.1f}s; {profile_summary}")
+            return {'FINISHED'}
+        except Exception as exc:
+            self._cancel_pdf_generation(context, f"Unable to generate PDF drawings: {exc}")
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        self._cancel_pdf_generation(context, "PDF generation cancelled")
+
+    def _finish_pdf_generation(self, context):
+        self._remove_pdf_timer(context)
+        self._shutdown_pdf_conversion_executor(wait=False)
+        self._pdf_steps = None
+        self._pdf_progress = None
+        self._pdf_profiler = None
+
+    def _cancel_pdf_generation(self, context, message):
+        pdf_steps = getattr(self, "_pdf_steps", None)
+        if pdf_steps is not None:
+            pdf_steps.close()
+            self._pdf_steps = None
+
+        self._remove_pdf_timer(context)
+        self._shutdown_pdf_conversion_executor(wait=False, cancel_futures=True)
+        self._pdf_progress = None
+        self._pdf_profiler = None
+        self.report({'ERROR'}, message)
+
+    def _remove_pdf_timer(self, context):
+        pdf_timer = getattr(self, "_pdf_timer", None)
+        if pdf_timer is not None:
+            context.window_manager.event_timer_remove(pdf_timer)
+            self._pdf_timer = None
+
+    def _shutdown_pdf_conversion_executor(self, wait=True, cancel_futures=False):
+        conversion_executor = getattr(self, "_pdf_conversion_executor", None)
+        if conversion_executor is not None:
+            conversion_executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+            self._pdf_conversion_executor = None
+
+    def _generate_pdf_steps(self, context, objects, truss_objects, truss_groups):
         scene = context.scene
+        progress = _ProgressReporter(
+            context,
+            PDF_PROGRESS_METADATA_STEPS + (len(truss_groups) * 4) + PDF_PROGRESS_WRITE_STEPS,
+        )
+        profiler = getattr(self, "_pdf_profiler", None)
+        conversion_executor = getattr(self, "_pdf_conversion_executor", None)
+        self._pdf_progress = progress
 
         original_camera = scene.camera
         original_filepath = scene.render.filepath
@@ -1638,6 +2009,17 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         original_hide_render = []
 
         try:
+            progress.begin("Preparing PDF drawing data")
+            yield
+            data_started_at = time.perf_counter()
+            bom_entries = _collect_bom_entries(objects)
+            details_data = _collect_structure_details(objects)
+            if profiler is not None:
+                profiler.record_since("drawing data", data_started_at)
+            progress.advance(message="PDF drawing data ready")
+            yield
+
+            render_config_started_at = time.perf_counter()
             scene.render.resolution_x = RENDER_WIDTH
             scene.render.resolution_y = RENDER_HEIGHT
             scene.render.resolution_percentage = 100
@@ -1645,22 +2027,34 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
             _set_render_engine(scene)
             _configure_line_render(scene, context.view_layer)
+            if profiler is not None:
+                profiler.record_since("render config", render_config_started_at)
             with tempfile.TemporaryDirectory() as temp_directory:
                 for group_index, group_objects in enumerate(truss_groups, start=1):
                     page_temp_directory = Path(temp_directory) / f"structure_{group_index}"
                     page_temp_directory.mkdir(exist_ok=True)
+                    line_objects_started_at = time.perf_counter()
                     temporary_line_objects, white_material, original_hide_render = _create_line_render_objects(
                         scene,
                         group_objects,
                         objects,
                     )
+                    if profiler is not None:
+                        profiler.record_since("line object setup", line_objects_started_at)
+                    structure_started_at = time.perf_counter()
                     group_center, _group_dimensions = _object_bounds(group_objects)
                     group_segments = _build_truss_segments(group_objects) if truss_objects else []
                     group_rotation = _structure_rotation(group_objects)
+                    if profiler is not None:
+                        profiler.record_since("structure prep", structure_started_at)
                     rendered_views = {}
 
                     try:
                         for view_name in ("Front", "Left", "Top", "Iso"):
+                            progress.set_message(
+                                f"Rendering structure {group_index}/{len(truss_groups)}: {view_name}"
+                            )
+                            yield
                             rendered_views[view_name] = _render_view(
                                 context,
                                 view_name,
@@ -1669,7 +2063,13 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                                 group_segments,
                                 group_rotation,
                                 page_temp_directory,
+                                profiler=profiler,
+                                conversion_executor=conversion_executor,
                             )
+                            progress.advance(
+                                message=f"Rendered structure {group_index}/{len(truss_groups)}: {view_name}"
+                            )
+                            yield
                     finally:
                         _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
                         temporary_line_objects = []
@@ -1678,17 +2078,26 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
                     rendered_pages.append(rendered_views)
 
+            progress.set_message("Writing PDF file")
+            yield
+            progress.set_message("Finishing image conversion")
+            yield
+            _resolve_rendered_pages(rendered_pages, profiler=profiler)
+            progress.set_message("Writing PDF file")
+            yield
             _write_pdf(
                 self.filepath,
                 rendered_pages,
                 _project_name(),
                 bom_entries=bom_entries,
                 details_data=details_data,
+                profiler=profiler,
             )
-        except Exception as exc:
-            self.report({'ERROR'}, f"Unable to generate PDF drawings: {exc}")
-            return {'CANCELLED'}
+            progress.advance(message="PDF file written")
+            yield
         finally:
+            progress.finish()
+            self._pdf_progress = None
             _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
             scene.camera = original_camera
             scene.render.filepath = original_filepath
@@ -1704,9 +2113,6 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 scene.world.color = original_world_color
             _restore_attributes(scene.view_settings, original_view_settings)
             _restore_attributes(getattr(scene.display, "shading", None), original_shading)
-
-        self.report({'INFO'}, f"PDF drawings created: {os.path.basename(self.filepath)}")
-        return {'FINISHED'}
 
 
 classes = (
