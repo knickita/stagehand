@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 import bpy
 from mathutils import Vector
 
+from .solver import position_key
+
 
 POWER_LINES_OBJECT_NAME = "Stagehand Power Lines"
 POWER_LINES_MESH_NAME = "Stagehand Power Lines Mesh"
@@ -201,6 +203,12 @@ def _cable_centers(dimension):
     if dimension not in _CABLE_CENTER_CACHE:
         _cable_profile(dimension)
     return _CABLE_CENTER_CACHE[dimension]
+
+
+def _cable_profile_radius(dimension):
+    profile_vertices, _profile_faces = _cable_profile(max(1, int(dimension)))
+    half_vertices = len(profile_vertices) // 2
+    return max((profile_vertices[index].x ** 2 + profile_vertices[index].y ** 2) ** 0.5 for index in range(half_vertices)) * 0.02
 
 
 def _look_rotation(direction):
@@ -630,21 +638,44 @@ def _node_position(solver, node_id):
     return Vector(solver.nodes[node_id])
 
 
+def _offset_node_position(position, line_count, cable_anchor_offsets):
+    if not cable_anchor_offsets:
+        return position
+
+    offset_data = cable_anchor_offsets.get(position_key(position))
+    if offset_data is None:
+        return position
+
+    direction = Vector(offset_data.get("direction", (0.0, 0.0, 0.0)))
+    if direction.length_squared <= 0.0000000001:
+        return position
+    direction.normalize()
+
+    display_radius = max(0.0, float(offset_data.get("display_radius", 0.0)))
+    clearance = display_radius + _cable_profile_radius(max(1, int(line_count))) + 0.005
+    return position + (direction * clearance)
+
+
 def _first_child(children):
     return next(iter(children))
 
 
-def _build_render_graph(solver):
+def _build_render_graph(solver, cable_anchor_offsets=None):
     render_nodes = {}
     render_links = []
     incoming_links_by_node = {}
 
     def ensure_node(node_id, scale=None):
+        line_count = len(solver.power_lines_per_node.get(node_id, ()))
         if node_id not in render_nodes:
             render_nodes[node_id] = _RenderNode(
                 node_id=node_id,
-                position=_node_position(solver, node_id),
-                scale=calculate_node_scale(len(solver.power_lines_per_node.get(node_id, ()))),
+                position=_offset_node_position(
+                    _node_position(solver, node_id),
+                    line_count,
+                    cable_anchor_offsets,
+                ),
+                scale=calculate_node_scale(line_count),
             )
         if scale is not None:
             render_nodes[node_id].scale = scale
@@ -783,8 +814,8 @@ def _remove_existing_power_lines_object():
         bpy.data.meshes.remove(existing_mesh)
 
 
-def build_power_lines_mesh(context, solver):
-    render_nodes, render_links = _build_render_graph(solver)
+def build_power_lines_mesh(context, solver, cable_anchor_offsets=None):
+    render_nodes, render_links = _build_render_graph(solver, cable_anchor_offsets)
     vertices = []
     faces = []
     face_line_ids = []

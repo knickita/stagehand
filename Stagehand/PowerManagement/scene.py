@@ -45,6 +45,7 @@ class PowerGenerationResult:
     route_edge_count: int
     power_node_count: int
     starting_label: str
+    cable_anchor_offsets: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
 
 
@@ -106,6 +107,36 @@ def _link_local_structure_points(link, resolution):
     return [position + (direction * index) for index in range(point_count)]
 
 
+def _link_outward_direction(obj, link, local_point):
+    local_position = Vector(link.posDir[:3])
+    local_direction = _link_rotation(link) @ Vector((0.0, 1.0, 0.0))
+    if local_direction.length_squared > 0.0:
+        local_direction.normalize()
+
+    outward = Vector(local_point)
+    outward -= local_direction * outward.dot(local_direction)
+    if outward.length_squared <= 0.0000000001:
+        outward = _link_rotation(link) @ Vector((1.0, 0.0, 0.0))
+    if outward.length_squared <= 0.0000000001:
+        outward = Vector(local_position)
+    if outward.length_squared <= 0.0000000001:
+        outward = Vector((1.0, 0.0, 0.0))
+
+    outward.normalize()
+    return obj.matrix_world.to_quaternion() @ outward
+
+
+def _record_cable_anchor_offset(offsets_by_key, key, outward_direction, display_radius):
+    existing = offsets_by_key.get(key)
+    offset_data = {
+        "direction": tuple(outward_direction.normalized()),
+        "display_radius": max(0.0, float(display_radius)),
+    }
+
+    if existing is None or offset_data["display_radius"] > existing["display_radius"]:
+        offsets_by_key[key] = offset_data
+
+
 def _iter_power_obstacles():
     for obj in bpy.data.objects:
         if not _is_visible_scene_object(obj):
@@ -131,8 +162,9 @@ def _point_inside_obstacle(point, obstacle):
     )
 
 
-def _collect_structure_vertices(resolution):
+def _collect_structure_vertices(resolution, collect_offsets=False):
     vertices_by_key = {}
+    offsets_by_key = {}
 
     for obj in _iter_stagehand_objects():
         rotation = obj.matrix_world.to_quaternion()
@@ -143,15 +175,37 @@ def _collect_structure_vertices(resolution):
 
             for local_point in _link_local_structure_points(link, resolution):
                 world_point = translation + (rotation @ local_point)
-                vertices_by_key[position_key(world_point)] = tuple(world_point)
+                key = position_key(world_point)
+                vertices_by_key[key] = tuple(world_point)
+                if collect_offsets:
+                    _record_cable_anchor_offset(
+                        offsets_by_key,
+                        key,
+                        _link_outward_direction(obj, link, local_point),
+                        getattr(link, "displayRadius", 0.0),
+                    )
 
     obstacles = list(_iter_power_obstacles())
     if obstacles:
+        blocked_keys = {
+            key
+            for key, point in vertices_by_key.items()
+            if any(_point_inside_obstacle(point, obstacle) for obstacle in obstacles)
+        }
         vertices_by_key = {
             key: point
             for key, point in vertices_by_key.items()
-            if not any(_point_inside_obstacle(point, obstacle) for obstacle in obstacles)
+            if key not in blocked_keys
         }
+        if collect_offsets:
+            offsets_by_key = {
+                key: offset
+                for key, offset in offsets_by_key.items()
+                if key not in blocked_keys
+            }
+
+    if collect_offsets:
+        return list(vertices_by_key.values()), offsets_by_key
 
     return list(vertices_by_key.values())
 
@@ -327,7 +381,10 @@ def generate_power_solution(
     max_power_for_line=MAX_POWER_FOR_LINE,
 ):
     warnings = []
-    structure_vertices = _collect_structure_vertices(structure_resolution)
+    structure_vertices, cable_anchor_offsets = _collect_structure_vertices(
+        structure_resolution,
+        collect_offsets=True,
+    )
     if not structure_vertices:
         raise PowerSolverError("No cable anchor links were found. Add truss/pipe objects first.")
 
@@ -356,5 +413,6 @@ def generate_power_solution(
         route_edge_count=len(route_edges),
         power_node_count=len(power_nodes),
         starting_label=starting_label,
+        cable_anchor_offsets=cable_anchor_offsets,
         warnings=warnings,
     )

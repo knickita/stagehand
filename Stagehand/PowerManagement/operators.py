@@ -3,7 +3,12 @@ import bpy
 from .mesh import build_power_lines_mesh
 from .scene import collect_cable_anchor_points, generate_power_solution
 from .solver import PowerSolverError
-from ..RegistrationUtils import safe_register_class, safe_unregister_class
+from ..RegistrationUtils import (
+    safe_add_handler,
+    safe_register_class,
+    safe_remove_handler,
+    safe_unregister_class,
+)
 
 
 CABLE_ANCHOR_POINTS_OBJECT_NAME = "Stagehand Cable Anchor Points"
@@ -14,6 +19,9 @@ CABLE_OBSTACLE_COLLECTION_NAME = "cable obstacles"
 CABLE_OBSTACLE_MATERIAL_NAME = "Stagehand Cable Obstacle Material"
 POWER_OBSTACLE_PROPERTY = "stagehand_power_obstacle"
 
+_ANCHOR_POINTS_REFRESH_PENDING = False
+_ANCHOR_POINTS_REFRESHING = False
+
 
 def _is_cable_obstacle(obj):
     name = obj.name.lower()
@@ -22,6 +30,16 @@ def _is_cable_obstacle(obj):
         or name.startswith("cable obstacle")
         or name.startswith("power obstacle")
     )
+
+
+def _is_stagehand_object(obj):
+    stagehand = getattr(obj, "stagehand", None)
+    return stagehand is not None and stagehand.is_stagehand_object
+
+
+def _anchor_points_visible():
+    obj = bpy.data.objects.get(CABLE_ANCHOR_POINTS_OBJECT_NAME)
+    return obj is not None and not obj.hide_viewport and not obj.hide_get()
 
 
 def _cable_obstacle_collection(context):
@@ -97,11 +115,7 @@ def _remove_existing_cable_anchor_points_object():
         bpy.data.meshes.remove(existing_mesh)
 
 
-def _build_cable_anchor_points_object(context):
-    anchor_points = collect_cable_anchor_points()
-    if not anchor_points:
-        raise PowerSolverError("No cable anchor vertices were found in the scene.")
-
+def _cable_anchor_points_geometry(anchor_points):
     radius = 0.035
     vertices = []
     edges = []
@@ -121,10 +135,34 @@ def _build_cable_anchor_points_object(context):
             (base_index + 2, base_index + 3),
             (base_index + 4, base_index + 5),
         ))
+    return vertices, edges
+
+
+def _set_cable_anchor_points_mesh(obj, anchor_points):
+    vertices, edges = _cable_anchor_points_geometry(anchor_points)
+    mesh = obj.data
+    mesh.clear_geometry()
+    mesh.from_pydata(vertices, edges, [])
+    mesh.update(calc_edges=True)
+
+
+def _refresh_cable_anchor_points_object(obj):
+    anchor_points = collect_cable_anchor_points()
+    if not anchor_points:
+        raise PowerSolverError("No cable anchor vertices were found in the scene.")
+    _set_cable_anchor_points_mesh(obj, anchor_points)
+    return len(anchor_points)
+
+
+def _build_cable_anchor_points_object(context):
+    anchor_points = collect_cable_anchor_points()
+    if not anchor_points:
+        raise PowerSolverError("No cable anchor vertices were found in the scene.")
 
     _remove_existing_cable_anchor_points_object()
 
     mesh = bpy.data.meshes.new(CABLE_ANCHOR_POINTS_MESH_NAME)
+    vertices, edges = _cable_anchor_points_geometry(anchor_points)
     mesh.from_pydata(vertices, edges, [])
     mesh.update(calc_edges=True)
 
@@ -138,6 +176,49 @@ def _build_cable_anchor_points_object(context):
     return obj, len(anchor_points)
 
 
+def _refresh_visible_cable_anchor_points():
+    global _ANCHOR_POINTS_REFRESH_PENDING, _ANCHOR_POINTS_REFRESHING
+
+    _ANCHOR_POINTS_REFRESH_PENDING = False
+    obj = bpy.data.objects.get(CABLE_ANCHOR_POINTS_OBJECT_NAME)
+    if obj is None or obj.hide_viewport or obj.hide_get():
+        return None
+
+    _ANCHOR_POINTS_REFRESHING = True
+    try:
+        _refresh_cable_anchor_points_object(obj)
+    except Exception as exc:
+        print(f"Unable to refresh cable anchor points: {exc}")
+    finally:
+        _ANCHOR_POINTS_REFRESHING = False
+
+    return None
+
+
+def _schedule_cable_anchor_points_refresh():
+    global _ANCHOR_POINTS_REFRESH_PENDING
+
+    if _ANCHOR_POINTS_REFRESH_PENDING:
+        return
+    _ANCHOR_POINTS_REFRESH_PENDING = True
+    bpy.app.timers.register(_refresh_visible_cable_anchor_points, first_interval=0.05)
+
+
+def cable_anchor_points_depsgraph_update_post(_scene, depsgraph):
+    if _ANCHOR_POINTS_REFRESHING or not _anchor_points_visible():
+        return
+
+    for update in depsgraph.updates:
+        updated_id = update.id
+        if not isinstance(updated_id, bpy.types.Object):
+            continue
+        if updated_id.name == CABLE_ANCHOR_POINTS_OBJECT_NAME:
+            continue
+        if _is_stagehand_object(updated_id) or _is_cable_obstacle(updated_id):
+            _schedule_cable_anchor_points_refresh()
+            return
+
+
 class STAGEHAND_OT_toggle_cable_anchor_points(bpy.types.Operator):
     bl_idname = "stagehand.toggle_cable_anchor_points"
     bl_label = "Show/Hide Anchor Points"
@@ -148,6 +229,15 @@ class STAGEHAND_OT_toggle_cable_anchor_points(bpy.types.Operator):
         existing = bpy.data.objects.get(CABLE_ANCHOR_POINTS_OBJECT_NAME)
         if existing is not None:
             should_hide = not existing.hide_viewport and not existing.hide_get()
+            if not should_hide:
+                try:
+                    _refresh_cable_anchor_points_object(existing)
+                except PowerSolverError as exc:
+                    self.report({'ERROR'}, str(exc))
+                    return {'CANCELLED'}
+                except Exception as exc:
+                    self.report({'ERROR'}, f"Unable to refresh cable anchor points: {exc}")
+                    return {'CANCELLED'}
             existing.hide_viewport = should_hide
             existing.hide_set(should_hide)
             self.report({'INFO'}, "Cable anchor points hidden" if should_hide else "Cable anchor points shown")
@@ -207,6 +297,7 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
             _obj, link_count, node_count, vertex_count, face_count = build_power_lines_mesh(
                 context,
                 result.solver,
+                result.cable_anchor_offsets,
             )
         except PowerSolverError as exc:
             self.report({'ERROR'}, str(exc))
@@ -235,8 +326,10 @@ classes = (
 def register():
     for cls in classes:
         safe_register_class(cls)
+    safe_add_handler(bpy.app.handlers.depsgraph_update_post, cable_anchor_points_depsgraph_update_post)
 
 
 def unregister():
+    safe_remove_handler(bpy.app.handlers.depsgraph_update_post, cable_anchor_points_depsgraph_update_post)
     for cls in reversed(classes):
         safe_unregister_class(cls)
