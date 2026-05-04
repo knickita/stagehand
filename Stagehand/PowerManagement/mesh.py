@@ -278,6 +278,65 @@ def _socket_transform_for_link(render_node, render_link, is_output):
     return endpoint, render_link.rotation, (0.02, 0.02, max(render_link.length, 0.0001))
 
 
+def _socket_position(endpoint, rotation, scale, center):
+    return _SocketTransform(tuple(endpoint), rotation, scale, tuple(center), -1).multiply_point(
+        (0.0, 0.0, 0.0)
+    )
+
+
+def _link_socket_positions(render_node, render_link, is_output):
+    endpoint, rotation, scale = _socket_transform_for_link(render_node, render_link, is_output)
+    positions = {}
+    for line_id, center in zip(render_link.line_ids, _cable_centers(render_link.lines)):
+        positions[line_id] = _socket_position(endpoint, rotation, scale, center)
+    return positions
+
+
+def _ordered_line_ids_for_link(line_ids, node_a, link_direction, rotation, length, incoming_link):
+    line_ids = tuple(sorted(line_ids))
+    if not line_ids or incoming_link is None:
+        return line_ids
+
+    incoming_positions = _link_socket_positions(
+        node_a,
+        incoming_link,
+        is_output=incoming_link.a is node_a,
+    )
+    if not incoming_positions:
+        return line_ids
+
+    endpoint = node_a.position + (link_direction * node_a.scale * 0.5)
+    scale = (0.02, 0.02, max(length, 0.0001))
+    available_slots = [
+        (
+            center_index,
+            _socket_position(endpoint, rotation, scale, center),
+        )
+        for center_index, center in enumerate(_cable_centers(len(line_ids)))
+    ]
+
+    ordered_line_ids = [None] * len(line_ids)
+    for line_id in sorted(line_ids, key=lambda item: incoming_link.line_ids.index(item) if item in incoming_link.line_ids else len(incoming_link.line_ids)):
+        target_position = incoming_positions.get(line_id)
+        if target_position is None:
+            continue
+
+        best_available_index, best_slot = min(
+            enumerate(available_slots),
+            key=lambda item: (item[1][1] - target_position).length_squared,
+        )
+        center_index, _position = best_slot
+        ordered_line_ids[center_index] = line_id
+        available_slots.pop(best_available_index)
+
+    remaining_line_ids = iter(line_id for line_id in line_ids if line_id not in ordered_line_ids)
+    for index, line_id in enumerate(ordered_line_ids):
+        if line_id is None:
+            ordered_line_ids[index] = next(remaining_line_ids)
+
+    return tuple(ordered_line_ids)
+
+
 def _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node):
     if not render_node.links or render_node.scale <= 0.0:
         return
@@ -422,6 +481,7 @@ def _first_child(children):
 def _build_render_graph(solver):
     render_nodes = {}
     render_links = []
+    incoming_links_by_node = {}
 
     def ensure_node(node_id, scale=None):
         if node_id not in render_nodes:
@@ -462,17 +522,28 @@ def _build_render_graph(solver):
             link_direction = node_b.position - node_a.position
             if line_count > 0 and link_direction.length_squared > 0.0:
                 link_direction.normalize()
+                length = (node_b.position - node_a.position).length
+                rotation = _look_rotation(link_direction)
+                line_ids = _ordered_line_ids_for_link(
+                    line_ids,
+                    node_a,
+                    link_direction,
+                    rotation,
+                    length,
+                    incoming_links_by_node.get(start_node),
+                )
                 render_link = _RenderLink(
                     a=node_a,
                     b=node_b,
                     line_ids=line_ids,
-                    rotation=_look_rotation(link_direction),
+                    rotation=rotation,
                     direction=link_direction,
-                    length=(node_b.position - node_a.position).length,
+                    length=length,
                 )
                 node_a.links.append(render_link)
                 node_b.links.append(render_link)
                 render_links.append(render_link)
+                incoming_links_by_node[actual_node] = render_link
 
         for child in solver.steiner_children.get(actual_node, ()):
             to_explore.append((actual_node, child))
