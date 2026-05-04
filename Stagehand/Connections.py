@@ -623,12 +623,37 @@ def _prune_orphan_database_connections():
         for obj in iter_stagehand_objects()
         for _index, link in iter_object_links(obj)
     }
+    live_object_uids = {get_object_uid(obj) for obj in iter_stagehand_objects()}
+
+    link_parents = _get_database_link_parents(create=False)
+    live_link_parents = {
+        link_uid: object_uid
+        for link_uid, object_uid in link_parents.items()
+        if link_uid in live_link_uids and object_uid in live_object_uids
+    }
+    if live_link_parents != link_parents:
+        _set_database_link_parents(live_link_parents)
+
+    object_names = _get_database_object_names(create=False)
+    live_object_names = {
+        object_uid: object_name
+        for object_uid, object_name in object_names.items()
+        if object_uid in live_object_uids and find_object_by_uid(object_uid) is not None
+    }
+    if live_object_names != object_names:
+        _set_database_object_names(live_object_names)
+
     connections = _get_database_connections(create=False)
     if connections:
         live_connections = {
             link_uid: other_link_uid
             for link_uid, other_link_uid in connections.items()
-            if link_uid in live_link_uids and other_link_uid in live_link_uids
+            if (
+                link_uid in live_link_uids
+                and other_link_uid in live_link_uids
+                and link_uid != other_link_uid
+                and connections.get(other_link_uid) == link_uid
+            )
         }
         if live_connections != connections:
             _set_database_connections(live_connections)

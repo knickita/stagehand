@@ -522,6 +522,7 @@ class STAGEHAND_OT_toggle_link_mode(bpy.types.Operator):
         else:
             if context.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
+            Connections.prune_stale_connections()
             _set_link_mode(context, True, active_object)
 
         for area in context.screen.areas:
