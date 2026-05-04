@@ -59,6 +59,27 @@ def _set_link_mode(context, enabled, obj=None):
     wm.stagehand_link_mode_object_name = obj.name_full if enabled and obj is not None else ""
 
 
+def _tag_view3d_redraw(context):
+    screen = getattr(context, "screen", None)
+    if screen is None:
+        return
+
+    for area in screen.areas:
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()
+
+
+def _exit_link_mode(context):
+    _set_selecting_link_mode(context, False)
+    _set_link_mode(context, False)
+    if context.mode != 'OBJECT':
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except RuntimeError:
+            pass
+    _tag_view3d_redraw(context)
+
+
 def _set_selecting_link_mode(
     context,
     enabled,
@@ -450,6 +471,7 @@ def _draw_link_mode():
     else:
         obj = _get_link_mode_object(context)
         if obj is None:
+            _exit_link_mode(context)
             return
         line_segments, filled_triangles = _build_link_segments(obj)
         draw_groups.append((SPHERE_COLOR, line_segments, filled_triangles))
@@ -505,14 +527,17 @@ class STAGEHAND_OT_toggle_link_mode(bpy.types.Operator):
             else:
                 _set_link_mode(context, False)
 
-            for area in context.screen.areas:
-                if area.type == 'VIEW_3D':
-                    area.tag_redraw()
+            _tag_view3d_redraw(context)
+            return {'FINISHED'}
+
+        if active_object is None:
+            _exit_link_mode(context)
             return {'FINISHED'}
 
         if not _is_stagehand_object(active_object):
             if wm.stagehand_link_mode_enabled:
-                _set_link_mode(context, False)
+                _exit_link_mode(context)
+                return {'FINISHED'}
             bpy.ops.object.editmode_toggle()
             return {'FINISHED'}
 
@@ -525,10 +550,25 @@ class STAGEHAND_OT_toggle_link_mode(bpy.types.Operator):
             Connections.prune_stale_connections()
             _set_link_mode(context, True, active_object)
 
-        for area in context.screen.areas:
-            if area.type == 'VIEW_3D':
-                area.tag_redraw()
+        _tag_view3d_redraw(context)
 
+        return {'FINISHED'}
+
+
+class STAGEHAND_OT_exit_link_mode(bpy.types.Operator):
+    bl_idname = "stagehand.exit_link_mode"
+    bl_label = "Exit Link Mode"
+    bl_description = "Exit Stagehand Link Mode"
+
+    def execute(self, context):
+        wm = context.window_manager
+        if (
+            not getattr(wm, "stagehand_link_mode_enabled", False)
+            and not getattr(wm, "stagehand_selecting_link_mode_enabled", False)
+        ):
+            return {'PASS_THROUGH'}
+
+        _exit_link_mode(context)
         return {'FINISHED'}
 
 
@@ -669,6 +709,13 @@ def register_keymap():
     )
     addon_keymaps.append((km, kmi))
 
+    esc_kmi = km.keymap_items.new(
+        STAGEHAND_OT_exit_link_mode.bl_idname,
+        type='ESC',
+        value='PRESS',
+    )
+    addon_keymaps.append((km, esc_kmi))
+
     pick_kmi = km.keymap_items.new(
         STAGEHAND_OT_pick_link_for_add.bl_idname,
         type='LEFTMOUSE',
@@ -685,6 +732,7 @@ def register():
     global _draw_handler
 
     safe_register_class(STAGEHAND_OT_toggle_link_mode)
+    safe_register_class(STAGEHAND_OT_exit_link_mode)
     safe_register_class(STAGEHAND_OT_add_from_link_popup)
     safe_register_class(STAGEHAND_OT_pick_link_for_add)
     safe_define_property(bpy.types.WindowManager, "stagehand_link_mode_enabled", bpy.props.BoolProperty(
@@ -779,4 +827,5 @@ def unregister():
     safe_remove_property(bpy.types.WindowManager, "stagehand_link_mode_enabled")
     safe_unregister_class(STAGEHAND_OT_pick_link_for_add)
     safe_unregister_class(STAGEHAND_OT_add_from_link_popup)
+    safe_unregister_class(STAGEHAND_OT_exit_link_mode)
     safe_unregister_class(STAGEHAND_OT_toggle_link_mode)
