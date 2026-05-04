@@ -214,6 +214,21 @@ def _transformed_cable_point(point, midpoint, rotation, length):
     return midpoint + (rotation @ local_point)
 
 
+def _scene_cable_draw_faces(context):
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return 'VISIBLE'
+    return getattr(scene, "stagehand_cable_draw_faces", 'VISIBLE')
+
+
+def _scene_cable_color_mode(context):
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return 'POWERLINES'
+    mode = getattr(scene, "stagehand_cable_color", 'POWERLINES')
+    return mode if mode in {'BLACK', 'POWERLINES'} else 'POWERLINES'
+
+
 def _nearest_center_index(point, centers):
     return min(
         range(len(centers)),
@@ -239,7 +254,7 @@ def _profile_face_line_ids(profile_vertices, centers, line_ids):
     return face_line_ids
 
 
-def _append_cable_mesh(vertices, faces, face_line_ids, render_link):
+def _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_internal_faces=False):
     if render_link.lines <= 0 or render_link.length <= 0.0:
         return
 
@@ -250,6 +265,26 @@ def _append_cable_mesh(vertices, faces, face_line_ids, render_link):
         return
 
     midpoint = (pos_a + pos_b) * 0.5
+    if draw_internal_faces:
+        profile_vertices, profile_faces = _cable_profile(1)
+        for center, line_id in zip(_cable_centers(render_link.lines), render_link.line_ids):
+            base_index = len(vertices)
+            vertices.extend(
+                tuple(_transformed_cable_point(
+                    Vector((point.x + center.x, point.y + center.y, point.z)),
+                    midpoint,
+                    render_link.rotation,
+                    length,
+                ))
+                for point in profile_vertices
+            )
+            faces.extend(
+                (base_index + face[0], base_index + face[1], base_index + face[2])
+                for face in profile_faces
+            )
+            face_line_ids.extend(line_id for _face in profile_faces)
+        return
+
     profile_vertices, profile_faces = _cable_profile(render_link.lines)
     centers = _cable_centers(render_link.lines)
     base_index = len(vertices)
@@ -672,13 +707,16 @@ def _build_render_graph(solver):
     return list(render_nodes.values()), render_links
 
 
-def _power_line_color(line_id):
+def _power_line_color(line_id, color_mode='POWERLINES'):
+    if color_mode == 'BLACK':
+        return 0.0, 0.0, 0.0, 1.0
+
     hue = (float(line_id) * 0.618033988749895) % 1.0
     red, green, blue = colorsys.hsv_to_rgb(hue, 0.72, 0.95)
     return red, green, blue, 1.0
 
 
-def _apply_power_line_colors(mesh, face_line_ids):
+def _apply_power_line_colors(mesh, face_line_ids, color_mode='POWERLINES'):
     if not face_line_ids:
         return
 
@@ -693,16 +731,20 @@ def _apply_power_line_colors(mesh, face_line_ids):
     )
 
     for polygon, line_id in zip(mesh.polygons, face_line_ids):
-        color = _power_line_color(line_id)
+        color = _power_line_color(line_id, color_mode)
         for loop_index in polygon.loop_indices:
             color_attribute.data[loop_index].color = color
 
 
-def _material():
+def _material(context=None):
     material = bpy.data.materials.get(POWER_LINES_MATERIAL_NAME)
     if material is None:
         material = bpy.data.materials.new(POWER_LINES_MATERIAL_NAME)
-    material.diffuse_color = (0.95, 0.95, 0.95, 1.0)
+    material.diffuse_color = (
+        (0.0, 0.0, 0.0, 1.0)
+        if _scene_cable_color_mode(context) == 'BLACK'
+        else (0.95, 0.95, 0.95, 1.0)
+    )
 
     material.use_nodes = True
     node_tree = material.node_tree
@@ -746,9 +788,11 @@ def build_power_lines_mesh(context, solver):
     vertices = []
     faces = []
     face_line_ids = []
+    draw_internal_faces = _scene_cable_draw_faces(context) == 'ALL'
+    cable_color_mode = _scene_cable_color_mode(context)
 
     for render_link in render_links:
-        _append_cable_mesh(vertices, faces, face_line_ids, render_link)
+        _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_internal_faces)
 
     for render_node in render_nodes:
         _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node)
@@ -758,11 +802,11 @@ def build_power_lines_mesh(context, solver):
     mesh = bpy.data.meshes.new(POWER_LINES_MESH_NAME)
     mesh.from_pydata(vertices, [], faces)
     mesh.update(calc_edges=True)
-    _apply_power_line_colors(mesh, face_line_ids)
+    _apply_power_line_colors(mesh, face_line_ids, cable_color_mode)
 
     power_lines_object = bpy.data.objects.new(POWER_LINES_OBJECT_NAME, mesh)
     power_lines_object["stagehand_generated_power_lines"] = True
-    power_lines_object.data.materials.append(_material())
+    power_lines_object.data.materials.append(_material(context))
     context.collection.objects.link(power_lines_object)
 
     return power_lines_object, len(render_links), len(render_nodes), len(vertices), len(faces)

@@ -8,40 +8,89 @@ bl_info = {
     "category": "Development",
 }
 
-# give Python access to Blender's functionality
 import bpy
-from .RegistrationUtils import safe_register_class, safe_unregister_class
 
-class StageHandOptionsPanel(bpy.types.Panel):  # class naming convention ‘CATEGORY_PT_name’
+from .RegistrationUtils import (
+    safe_define_property,
+    safe_register_class,
+    safe_remove_property,
+    safe_unregister_class,
+)
 
-    # where to add the panel in the UI
-    bl_space_type = "VIEW_3D"  # 3D Viewport area (find list of values here https://docs.blender.org/api/current/bpy_types_enum_items/space_type_items.html#rna-enum-space-type-items)
-    bl_region_type = "UI"  # Sidebar region (find list of values here https://docs.blender.org/api/current/bpy_types_enum_items/region_type_items.html#rna-enum-region-type-items)
 
-    bl_category = "Stagehand"  # found in the Sidebar
-    bl_label = "Stagehand"  # found at the top of the Panel
+POWER_LINES_OBJECT_NAME = "Stagehand Power Lines"
+CABLE_ANCHOR_POINTS_OBJECT_NAME = "Stagehand Cable Anchor Points"
+
+
+def _regenerate_power_lines(_scene, context):
+    if context is None or bpy.data.objects.get(POWER_LINES_OBJECT_NAME) is None:
+        return
+
+    try:
+        bpy.ops.stagehand.generate_power_lines()
+    except Exception as exc:
+        print(f"Unable to regenerate power lines after cable setting change: {exc}")
+
+
+class StageHandOptionsPanel(bpy.types.Panel):
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Stagehand"
+    bl_label = "Stagehand"
 
     def draw(self, context):
         layout = self.layout
-        #layout.prop(context.scene, "StageHand_cameraSpeed")
-        
+
         box = layout.box()
-        box.label(text="Camera Movements")
-        box.operator("object.select_all").action = 'TOGGLE'
-        row = box.row()
-        row.operator("object.select_all").action = 'INVERT'
-        row.operator("object.select_random")
-        
-        
+        box.label(text="Cable")
+        box.prop(context.scene, "stagehand_cable_draw_faces", text="Draw Face")
+        box.prop(context.scene, "stagehand_cable_color", text="Color")
+        anchor_points = bpy.data.objects.get(CABLE_ANCHOR_POINTS_OBJECT_NAME)
+        anchor_text = (
+            "Hide Anchor Points"
+            if anchor_points is not None and not anchor_points.hide_viewport and not anchor_points.hide_get()
+            else "Show Anchor Points"
+        )
+        box.operator("stagehand.toggle_cable_anchor_points", text=anchor_text)
 
 
 def register():
+    safe_define_property(
+        bpy.types.Scene,
+        "stagehand_cable_draw_faces",
+        bpy.props.EnumProperty(
+            name="Cable Draw Face",
+            description="Choose whether generated cables include every face or only the visible outer shell",
+            items=(
+                ('VISIBLE', "Only Visible", "Generate only the visible outer cable faces"),
+                ('ALL', "All", "Generate every cable face, including internal faces"),
+            ),
+            default='VISIBLE',
+            update=_regenerate_power_lines,
+        ),
+    )
+    safe_define_property(
+        bpy.types.Scene,
+        "stagehand_cable_color",
+        bpy.props.EnumProperty(
+            name="Cable Color",
+            description="Choose whether generated cables are black or colored by powerline",
+            items=(
+                ('BLACK', "Black", "Draw all generated cables in black"),
+                ('POWERLINES', "Color Powerlines", "Give every powerline a different vertex color"),
+            ),
+            default='POWERLINES',
+            update=_regenerate_power_lines,
+        ),
+    )
     safe_register_class(StageHandOptionsPanel)
 
 
 def unregister():
     safe_unregister_class(StageHandOptionsPanel)
+    safe_remove_property(bpy.types.Scene, "stagehand_cable_color")
+    safe_remove_property(bpy.types.Scene, "stagehand_cable_draw_faces")
 
-##maybe you can remove this in the final package?
-if __name__ == "__main__" or __name__== "<run_path>":
+
+if __name__ == "__main__" or __name__ == "<run_path>":
     register()

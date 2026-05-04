@@ -110,7 +110,12 @@ def _iter_power_obstacles():
     for obj in bpy.data.objects:
         if not _is_visible_scene_object(obj):
             continue
-        if obj.get("stagehand_power_obstacle") or obj.name.lower().startswith("power obstacle"):
+        name = obj.name.lower()
+        if (
+            obj.get("stagehand_power_obstacle")
+            or name.startswith("power obstacle")
+            or name.startswith("cable obstacle")
+        ):
             yield obj
 
 
@@ -149,6 +154,10 @@ def _collect_structure_vertices(resolution):
         }
 
     return list(vertices_by_key.values())
+
+
+def collect_cable_anchor_points(resolution=STRUCTURE_RESOLUTION):
+    return _collect_structure_vertices(resolution)
 
 
 def _bsp_key(point):

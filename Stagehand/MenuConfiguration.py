@@ -11,6 +11,7 @@ class Stagehand_MT_menu(bpy.types.Menu):
         self.layout.menu("STAGEHAND_MT_catalogue_menu", text="Import From Catalogue")
         self.layout.operator("stagehand.import_mvr_structure", text="Import MVR Structure")
         self.layout.separator()
+        self.layout.operator("stagehand.add_cable_obstacle", text="Add Cable Obstacle")
         self.layout.operator("stagehand.generate_power_lines", text="Generate Power Lines")
         self.layout.separator()
         self.layout.operator("stagehand.generate_pdf_drawings", text="Generate PDF Drawings")
