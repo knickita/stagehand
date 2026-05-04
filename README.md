@@ -13,4 +13,6 @@ See the Unity implementation: [stagehand-unity on GitHub](https://github.com/kni
 
 ## PDF generation performance
 
-PDF drawing export uses NumPy, when available in Blender's Python, to speed up image pixel conversion. If NumPy is not available, export falls back to a pure Python conversion loop and PDF generation can be significantly slower.
+PDF drawing export prefers Blender's Workbench render engine with Freestyle disabled. This keeps the white-fill technical drawing style while avoiding the high Freestyle render cost.
+
+PDF drawing export also uses NumPy, when available in Blender's Python, to speed up image pixel conversion. If NumPy is not available, export falls back to a pure Python conversion loop and PDF generation can be significantly slower.

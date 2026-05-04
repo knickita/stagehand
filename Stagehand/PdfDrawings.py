@@ -34,6 +34,9 @@ DIMENSION_FIT_MARGIN = 1.28
 PDF_PROGRESS_METADATA_STEPS = 1
 PDF_PROGRESS_WRITE_STEPS = 1
 PDF_MAX_CONVERSION_WORKERS = os.cpu_count() or 1
+PDF_RENDER_ENGINE_CANDIDATES = ("BLENDER_WORKBENCH", "BLENDER_EEVEE_NEXT", "BLENDER_EEVEE", "BLENDER_RENDER")
+PDF_FALLBACK_EEVEE_TAA_RENDER_SAMPLES = 4
+PDF_USE_FREESTYLE = False
 WHITE = (1.0, 1.0, 1.0)
 BLACK = (0.0, 0.0, 0.0)
 OPAQUE_WHITE = (1.0, 1.0, 1.0, 1.0)
@@ -42,12 +45,20 @@ OPAQUE_WHITE = (1.0, 1.0, 1.0, 1.0)
 class _PdfPhaseProfiler:
     def __init__(self):
         self.phases = OrderedDict()
+        self.counts = OrderedDict()
+        self.view_timings = []
 
     def record(self, name, duration):
         self.phases[name] = self.phases.get(name, 0.0) + duration
 
     def record_since(self, name, started_at):
         self.record(name, time.perf_counter() - started_at)
+
+    def count(self, name, amount=1):
+        self.counts[name] = self.counts.get(name, 0) + amount
+
+    def record_view(self, label, duration):
+        self.view_timings.append((label, duration))
 
     def summary(self, limit=8):
         if not self.phases:
@@ -61,6 +72,29 @@ class _PdfPhaseProfiler:
         return ", ".join(
             f"{name} {duration:.1f}s"
             for name, duration in ordered_phases[:limit]
+        )
+
+    def count_summary(self):
+        if not self.counts:
+            return "no count data"
+
+        return ", ".join(
+            f"{name} {count}"
+            for name, count in self.counts.items()
+        )
+
+    def slow_view_summary(self, limit=6):
+        if not self.view_timings:
+            return "no view data"
+
+        slow_views = sorted(
+            self.view_timings,
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return ", ".join(
+            f"{label} {duration:.1f}s"
+            for label, duration in slow_views[:limit]
         )
 
 
@@ -707,7 +741,7 @@ def _set_attribute_if_available(owner, attribute_name, value):
 
 
 def _set_render_engine(scene):
-    for engine in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE", "BLENDER_RENDER"):
+    for engine in PDF_RENDER_ENGINE_CANDIDATES:
         try:
             scene.render.engine = engine
             return
@@ -726,16 +760,17 @@ def _configure_line_render(scene, view_layer):
     _set_attribute_if_available(shading, "xray_alpha", 1.0)
     _set_attribute_if_available(shading, "show_wireframes", True)
     _set_attribute_if_available(shading, "wireframe_opacity", 1.0)
+    _set_attribute_if_available(shading, "show_object_outline", True)
 
     world = scene.world
     if world is not None:
         world.color = WHITE
 
-    scene.render.use_freestyle = True
+    scene.render.use_freestyle = PDF_USE_FREESTYLE
     scene.render.film_transparent = True
     scene.render.image_settings.color_mode = 'RGBA'
     if hasattr(scene, "eevee"):
-        scene.eevee.taa_render_samples = 16
+        scene.eevee.taa_render_samples = PDF_FALLBACK_EEVEE_TAA_RENDER_SAMPLES
 
     freestyle_settings = view_layer.freestyle_settings
     if not freestyle_settings.linesets:
@@ -744,10 +779,10 @@ def _configure_line_render(scene, view_layer):
     for line_set in freestyle_settings.linesets:
         line_set.select_silhouette = True
         line_set.select_border = True
-        line_set.select_crease = True
-        line_set.select_edge_mark = True
+        line_set.select_crease = False
+        line_set.select_edge_mark = False
         line_set.select_material_boundary = False
-        line_set.select_contour = True
+        line_set.select_contour = False
         line_set.visibility = 'VISIBLE'
         line_set.linestyle.color = (0.0, 0.0, 0.0)
         line_set.linestyle.thickness = 1.2
@@ -1062,9 +1097,9 @@ def _render_view(
     temp_directory,
     profiler=None,
     conversion_executor=None,
+    profile_label=None,
 ):
     view_started_at = time.perf_counter()
-    cleanup_started_at = None
     scene = context.scene
     camera_data = bpy.data.cameras.new(f"Stagehand PDF {view_name} Camera Data")
     camera = bpy.data.objects.new(f"Stagehand PDF {view_name} Camera", camera_data)
@@ -1085,12 +1120,16 @@ def _render_view(
     try:
         fitting_started_at = time.perf_counter()
         fit_changed = False
+        fit_pass_count = 0
+        dimension_object_count = 0
         for _fit_pass in range(5):
+            fit_pass_count += 1
             _remove_dimension_render_objects(dimension_objects, dimension_material)
             dimension_objects = []
             dimension_material = None
             dimension_data = _view_dimension_data(scene, camera, view_center, truss_segments, view_name, structure_rotation)
             dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
+            dimension_object_count += len(dimension_objects)
             context.view_layer.update()
             fit_changed, view_center = _fit_camera_to_projected_objects(
                 scene,
@@ -1107,16 +1146,21 @@ def _render_view(
             dimension_material = None
             dimension_data = _view_dimension_data(scene, camera, view_center, truss_segments, view_name, structure_rotation)
             dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
+            dimension_object_count += len(dimension_objects)
             context.view_layer.update()
         if profiler is not None:
             profiler.record_since("dimension fitting", fitting_started_at)
+            profiler.count("fit passes", fit_pass_count)
+            profiler.count("dimension objects", dimension_object_count)
 
         scene.camera = camera
         scene.render.filepath = str(output_path)
         render_started_at = time.perf_counter()
         bpy.ops.render.render(write_still=True)
         if profiler is not None:
-            profiler.record_since("render", render_started_at)
+            render_duration = time.perf_counter() - render_started_at
+            profiler.record("render", render_duration)
+            profiler.record_view(profile_label or view_name, render_duration)
 
         image_load_started_at = time.perf_counter()
         image = bpy.data.images.load(str(output_path))
@@ -1140,12 +1184,16 @@ def _render_view(
         finally:
             bpy.data.images.remove(image)
     finally:
-        cleanup_started_at = time.perf_counter()
+        dimension_cleanup_started_at = time.perf_counter()
         _remove_dimension_render_objects(dimension_objects, dimension_material)
+        if profiler is not None:
+            profiler.record_since("dimension cleanup", dimension_cleanup_started_at)
+
+        camera_cleanup_started_at = time.perf_counter()
         bpy.data.objects.remove(camera, do_unlink=True)
         bpy.data.cameras.remove(camera_data)
         if profiler is not None:
-            profiler.record_since("view cleanup", cleanup_started_at)
+            profiler.record_since("camera cleanup", camera_cleanup_started_at)
             profiler.record_since("view total", view_started_at)
 
 
@@ -1893,7 +1941,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         self._pdf_started_at = time.perf_counter()
         self._pdf_profiler = _PdfPhaseProfiler()
         self._pdf_conversion_executor = ThreadPoolExecutor(max_workers=max(1, conversion_workers))
-        self._pdf_timer = context.window_manager.event_timer_add(0.1, window=context.window)
+        self._pdf_timer = context.window_manager.event_timer_add(0.01, window=context.window)
         self._pdf_steps = self._generate_pdf_steps(context, objects, truss_objects, truss_groups)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -1918,11 +1966,17 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             next(self._pdf_steps)
         except StopIteration:
             elapsed = time.perf_counter() - getattr(self, "_pdf_started_at", time.perf_counter())
-            profile_summary = getattr(self, "_pdf_profiler", _PdfPhaseProfiler()).summary()
+            profiler = getattr(self, "_pdf_profiler", _PdfPhaseProfiler())
+            profile_summary = profiler.summary()
+            count_summary = profiler.count_summary()
+            slow_view_summary = profiler.slow_view_summary()
             self._finish_pdf_generation(context)
             self.report({'INFO'}, f"PDF drawings created in {elapsed:.1f} seconds: {os.path.basename(self.filepath)}")
             self.report({'INFO'}, f"PDF timing: {profile_summary}")
+            self.report({'INFO'}, f"PDF counts: {count_summary}")
             print(f"Stagehand PDF timing: total {elapsed:.1f}s; {profile_summary}")
+            print(f"Stagehand PDF counts: {count_summary}")
+            print(f"Stagehand PDF slow renders: {slow_view_summary}")
             return {'FINISHED'}
         except Exception as exc:
             self._cancel_pdf_generation(context, f"Unable to generate PDF drawings: {exc}")
@@ -2000,6 +2054,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 "xray_alpha",
                 "show_wireframes",
                 "wireframe_opacity",
+                "show_object_outline",
             ),
         )
 
@@ -2010,6 +2065,9 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
         try:
             progress.begin("Preparing PDF drawing data")
+            if profiler is not None:
+                profiler.count("structures", len(truss_groups))
+                profiler.count("views", len(truss_groups) * 4)
             yield
             data_started_at = time.perf_counter()
             bom_entries = _collect_bom_entries(objects)
@@ -2041,6 +2099,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     )
                     if profiler is not None:
                         profiler.record_since("line object setup", line_objects_started_at)
+                        profiler.count("line objects", len(temporary_line_objects))
                     structure_started_at = time.perf_counter()
                     group_center, _group_dimensions = _object_bounds(group_objects)
                     group_segments = _build_truss_segments(group_objects) if truss_objects else []
@@ -2065,13 +2124,17 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                                 page_temp_directory,
                                 profiler=profiler,
                                 conversion_executor=conversion_executor,
+                                profile_label=f"structure {group_index} {view_name}",
                             )
                             progress.advance(
                                 message=f"Rendered structure {group_index}/{len(truss_groups)}: {view_name}"
                             )
                             yield
                     finally:
+                        line_cleanup_started_at = time.perf_counter()
                         _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
+                        if profiler is not None:
+                            profiler.record_since("line object cleanup", line_cleanup_started_at)
                         temporary_line_objects = []
                         white_material = None
                         original_hide_render = []
