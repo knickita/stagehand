@@ -292,6 +292,130 @@ def _link_socket_positions(render_node, render_link, is_output):
     return positions
 
 
+def _segment_distance_squared(start_a, end_a, start_b, end_b):
+    segment_a = end_a - start_a
+    segment_b = end_b - start_b
+    offset = start_a - start_b
+
+    dot_aa = segment_a.dot(segment_a)
+    dot_ab = segment_a.dot(segment_b)
+    dot_bb = segment_b.dot(segment_b)
+    dot_ao = segment_a.dot(offset)
+    dot_bo = segment_b.dot(offset)
+
+    denominator = (dot_aa * dot_bb) - (dot_ab * dot_ab)
+    s_denominator = denominator
+    t_denominator = denominator
+
+    if denominator < 0.00000001:
+        s_numerator = 0.0
+        s_denominator = 1.0
+        t_numerator = dot_bo
+        t_denominator = dot_bb
+    else:
+        s_numerator = (dot_ab * dot_bo) - (dot_bb * dot_ao)
+        t_numerator = (dot_aa * dot_bo) - (dot_ab * dot_ao)
+        if s_numerator < 0.0:
+            s_numerator = 0.0
+            t_numerator = dot_bo
+            t_denominator = dot_bb
+        elif s_numerator > s_denominator:
+            s_numerator = s_denominator
+            t_numerator = dot_bo + dot_ab
+            t_denominator = dot_bb
+
+    if t_numerator < 0.0:
+        t_numerator = 0.0
+        if -dot_ao < 0.0:
+            s_numerator = 0.0
+        elif -dot_ao > dot_aa:
+            s_numerator = s_denominator
+        else:
+            s_numerator = -dot_ao
+            s_denominator = dot_aa
+    elif t_numerator > t_denominator:
+        t_numerator = t_denominator
+        if (-dot_ao + dot_ab) < 0.0:
+            s_numerator = 0.0
+        elif (-dot_ao + dot_ab) > dot_aa:
+            s_numerator = s_denominator
+        else:
+            s_numerator = -dot_ao + dot_ab
+            s_denominator = dot_aa
+
+    sc = 0.0 if abs(s_numerator) < 0.00000001 else s_numerator / s_denominator
+    tc = 0.0 if abs(t_numerator) < 0.00000001 else t_numerator / t_denominator
+    closest = offset + (segment_a * sc) - (segment_b * tc)
+    return closest.length_squared
+
+
+def _line_order_cost(ordered_line_ids, incoming_positions, outgoing_positions):
+    cost = 0.0
+    cable_clearance_squared = 0.035 * 0.035
+
+    for slot_index, line_id in enumerate(ordered_line_ids):
+        incoming_position = incoming_positions.get(line_id)
+        if incoming_position is None:
+            continue
+        cost += (incoming_position - outgoing_positions[slot_index]).length_squared
+
+    for slot_a, line_id_a in enumerate(ordered_line_ids):
+        incoming_a = incoming_positions.get(line_id_a)
+        if incoming_a is None:
+            continue
+        outgoing_a = outgoing_positions[slot_a]
+        for slot_b in range(slot_a + 1, len(ordered_line_ids)):
+            line_id_b = ordered_line_ids[slot_b]
+            incoming_b = incoming_positions.get(line_id_b)
+            if incoming_b is None:
+                continue
+            outgoing_b = outgoing_positions[slot_b]
+            distance_squared = _segment_distance_squared(
+                incoming_a,
+                outgoing_a,
+                incoming_b,
+                outgoing_b,
+            )
+            if distance_squared < cable_clearance_squared:
+                cost += (cable_clearance_squared - distance_squared) * 10000.0
+
+    return cost
+
+
+def _optimize_line_order(ordered_line_ids, incoming_positions, outgoing_positions):
+    if len(ordered_line_ids) < 2:
+        return tuple(ordered_line_ids)
+
+    ordered_line_ids = list(ordered_line_ids)
+    best_cost = _line_order_cost(ordered_line_ids, incoming_positions, outgoing_positions)
+
+    improved = True
+    while improved:
+        improved = False
+        for index_a in range(len(ordered_line_ids) - 1):
+            for index_b in range(index_a + 1, len(ordered_line_ids)):
+                ordered_line_ids[index_a], ordered_line_ids[index_b] = (
+                    ordered_line_ids[index_b],
+                    ordered_line_ids[index_a],
+                )
+                candidate_cost = _line_order_cost(
+                    ordered_line_ids,
+                    incoming_positions,
+                    outgoing_positions,
+                )
+                if candidate_cost + 0.00000001 < best_cost:
+                    best_cost = candidate_cost
+                    improved = True
+                    continue
+
+                ordered_line_ids[index_a], ordered_line_ids[index_b] = (
+                    ordered_line_ids[index_b],
+                    ordered_line_ids[index_a],
+                )
+
+    return tuple(ordered_line_ids)
+
+
 def _ordered_line_ids_for_link(line_ids, node_a, link_direction, rotation, length, incoming_link):
     line_ids = tuple(sorted(line_ids))
     if not line_ids or incoming_link is None:
@@ -314,6 +438,7 @@ def _ordered_line_ids_for_link(line_ids, node_a, link_direction, rotation, lengt
         )
         for center_index, center in enumerate(_cable_centers(len(line_ids)))
     ]
+    outgoing_positions = [position for _center_index, position in available_slots]
 
     ordered_line_ids = [None] * len(line_ids)
     for line_id in sorted(line_ids, key=lambda item: incoming_link.line_ids.index(item) if item in incoming_link.line_ids else len(incoming_link.line_ids)):
@@ -334,7 +459,7 @@ def _ordered_line_ids_for_link(line_ids, node_a, link_direction, rotation, lengt
         if line_id is None:
             ordered_line_ids[index] = next(remaining_line_ids)
 
-    return tuple(ordered_line_ids)
+    return _optimize_line_order(ordered_line_ids, incoming_positions, outgoing_positions)
 
 
 def _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node):
