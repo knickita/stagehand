@@ -48,6 +48,11 @@ class StagehandLinkItem(bpy.types.PropertyGroup):
         default=0.0,
     )
 
+    anchorForCables: bpy.props.BoolProperty(
+        name="Anchor For Cables",
+        default=False,
+    )
+
     posDir: bpy.props.FloatVectorProperty(
         name="Position and Direction",
         size=7,
@@ -149,6 +154,7 @@ def _snapshot_stagehand_links(links):
                 "cylindricalType": bool(link.cylindricalType),
                 "displayRadius": float(link.displayRadius),
                 "length": float(link.length),
+                "anchorForCables": bool(link.anchorForCables),
                 "posDir": tuple(float(value) for value in link.posDir),
                 "connectedObjectUid": str(link.connectedObjectUid),
                 "connectedLinkUid": str(link.connectedLinkUid),
@@ -210,6 +216,15 @@ def _apply_stagehand_link_data(link_item, link_data, preserved_state=None):
     link_item.cylindricalType = bool(link_data.get("cylindricaltype", False))
     link_item.displayRadius = float(link_data.get("displayradius", 0.0))
     link_item.length = float(link_data.get("length", 0.0))
+    link_item.anchorForCables = bool(
+        link_data.get(
+            "anchorforcables",
+            link_data.get(
+                "anchorForCables",
+                link_item.cylindricalType and link_item.length > 0.0,
+            ),
+        )
+    )
 
     pos_dir = tuple(float(value) for value in link_data.get("posdir", []))
     if len(pos_dir) == 7:
@@ -372,6 +387,7 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
                 item_box.prop(link_item, "cylindricalType")
                 item_box.prop(link_item, "displayRadius")
                 item_box.prop(link_item, "length")
+                item_box.prop(link_item, "anchorForCables")
                 item_box.prop(link_item, "posDir")
                 connected_link_uid = Connections.get_connected_link_uid(link_item)
                 if connected_link_uid:

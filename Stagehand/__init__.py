@@ -29,6 +29,7 @@ MenuConfiguration = _load_submodule("MenuConfiguration")
 MvrImport = _load_submodule("MvrImport")
 OptionsPanel = _load_submodule("OptionsPanel")
 PdfDrawings = _load_submodule("PdfDrawings")
+PowerManagement = _load_submodule("PowerManagement")
 SnapLogics = _load_submodule("SnapLogics")
 
 classes = (    
@@ -40,6 +41,7 @@ classes = (
     LoadCatalogue,
     MvrImport,
     PdfDrawings,
+    PowerManagement,
     MenuConfiguration,
     OptionsPanel,
     SnapLogics,

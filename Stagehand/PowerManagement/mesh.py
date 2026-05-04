@@ -1,0 +1,462 @@
+from collections import deque
+from dataclasses import dataclass, field
+
+import bpy
+from mathutils import Vector
+
+
+POWER_LINES_OBJECT_NAME = "Stagehand Power Lines"
+POWER_LINES_MESH_NAME = "Stagehand Power Lines Mesh"
+POWER_LINES_MATERIAL_NAME = "Stagehand Cable Material"
+
+_CABLE_PROFILE_CACHE = {}
+_CABLE_CENTER_CACHE = {}
+
+
+@dataclass
+class _RenderNode:
+    node_id: int
+    position: Vector
+    scale: float
+    links: list = field(default_factory=list)
+
+
+@dataclass
+class _RenderLink:
+    a: _RenderNode
+    b: _RenderNode
+    lines: int
+    rotation: object
+    direction: Vector
+    length: float
+
+
+@dataclass(frozen=True)
+class _SocketTransform:
+    endpoint: tuple
+    rotation: object
+    scale: tuple
+    center: tuple
+
+    def multiply_point(self, point):
+        local_point = Vector((
+            (self.center[0] + point[0]) * self.scale[0],
+            (self.center[1] + point[1]) * self.scale[1],
+            (self.center[2] + point[2]) * self.scale[2],
+        ))
+        return Vector(self.endpoint) + (self.rotation @ local_point)
+
+
+def calculate_node_scale(lines):
+    step = 0
+    increment = 1
+    dimension = 0
+    while step < lines:
+        step += increment
+        dimension += 1
+        increment = int(dimension) * 6
+    return dimension * 0.86 * 0.1
+
+
+def _calculate_vertices(dimension):
+    centers = [Vector((0.0, 0.0, 0.0)) for _index in range(dimension)]
+    points = []
+    center = Vector((0.0, 0.0, 0.0))
+
+    hexagon = [
+        Vector((-0.5, 0.0, -0.5)),
+        Vector((-0.25, 0.43, -0.5)),
+        Vector((0.25, 0.43, -0.5)),
+        Vector((0.5, 0.0, -0.5)),
+        Vector((0.25, -0.43, -0.5)),
+        Vector((-0.25, -0.43, -0.5)),
+    ]
+
+    for index in range(6):
+        points.append(center + hexagon[index])
+
+    step = 1
+    inner_step = 0
+    number_of_inner_hexagons = 6
+
+    if centers:
+        centers[0] = Vector((0.0, 0.0, 0.0))
+
+    while step < dimension:
+        if inner_step == 0:
+            center += Vector((0.0, 0.86, 0.0))
+            for index in range(4):
+                points.insert(index + 2, hexagon[index] + center)
+        elif inner_step <= number_of_inner_hexagons / 6:
+            center += Vector((0.75, -0.43, 0.0))
+            points.pop(4 + inner_step * 2)
+            if step > 6 and inner_step < number_of_inner_hexagons / 6:
+                points.pop(4 + inner_step * 2)
+            points.insert(4 + inner_step * 2, hexagon[2] + center)
+            points.insert(5 + inner_step * 2, hexagon[3] + center)
+            if inner_step == number_of_inner_hexagons / 6:
+                points.insert(6 + inner_step * 2, hexagon[4] + center)
+        elif inner_step <= number_of_inner_hexagons / 3:
+            center += Vector((0.0, -0.86, 0.0))
+            points.pop(5 + inner_step * 2)
+            if step > 6 and inner_step < number_of_inner_hexagons / 3:
+                points.pop(5 + inner_step * 2)
+            points.insert(5 + inner_step * 2, hexagon[3] + center)
+            points.insert(6 + inner_step * 2, hexagon[4] + center)
+            if inner_step == number_of_inner_hexagons / 3:
+                points.insert(7 + inner_step * 2, hexagon[5] + center)
+        elif inner_step <= number_of_inner_hexagons / 2:
+            center += Vector((-0.75, -0.43, 0.0))
+            points.pop(6 + inner_step * 2)
+            if step > 6 and inner_step < number_of_inner_hexagons / 2:
+                points.pop(6 + inner_step * 2)
+            points.insert(6 + inner_step * 2, hexagon[4] + center)
+            points.insert(7 + inner_step * 2, hexagon[5] + center)
+            if inner_step == number_of_inner_hexagons / 2:
+                points.insert(8 + inner_step * 2, hexagon[0] + center)
+        elif inner_step <= number_of_inner_hexagons * 4 / 6:
+            center += Vector((-0.75, 0.43, 0.0))
+            points.pop(7 + inner_step * 2)
+            if step > 6 and inner_step < number_of_inner_hexagons * 4 / 6:
+                points.pop(7 + inner_step * 2)
+            points.insert(7 + inner_step * 2, hexagon[5] + center)
+            points.insert(8 + inner_step * 2, hexagon[0] + center)
+            if inner_step == number_of_inner_hexagons * 4 / 6:
+                points.insert(9 + inner_step * 2, hexagon[1] + center)
+        elif step != 6 and inner_step <= number_of_inner_hexagons * 5 / 6:
+            center += Vector((0.0, 0.86, 0.0))
+            points.pop(8 + inner_step * 2)
+            if step > 6 and inner_step < number_of_inner_hexagons * 5 / 6:
+                points.pop(8 + inner_step * 2)
+            points.insert(8 + inner_step * 2, hexagon[0] + center)
+            points.insert(9 + inner_step * 2, hexagon[1] + center)
+            if inner_step == number_of_inner_hexagons * 5 / 6:
+                points.insert(10 + inner_step * 2, hexagon[2] + center)
+        elif step != 6 and inner_step < number_of_inner_hexagons - 1:
+            center += Vector((0.75, 0.43, 0.0))
+            points.pop(9 + inner_step * 2)
+            if step > 6 and inner_step < number_of_inner_hexagons:
+                points.pop(9 + inner_step * 2)
+            points.insert(9 + inner_step * 2, hexagon[1] + center)
+            points.insert(10 + inner_step * 2, hexagon[2] + center)
+        elif step == 6:
+            center += Vector((0.0, 0.86, 0.0))
+            points.pop(0)
+            points.pop(0)
+            points.insert(len(points), hexagon[0] + center)
+            points.insert(len(points), hexagon[1] + center)
+        elif inner_step == number_of_inner_hexagons - 1:
+            center += Vector((0.75, 0.43, 0.0))
+            points.pop(0)
+            points.pop(0)
+            points.pop(len(points) - 1)
+            points.insert(len(points), hexagon[1] + center)
+
+        centers[step] = center.copy()
+
+        inner_step += 1
+        step += 1
+        if inner_step == number_of_inner_hexagons:
+            center += Vector((0.75, 0.43, 0.0))
+            inner_step = 0
+            number_of_inner_hexagons += 6
+
+    point_count = len(points)
+    for index in range(point_count):
+        points.append(points[index] + Vector((0.0, 0.0, 1.0)))
+
+    return points, centers
+
+
+def _cable_profile(dimension):
+    dimension = max(1, int(dimension))
+    if dimension in _CABLE_PROFILE_CACHE:
+        return _CABLE_PROFILE_CACHE[dimension]
+
+    vertices, centers = _calculate_vertices(dimension)
+    half_vertices = len(vertices) // 2
+    faces = []
+
+    for index in range(half_vertices - 1):
+        faces.append((index, index + half_vertices, index + half_vertices + 1))
+        faces.append((index, index + half_vertices + 1, index + 1))
+
+    faces.append((len(vertices) - half_vertices - 1, len(vertices) - 1, half_vertices))
+    faces.append((len(vertices) - half_vertices - 1, half_vertices, 0))
+
+    _CABLE_PROFILE_CACHE[dimension] = (vertices, faces)
+    _CABLE_CENTER_CACHE[dimension] = centers
+    return vertices, faces
+
+
+def _cable_centers(dimension):
+    dimension = max(1, int(dimension))
+    if dimension not in _CABLE_CENTER_CACHE:
+        _cable_profile(dimension)
+    return _CABLE_CENTER_CACHE[dimension]
+
+
+def _look_rotation(direction):
+    if direction.length_squared == 0.0:
+        return Vector((0.0, 0.0, 1.0)).to_track_quat("Z", "Y")
+    return direction.normalized().to_track_quat("Z", "Y")
+
+
+def _transformed_cable_point(point, midpoint, rotation, length):
+    local_point = Vector((point.x * 0.02, point.y * 0.02, point.z * length))
+    return midpoint + (rotation @ local_point)
+
+
+def _append_cable_mesh(vertices, faces, render_link):
+    if render_link.lines <= 0 or render_link.length <= 0.0:
+        return
+
+    profile_vertices, profile_faces = _cable_profile(render_link.lines)
+    pos_a = render_link.a.position + (render_link.direction * render_link.a.scale * 0.5)
+    pos_b = render_link.b.position - (render_link.direction * render_link.b.scale * 0.5)
+    length = (pos_b - pos_a).length
+    if length <= 0.0:
+        return
+
+    midpoint = (pos_a + pos_b) * 0.5
+    base_index = len(vertices)
+    vertices.extend(
+        tuple(_transformed_cable_point(point, midpoint, render_link.rotation, length))
+        for point in profile_vertices
+    )
+    faces.extend(
+        (base_index + face[0], base_index + face[1], base_index + face[2])
+        for face in profile_faces
+    )
+
+
+def _socket_transform_for_link(render_node, render_link, is_output):
+    endpoint_offset = render_link.direction * render_node.scale * 0.5
+    if is_output:
+        endpoint = render_node.position + endpoint_offset
+    else:
+        endpoint = render_node.position - endpoint_offset
+
+    return endpoint, render_link.rotation, (0.02, 0.02, max(render_link.length, 0.0001))
+
+
+def _append_node_intersection_mesh(vertices, faces, render_node):
+    if not render_node.links or render_node.scale <= 0.0:
+        return
+
+    inputs = []
+    outputs = []
+
+    for render_link in render_node.links:
+        is_output = render_link.a is render_node
+        endpoint, rotation, scale = _socket_transform_for_link(render_node, render_link, is_output)
+        target = outputs if is_output else inputs
+        for center in _cable_centers(render_link.lines):
+            target.append(_SocketTransform(tuple(endpoint), rotation, scale, tuple(center)))
+
+    if not inputs:
+        return
+
+    _append_intersection_mesh(vertices, faces, inputs, outputs)
+
+
+def _transform_position(socket_transform):
+    return socket_transform.multiply_point((0.0, 0.0, 0.0))
+
+
+def _append_intersection_mesh(vertices, faces, inputs_original, outputs_original):
+    hexagon = [
+        (-0.5, 0.0, 0.0),
+        (-0.25, 0.43, 0.0),
+        (0.25, 0.43, 0.0),
+        (0.5, 0.0, 0.0),
+        (0.25, -0.43, 0.0),
+        (-0.25, -0.43, 0.0),
+    ]
+
+    in_positions = [_transform_position(socket) for socket in inputs_original]
+    out_positions = [_transform_position(socket) for socket in outputs_original]
+
+    distances = []
+    for input_index, input_position in enumerate(in_positions):
+        for output_index, output_position in enumerate(out_positions):
+            distance = (input_position - output_position).length_squared
+            distances.append((input_index, output_index, distance))
+    distances.sort(key=lambda item: item[2])
+
+    input_used = set()
+    output_used = set()
+    inputs = []
+    outputs = []
+
+    for input_index, output_index, _distance in distances:
+        if input_index in input_used or output_index in output_used:
+            continue
+        inputs.append(inputs_original[input_index])
+        outputs.append(outputs_original[output_index])
+        input_used.add(input_index)
+        output_used.add(output_index)
+
+    if len(output_used) < len(outputs_original) and inputs_original:
+        input_index = 0
+        for output_index, output in enumerate(outputs_original):
+            if output_index in output_used:
+                continue
+            inputs.append(inputs_original[input_index])
+            outputs.append(output)
+            input_index += 1
+            if input_index >= len(inputs_original):
+                input_index = 0
+
+    pair_count = min(len(inputs), len(outputs))
+    for pair_index in range(pair_count):
+        pair_vertices = []
+        for hex_point in hexagon:
+            pair_vertices.append(inputs[pair_index].multiply_point(hex_point))
+        for hex_point in hexagon:
+            pair_vertices.append(outputs[pair_index].multiply_point(hex_point))
+
+        start_index = 0
+        min_distance = float("inf")
+        for input_vertex_index in range(6):
+            for output_vertex_index in range(6, 12):
+                distance = (
+                    pair_vertices[input_vertex_index]
+                    - pair_vertices[output_vertex_index]
+                ).length_squared
+                if distance < min_distance:
+                    min_distance = distance
+                    start_index = output_vertex_index - input_vertex_index
+
+        base_index = len(vertices)
+        vertices.extend(tuple(vertex) for vertex in pair_vertices)
+        for side_index in range(6):
+            next_side = (side_index + 1) % 6
+            output_a = ((start_index + side_index) % 6) + 6
+            output_b = ((start_index + next_side) % 6) + 6
+            faces.append((
+                base_index + side_index,
+                base_index + output_a,
+                base_index + output_b,
+            ))
+            faces.append((
+                base_index + output_b,
+                base_index + next_side,
+                base_index + side_index,
+            ))
+
+
+def _same_direction(a, b):
+    return (a - b).length_squared <= 0.0000000001
+
+
+def _node_position(solver, node_id):
+    return Vector(solver.nodes[node_id])
+
+
+def _first_child(children):
+    return next(iter(children))
+
+
+def _build_render_graph(solver):
+    render_nodes = {}
+    render_links = []
+
+    def ensure_node(node_id, scale=None):
+        if node_id not in render_nodes:
+            render_nodes[node_id] = _RenderNode(
+                node_id=node_id,
+                position=_node_position(solver, node_id),
+                scale=calculate_node_scale(len(solver.power_lines_per_node.get(node_id, ()))),
+            )
+        if scale is not None:
+            render_nodes[node_id].scale = scale
+        return render_nodes[node_id]
+
+    ensure_node(solver.start_node, scale=0.0)
+    to_explore = deque([(solver.start_node, solver.start_node)])
+
+    while to_explore:
+        start_node, actual_node = to_explore.popleft()
+        before_actual = start_node
+        direction = _node_position(solver, actual_node) - _node_position(solver, before_actual)
+        actual_direction = direction.normalized() if direction.length_squared else Vector((0.0, 0.0, 0.0))
+
+        while len(solver.steiner_children.get(actual_node, ())) == 1:
+            before_actual = actual_node
+            actual_node = _first_child(solver.steiner_children[actual_node])
+
+            old_direction = actual_direction.copy()
+            direction = _node_position(solver, actual_node) - _node_position(solver, before_actual)
+            actual_direction = direction.normalized() if direction.length_squared else Vector((0.0, 0.0, 0.0))
+            if not _same_direction(actual_direction, old_direction):
+                actual_node = before_actual
+                break
+
+        if actual_node != start_node:
+            line_count = len(solver.power_lines_per_node.get(actual_node, ()))
+            node_a = ensure_node(start_node)
+            node_b = ensure_node(actual_node, scale=calculate_node_scale(line_count))
+            link_direction = node_b.position - node_a.position
+            if line_count > 0 and link_direction.length_squared > 0.0:
+                link_direction.normalize()
+                render_link = _RenderLink(
+                    a=node_a,
+                    b=node_b,
+                    lines=line_count,
+                    rotation=_look_rotation(link_direction),
+                    direction=link_direction,
+                    length=(node_b.position - node_a.position).length,
+                )
+                node_a.links.append(render_link)
+                node_b.links.append(render_link)
+                render_links.append(render_link)
+
+        for child in solver.steiner_children.get(actual_node, ()):
+            to_explore.append((actual_node, child))
+
+    return list(render_nodes.values()), render_links
+
+
+def _material():
+    material = bpy.data.materials.get(POWER_LINES_MATERIAL_NAME)
+    if material is None:
+        material = bpy.data.materials.new(POWER_LINES_MATERIAL_NAME)
+        material.diffuse_color = (0.01, 0.01, 0.012, 1.0)
+    return material
+
+
+def _remove_existing_power_lines_object():
+    existing = bpy.data.objects.get(POWER_LINES_OBJECT_NAME)
+    if existing is None:
+        return
+
+    existing_mesh = existing.data
+    bpy.data.objects.remove(existing, do_unlink=True)
+    if existing_mesh is not None and existing_mesh.users == 0:
+        bpy.data.meshes.remove(existing_mesh)
+
+
+def build_power_lines_mesh(context, solver):
+    render_nodes, render_links = _build_render_graph(solver)
+    vertices = []
+    faces = []
+
+    for render_link in render_links:
+        _append_cable_mesh(vertices, faces, render_link)
+
+    for render_node in render_nodes:
+        _append_node_intersection_mesh(vertices, faces, render_node)
+
+    _remove_existing_power_lines_object()
+
+    mesh = bpy.data.meshes.new(POWER_LINES_MESH_NAME)
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update(calc_edges=True)
+
+    power_lines_object = bpy.data.objects.new(POWER_LINES_OBJECT_NAME, mesh)
+    power_lines_object["stagehand_generated_power_lines"] = True
+    power_lines_object.data.materials.append(_material())
+    context.collection.objects.link(power_lines_object)
+
+    return power_lines_object, len(render_links), len(render_nodes), len(vertices), len(faces)
