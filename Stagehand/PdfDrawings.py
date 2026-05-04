@@ -47,6 +47,7 @@ class _PdfPhaseProfiler:
         self.phases = OrderedDict()
         self.counts = OrderedDict()
         self.view_timings = []
+        self.structure_timings = []
 
     def record(self, name, duration):
         self.phases[name] = self.phases.get(name, 0.0) + duration
@@ -60,7 +61,10 @@ class _PdfPhaseProfiler:
     def record_view(self, label, duration):
         self.view_timings.append((label, duration))
 
-    def summary(self, limit=8):
+    def record_structure(self, label, duration):
+        self.structure_timings.append((label, duration))
+
+    def summary(self, limit=12):
         if not self.phases:
             return "no phase data"
 
@@ -95,6 +99,20 @@ class _PdfPhaseProfiler:
         return ", ".join(
             f"{label} {duration:.1f}s"
             for label, duration in slow_views[:limit]
+        )
+
+    def slow_structure_summary(self, limit=6):
+        if not self.structure_timings:
+            return "no structure data"
+
+        slow_structures = sorted(
+            self.structure_timings,
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return ", ".join(
+            f"{label} {duration:.1f}s"
+            for label, duration in slow_structures[:limit]
         )
 
 
@@ -1943,6 +1961,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         self._pdf_conversion_executor = ThreadPoolExecutor(max_workers=max(1, conversion_workers))
         self._pdf_timer = context.window_manager.event_timer_add(0.01, window=context.window)
         self._pdf_steps = self._generate_pdf_steps(context, objects, truss_objects, truss_groups)
+        self._pdf_last_step_finished_at = time.perf_counter()
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
@@ -1962,26 +1981,37 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         if event_timer is not None and event_timer != getattr(self, "_pdf_timer", None):
             return {'PASS_THROUGH'}
 
+        profiler = getattr(self, "_pdf_profiler", None)
+        step_started_at = time.perf_counter()
+        last_step_finished_at = getattr(self, "_pdf_last_step_finished_at", None)
+        if profiler is not None:
+            profiler.count("modal timer ticks")
+            if last_step_finished_at is not None:
+                profiler.record("modal idle gap", max(0.0, step_started_at - last_step_finished_at))
+
         try:
             next(self._pdf_steps)
         except StopIteration:
             elapsed = time.perf_counter() - getattr(self, "_pdf_started_at", time.perf_counter())
             profiler = getattr(self, "_pdf_profiler", _PdfPhaseProfiler())
+            self._finish_pdf_generation(context)
             profile_summary = profiler.summary()
             count_summary = profiler.count_summary()
             slow_view_summary = profiler.slow_view_summary()
-            self._finish_pdf_generation(context)
+            slow_structure_summary = profiler.slow_structure_summary()
             self.report({'INFO'}, f"PDF drawings created in {elapsed:.1f} seconds: {os.path.basename(self.filepath)}")
             self.report({'INFO'}, f"PDF timing: {profile_summary}")
             self.report({'INFO'}, f"PDF counts: {count_summary}")
             print(f"Stagehand PDF timing: total {elapsed:.1f}s; {profile_summary}")
             print(f"Stagehand PDF counts: {count_summary}")
             print(f"Stagehand PDF slow renders: {slow_view_summary}")
+            print(f"Stagehand PDF slow structures: {slow_structure_summary}")
             return {'FINISHED'}
         except Exception as exc:
             self._cancel_pdf_generation(context, f"Unable to generate PDF drawings: {exc}")
             return {'CANCELLED'}
 
+        self._pdf_last_step_finished_at = time.perf_counter()
         return {'RUNNING_MODAL'}
 
     def cancel(self, context):
@@ -1993,6 +2023,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         self._pdf_steps = None
         self._pdf_progress = None
         self._pdf_profiler = None
+        self._pdf_last_step_finished_at = None
 
     def _cancel_pdf_generation(self, context, message):
         pdf_steps = getattr(self, "_pdf_steps", None)
@@ -2004,6 +2035,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         self._shutdown_pdf_conversion_executor(wait=False, cancel_futures=True)
         self._pdf_progress = None
         self._pdf_profiler = None
+        self._pdf_last_step_finished_at = None
         self.report({'ERROR'}, message)
 
     def _remove_pdf_timer(self, context):
@@ -2015,7 +2047,11 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
     def _shutdown_pdf_conversion_executor(self, wait=True, cancel_futures=False):
         conversion_executor = getattr(self, "_pdf_conversion_executor", None)
         if conversion_executor is not None:
+            profiler = getattr(self, "_pdf_profiler", None)
+            shutdown_started_at = time.perf_counter()
             conversion_executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+            if profiler is not None:
+                profiler.record_since("conversion executor shutdown", shutdown_started_at)
             self._pdf_conversion_executor = None
 
     def _generate_pdf_steps(self, context, objects, truss_objects, truss_groups):
@@ -2087,8 +2123,10 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             _configure_line_render(scene, context.view_layer)
             if profiler is not None:
                 profiler.record_since("render config", render_config_started_at)
+            temp_directory_started_at = time.perf_counter()
             with tempfile.TemporaryDirectory() as temp_directory:
                 for group_index, group_objects in enumerate(truss_groups, start=1):
+                    structure_total_started_at = time.perf_counter()
                     page_temp_directory = Path(temp_directory) / f"structure_{group_index}"
                     page_temp_directory.mkdir(exist_ok=True)
                     line_objects_started_at = time.perf_counter()
@@ -2113,7 +2151,6 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                             progress.set_message(
                                 f"Rendering structure {group_index}/{len(truss_groups)}: {view_name}"
                             )
-                            yield
                             rendered_views[view_name] = _render_view(
                                 context,
                                 view_name,
@@ -2129,7 +2166,6 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                             progress.advance(
                                 message=f"Rendered structure {group_index}/{len(truss_groups)}: {view_name}"
                             )
-                            yield
                     finally:
                         line_cleanup_started_at = time.perf_counter()
                         _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
@@ -2139,7 +2175,12 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                         white_material = None
                         original_hide_render = []
 
+                    if profiler is not None:
+                        profiler.record_structure(f"structure {group_index}", time.perf_counter() - structure_total_started_at)
                     rendered_pages.append(rendered_views)
+                    yield
+            if profiler is not None:
+                profiler.record_since("temporary directory total", temp_directory_started_at)
 
             progress.set_message("Writing PDF file")
             yield
@@ -2159,9 +2200,16 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             progress.advance(message="PDF file written")
             yield
         finally:
+            progress_finish_started_at = time.perf_counter()
             progress.finish()
+            if profiler is not None:
+                profiler.record_since("progress finish", progress_finish_started_at)
             self._pdf_progress = None
+            final_line_cleanup_started_at = time.perf_counter()
             _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
+            if profiler is not None:
+                profiler.record_since("final line cleanup", final_line_cleanup_started_at)
+            restore_started_at = time.perf_counter()
             scene.camera = original_camera
             scene.render.filepath = original_filepath
             scene.render.resolution_x = original_resolution[0]
@@ -2176,6 +2224,8 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 scene.world.color = original_world_color
             _restore_attributes(scene.view_settings, original_view_settings)
             _restore_attributes(getattr(scene.display, "shading", None), original_shading)
+            if profiler is not None:
+                profiler.record_since("render state restore", restore_started_at)
 
 
 classes = (
