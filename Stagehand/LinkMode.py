@@ -69,10 +69,10 @@ def _tag_view3d_redraw(context):
             area.tag_redraw()
 
 
-def _exit_link_mode(context):
+def _exit_link_mode(context, force_object_mode=True):
     _set_selecting_link_mode(context, False)
     _set_link_mode(context, False)
-    if context.mode != 'OBJECT':
+    if force_object_mode and context.mode != 'OBJECT':
         try:
             bpy.ops.object.mode_set(mode='OBJECT')
         except RuntimeError:
@@ -471,7 +471,7 @@ def _draw_link_mode():
     else:
         obj = _get_link_mode_object(context)
         if obj is None:
-            _exit_link_mode(context)
+            _exit_link_mode(context, force_object_mode=False)
             return
         line_segments, filled_triangles = _build_link_segments(obj)
         draw_groups.append((SPHERE_COLOR, line_segments, filled_triangles))
