@@ -787,8 +787,11 @@ def _prune_orphan_database_connections():
 
 
 def prune_stale_connections():
-    _rebuild_database_indexes()
-    _repair_duplicate_ids()
+    if _DUPLICATE_REPAIR_NEEDED:
+        _repair_duplicate_ids_if_needed()
+        _rebuild_database_indexes()
+    else:
+        _rebuild_database_indexes()
     _prune_orphan_database_connections()
     _remove_connections_not_working(iter_stagehand_objects())
 
@@ -994,7 +997,7 @@ def _connect_free_links_to_scene(free_items, group_objects):
     ]
 
 
-def UpdateConnections(objects):
+def UpdateConnections(objects, auto_connect=True):
     _report_connection_profile("\n")
     profile_start_time = time.perf_counter()
     profile_entries = []
@@ -1019,12 +1022,21 @@ def UpdateConnections(objects):
         )
         return []
 
-    _profile_step(profile_entries, "rebuild indexes", _rebuild_database_indexes)
-    repaired_duplicate_count = _profile_step(
-        profile_entries,
-        "repair duplicate ids",
-        _repair_duplicate_ids_if_needed,
-    )
+    duplicate_repair_needed = _DUPLICATE_REPAIR_NEEDED
+    if duplicate_repair_needed:
+        repaired_duplicate_count = _profile_step(
+            profile_entries,
+            "repair duplicate ids",
+            _repair_duplicate_ids_if_needed,
+        )
+        _profile_step(profile_entries, "rebuild indexes", _rebuild_database_indexes)
+    else:
+        _profile_step(profile_entries, "rebuild indexes", _rebuild_database_indexes)
+        repaired_duplicate_count = _profile_step(
+            profile_entries,
+            "repair duplicate ids",
+            _repair_duplicate_ids_if_needed,
+        )
     _profile_step(profile_entries, "prune orphan database connections", _prune_orphan_database_connections)
     update_objects = _profile_step(
         profile_entries,
@@ -1037,16 +1049,20 @@ def UpdateConnections(objects):
         "remove invalid connections",
         lambda: _remove_connections_not_working(update_objects),
     )
-    free_links = _profile_step(
-        profile_entries,
-        "connect free links inside group",
-        lambda: _connect_free_links_inside_group(update_objects),
-    )
-    remaining_free_links = _profile_step(
-        profile_entries,
-        "connect free links to scene",
-        lambda: _connect_free_links_to_scene(free_links, update_objects),
-    )
+    if auto_connect:
+        free_links = _profile_step(
+            profile_entries,
+            "connect free links inside group",
+            lambda: _connect_free_links_inside_group(update_objects),
+        )
+        remaining_free_links = _profile_step(
+            profile_entries,
+            "connect free links to scene",
+            lambda: _connect_free_links_to_scene(free_links, update_objects),
+        )
+    else:
+        remaining_free_links = []
+        profile_entries.append(("auto connect skipped", 0.0))
 
     total_time = time.perf_counter() - profile_start_time
     profile_summary = "; ".join(
@@ -1056,6 +1072,8 @@ def UpdateConnections(objects):
     _report_connection_profile(
         f"Stagehand UpdateConnections: total {_format_profile_time(total_time)}; "
         f"objects: {len(update_objects)}; removed: {removed_count}; "
+        f"repaired duplicates: {repaired_duplicate_count}; "
+        f"auto connect: {auto_connect}; "
         f"free links: {len(remaining_free_links)}; {profile_summary}"
     )
     _print_connection_profile(
@@ -1064,13 +1082,14 @@ def UpdateConnections(objects):
         objects=len(update_objects),
         removed=removed_count,
         repaired_duplicates=repaired_duplicate_count,
+        auto_connect=auto_connect,
         free_links=len(remaining_free_links),
     )
     return remaining_free_links
 
 
-def refresh_connections_for_objects(objects):
-    return UpdateConnections(objects)
+def refresh_connections_for_objects(objects, auto_connect=True):
+    return UpdateConnections(objects, auto_connect=auto_connect)
 
 
 def _iter_pending_operators():
@@ -1169,7 +1188,7 @@ def _process_dirty_connection_refresh():
             if obj is not None:
                 refresh_objects.append(obj)
 
-    UpdateConnections(refresh_objects)
+    UpdateConnections(refresh_objects, auto_connect=not processed_all_objects)
     return processed_all_objects
 
 
