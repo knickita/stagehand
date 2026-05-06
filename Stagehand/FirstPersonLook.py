@@ -48,8 +48,13 @@ class FirstPersonLook(bpy.types.Operator):
     def modal(self, context, event):
         # Stop when Left Alt is released
         if event.type == 'LEFT_ALT' and event.value == 'RELEASE':
+            self.alt_held = False
             self.finish(context)
             return {'FINISHED'}
+        if event.type == 'LEFT_ALT' and event.value == 'PRESS':
+            self.alt_held = True
+        elif event.type != 'TIMER':
+            self.alt_held = event.alt
 
         # Track key state
         if event.type in self.keys:
@@ -58,6 +63,9 @@ class FirstPersonLook(bpy.types.Operator):
 
         # Mouse look (Invert Y + rotate around camera/eye position)
         if event.type == 'MOUSEMOVE':
+            if not self.alt_held:
+                return {'PASS_THROUGH'}
+
             if self.skipNextMove:
                 self.skipNextMove=False
                 self.last_x=event.mouse_x
@@ -111,6 +119,9 @@ class FirstPersonLook(bpy.types.Operator):
 
         # Movement update
         if event.type == 'TIMER':
+            if not self.alt_held:
+                return {'RUNNING_MODAL'}
+
             rv3d = self.rv3d
             dt = 1.0 / 60.0
             spd = self.speed * (3.0 if event.shift else 1.0)
