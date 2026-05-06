@@ -38,6 +38,14 @@ LinkSearchItem = namedtuple(
         "bucket_key",
     ),
 )
+LinkIndexItem = namedtuple(
+    "LinkIndexItem",
+    (
+        "obj",
+        "link_index",
+        "link",
+    ),
+)
 _DIRTY_CONNECTION_OBJECT_UIDS = set()
 _ALL_CONNECTIONS_DIRTY = False
 _DUPLICATE_REPAIR_NEEDED = True
@@ -653,7 +661,14 @@ def _connection_is_working(
     link_parents=None,
     object_by_uid=None,
     link_by_uid=None,
+    context=None,
 ):
+    if context is not None:
+        connections = context.connections
+        link_parents = context.link_parents
+        live_uids = context.live_uids
+        object_by_uid = context.object_by_uid
+        link_by_uid = context.link_by_uid
     if connections is None:
         connections = _get_database_connections(create=False)
     if link_parents is None:
@@ -687,24 +702,26 @@ def _connection_is_working(
         other_link_entry = link_by_uid.get(other_link_uid)
 
     if other_link_entry is not None:
-        _other_obj, other_link_index, other_link, other_center, other_rotation = other_link_entry
+        _other_obj, other_link_index, other_link = other_link_entry
     elif link_by_uid is not None:
         return False
     else:
         other_link, other_link_index = find_link_by_uid(other_obj, other_link_uid)
-        other_center = None
-        other_rotation = None
     if other_link is None:
         return False
     if str(connections.get(other_link_uid, "")) != link_uid:
         return False
 
     if link_entry is not None:
-        _obj, _link_index, _link, center, rotation = link_entry
+        _obj, _link_index, _link = link_entry
+    if context is not None:
+        center, rotation = context.get_link_transform(obj, link)
     else:
         center, rotation = _link_transform(obj, link)
 
-    if other_center is None or other_rotation is None:
+    if context is not None:
+        other_center, other_rotation = context.get_link_transform(other_obj, other_link)
+    else:
         other_center, other_rotation = _link_transform(other_obj, other_link)
 
     distance = (other_center - center).length
@@ -717,61 +734,40 @@ def _connection_is_working(
     return True
 
 
-def _remove_connections_not_working(objects):
-    live_objects = list(iter_stagehand_objects())
-    object_by_uid = {}
-    link_by_uid = {}
+def _remove_connections_not_working(objects, context=None):
+    if context is None:
+        context = ConnectionContext()
 
-    for live_obj in live_objects:
-        live_uid = get_object_uid(live_obj)
-        if live_uid:
-            object_by_uid[live_uid] = live_obj
-        for live_link_index, live_link in iter_object_links(live_obj):
-            center, rotation = _link_transform(live_obj, live_link)
-            link_by_uid[ensure_stagehand_link_uid(live_link)] = (
-                live_obj,
-                live_link_index,
-                live_link,
-                center,
-                rotation,
-            )
-
-    live_uids = set(object_by_uid.keys())
-    connections = _get_database_connections(create=False)
-    link_parents = _get_database_link_parents(create=False)
     removed_count = 0
 
-    for obj in _unique_stagehand_objects(objects):
+    for obj in context.unique_stagehand_objects(objects):
         for index, link in iter_object_links(obj):
-            if not _is_link_connected_in_connections(link, connections):
+            if not _is_link_connected_in_connections(link, context.connections):
                 _clear_legacy_link_connection(link)
                 continue
             if _connection_is_working(
                 obj,
                 index,
-                live_uids=live_uids,
-                connections=connections,
-                link_parents=link_parents,
-                object_by_uid=object_by_uid,
-                link_by_uid=link_by_uid,
+                context=context,
             ):
                 _clear_legacy_link_connection(link)
                 continue
+            link_uid = ensure_stagehand_link_uid(link)
             disconnect_link(obj, index)
+            context.note_connection_removed(link_uid)
             removed_count += 1
 
     return removed_count
 
 
-def _prune_orphan_database_connections():
-    live_link_uids = {
-        ensure_stagehand_link_uid(link)
-        for obj in iter_stagehand_objects()
-        for _index, link in iter_object_links(obj)
-    }
-    live_object_uids = {get_object_uid(obj) for obj in iter_stagehand_objects()}
+def _prune_orphan_database_connections(context=None):
+    if context is None:
+        context = ConnectionContext()
 
-    link_parents = _get_database_link_parents(create=False)
+    live_link_uids = context.live_link_uids
+    live_object_uids = context.live_uids
+
+    link_parents = context.link_parents
     live_link_parents = {
         link_uid: object_uid
         for link_uid, object_uid in link_parents.items()
@@ -779,17 +775,19 @@ def _prune_orphan_database_connections():
     }
     if live_link_parents != link_parents:
         _set_database_link_parents(live_link_parents)
+        context.link_parents = live_link_parents
 
-    object_names = _get_database_object_names(create=False)
+    object_names = context.object_names
     live_object_names = {
         object_uid: object_name
         for object_uid, object_name in object_names.items()
-        if object_uid in live_object_uids and find_object_by_uid(object_uid) is not None
+        if object_uid in live_object_uids and context.object_by_uid.get(object_uid) is not None
     }
     if live_object_names != object_names:
         _set_database_object_names(live_object_names)
+        context.object_names = live_object_names
 
-    connections = _get_database_connections(create=False)
+    connections = context.connections
     if connections:
         live_connections = {
             link_uid: other_link_uid
@@ -803,6 +801,8 @@ def _prune_orphan_database_connections():
         }
         if live_connections != connections:
             _set_database_connections(live_connections)
+            context.connections = live_connections
+            context.connected_link_uids = set(live_connections.keys())
 
 
 def prune_stale_connections():
@@ -811,8 +811,9 @@ def prune_stale_connections():
         _rebuild_database_indexes()
     else:
         _rebuild_database_indexes()
-    _prune_orphan_database_connections()
-    _remove_connections_not_working(iter_stagehand_objects())
+    context = ConnectionContext()
+    _prune_orphan_database_connections(context=context)
+    _remove_connections_not_working(iter_stagehand_objects(), context=context)
 
 
 def _iter_compatible_unconnected_links(obj, connections=None):
@@ -878,28 +879,16 @@ def _connection_candidate(item_a, item_b):
     )
 
 
-def _free_link_items(objects, connections=None):
+def _free_link_items(objects, connections=None, context=None):
+    if context is not None:
+        return context.free_link_items(objects)
     if connections is None:
         connections = _get_database_connections(create=False)
 
-    link_items = []
-    for obj in _unique_stagehand_objects(objects):
-        object_uid = get_object_uid(obj)
-        for link_index, link in _iter_compatible_unconnected_links(obj, connections=connections):
-            center, rotation = _link_transform(obj, link)
-            link_items.append(
-                LinkSearchItem(
-                    obj,
-                    link_index,
-                    link,
-                    object_uid,
-                    ensure_stagehand_link_uid(link),
-                    center,
-                    rotation,
-                    _link_center_bucket_key(center),
-                )
-            )
-    return link_items
+    context = ConnectionContext()
+    context.connections = connections
+    context.connected_link_uids = set(connections.keys())
+    return context.free_link_items(objects)
 
 
 def _link_center_bucket_key(center):
@@ -909,6 +898,94 @@ def _link_center_bucket_key(center):
         floor(center.y / cell_size),
         floor(center.z / cell_size),
     )
+
+
+class ConnectionContext:
+    def __init__(self):
+        self.refresh_database()
+        self.refresh_live_indexes()
+
+    def refresh_database(self):
+        self.connections = _get_database_connections(create=False)
+        self.link_parents = _get_database_link_parents(create=False)
+        self.object_names = _get_database_object_names(create=False)
+        self.connected_link_uids = set(self.connections.keys())
+
+    def refresh_live_indexes(self):
+        self.live_objects = list(iter_stagehand_objects())
+        self.object_by_uid = {}
+        self.link_by_uid = {}
+        self._link_transform_cache = {}
+
+        for obj in self.live_objects:
+            object_uid = get_object_uid(obj)
+            if object_uid:
+                self.object_by_uid[object_uid] = obj
+            for link_index, link in iter_object_links(obj):
+                link_uid = ensure_stagehand_link_uid(link)
+                self.link_by_uid[link_uid] = LinkIndexItem(obj, link_index, link)
+
+        self.live_uids = set(self.object_by_uid.keys())
+        self.live_link_uids = set(self.link_by_uid.keys())
+
+    def refresh_after_database_write(self):
+        self.refresh_database()
+        self.refresh_live_indexes()
+
+    def note_connection_removed(self, link_uid):
+        other_link_uid = self.connections.pop(link_uid, "")
+        self.connected_link_uids.discard(link_uid)
+        if other_link_uid and self.connections.get(other_link_uid) == link_uid:
+            del self.connections[other_link_uid]
+            self.connected_link_uids.discard(other_link_uid)
+
+    def unique_stagehand_objects(self, objects):
+        unique_objects = []
+        seen_uids = set()
+
+        for obj in objects:
+            if not is_stagehand_object(obj):
+                continue
+
+            uid = get_object_uid(obj)
+            if not uid or uid in seen_uids:
+                continue
+
+            seen_uids.add(uid)
+            unique_objects.append(obj)
+
+        return unique_objects
+
+    def get_link_transform(self, obj, link):
+        link_uid = ensure_stagehand_link_uid(link)
+        cached = self._link_transform_cache.get(link_uid)
+        if cached is None:
+            cached = _link_transform(obj, link)
+            self._link_transform_cache[link_uid] = cached
+        return cached
+
+    def make_search_item(self, obj, link_index, link):
+        center, rotation = self.get_link_transform(obj, link)
+        return LinkSearchItem(
+            obj,
+            link_index,
+            link,
+            get_object_uid(obj),
+            ensure_stagehand_link_uid(link),
+            center,
+            rotation,
+            _link_center_bucket_key(center),
+        )
+
+    def free_link_items(self, objects):
+        link_items = []
+        for obj in self.unique_stagehand_objects(objects):
+            for link_index, link in _iter_compatible_unconnected_links(
+                obj,
+                connections=self.connections,
+            ):
+                link_items.append(self.make_search_item(obj, link_index, link))
+        return link_items
 
 
 def _nearby_link_center_bucket_keys(bucket_key):
@@ -923,10 +1000,13 @@ def _nearby_link_center_bucket_keys(bucket_key):
                 )
 
 
-def _connect_candidate_pairs(candidates):
+def _connect_candidate_pairs(candidates, context=None):
     connected_any = False
     connected_count = 0
-    connected_link_uids = set(_get_database_connections(create=False).keys())
+    if context is not None:
+        connected_link_uids = set(context.connected_link_uids)
+    else:
+        connected_link_uids = set(_get_database_connections(create=False).keys())
 
     for candidate in sorted(candidates, key=lambda item: item[:6]):
         item_a, item_b = candidate[6], candidate[7]
@@ -938,14 +1018,21 @@ def _connect_candidate_pairs(candidates):
             connected_count += 1
             connected_link_uids.add(item_a.link_uid)
             connected_link_uids.add(item_b.link_uid)
+            if context is not None:
+                context.connected_link_uids.add(item_a.link_uid)
+                context.connected_link_uids.add(item_b.link_uid)
+                context.connections[item_a.link_uid] = item_b.link_uid
+                context.connections[item_b.link_uid] = item_a.link_uid
 
     return connected_any, connected_count
 
 
-def _connect_free_links_inside_group(objects):
+def _connect_free_links_inside_group(objects, context=None):
+    if context is None:
+        context = ConnectionContext()
+
     candidates = []
-    connections = _get_database_connections(create=False)
-    free_items = _free_link_items(objects, connections=connections)
+    free_items = context.free_link_items(objects)
     buckets = defaultdict(list)
 
     for item in free_items:
@@ -957,7 +1044,7 @@ def _connect_free_links_inside_group(objects):
 
         buckets[item.bucket_key].append(item)
 
-    connected_any, connected_count = _connect_candidate_pairs(candidates)
+    connected_any, connected_count = _connect_candidate_pairs(candidates, context=context)
     if candidates:
         print("Stagehand connect free links inside group")
         print(f"  free links: {len(free_items)}")
@@ -969,24 +1056,25 @@ def _connect_free_links_inside_group(objects):
         print("  candidate pairs: 0")
         print("  connected pairs: 0")
 
-    connections = _get_database_connections(create=False)
     return [
         item
         for item in free_items
-        if not connections.get(item.link_uid)
+        if item.link_uid not in context.connected_link_uids
     ]
 
 
-def _connect_free_links_to_scene(free_items, group_objects):
-    connections = _get_database_connections(create=False)
+def _connect_free_links_to_scene(free_items, group_objects, context=None):
+    if context is None:
+        context = ConnectionContext()
+
     group_uids = {get_object_uid(obj) for obj in group_objects}
     scene_items = []
 
-    for obj in iter_stagehand_objects():
+    for obj in context.live_objects:
         obj_uid = get_object_uid(obj)
         if not obj_uid or obj_uid in group_uids:
             continue
-        scene_items.extend(_free_link_items((obj,), connections=connections))
+        scene_items.extend(context.free_link_items((obj,)))
 
     scene_buckets = defaultdict(list)
     for item in scene_items:
@@ -1000,7 +1088,7 @@ def _connect_free_links_to_scene(free_items, group_objects):
                 if candidate is not None:
                     candidates.append(candidate)
 
-    _connected_any, connected_count = _connect_candidate_pairs(candidates)
+    _connected_any, connected_count = _connect_candidate_pairs(candidates, context=context)
     if candidates or free_items or scene_items:
         print("Stagehand connect free links to scene")
         print(f"  group free links: {len(free_items)}")
@@ -1008,11 +1096,10 @@ def _connect_free_links_to_scene(free_items, group_objects):
         print(f"  candidate pairs: {len(candidates)}")
         print(f"  connected pairs: {connected_count}")
 
-    connections = _get_database_connections(create=False)
     return [
         item
         for item in free_items
-        if not connections.get(item.link_uid)
+        if item.link_uid not in context.connected_link_uids
     ]
 
 
@@ -1056,18 +1143,23 @@ def UpdateConnections(objects, auto_connect=True, validate_existing=True):
             "repair duplicate ids",
             _repair_duplicate_ids_if_needed,
         )
-    _profile_step(profile_entries, "prune orphan database connections", _prune_orphan_database_connections)
+    context = _profile_step(profile_entries, "build connection context", ConnectionContext)
+    _profile_step(
+        profile_entries,
+        "prune orphan database connections",
+        lambda: _prune_orphan_database_connections(context=context),
+    )
     update_objects = _profile_step(
         profile_entries,
         "unique update objects",
-        lambda: _unique_stagehand_objects(raw_objects),
+        lambda: context.unique_stagehand_objects(raw_objects),
     )
 
     if validate_existing:
         removed_count = _profile_step(
             profile_entries,
             "remove invalid connections",
-            lambda: _remove_connections_not_working(update_objects),
+            lambda: _remove_connections_not_working(update_objects, context=context),
         )
     else:
         removed_count = 0
@@ -1076,12 +1168,12 @@ def UpdateConnections(objects, auto_connect=True, validate_existing=True):
         free_links = _profile_step(
             profile_entries,
             "connect free links inside group",
-            lambda: _connect_free_links_inside_group(update_objects),
+            lambda: _connect_free_links_inside_group(update_objects, context=context),
         )
         remaining_free_links = _profile_step(
             profile_entries,
             "connect free links to scene",
-            lambda: _connect_free_links_to_scene(free_links, update_objects),
+            lambda: _connect_free_links_to_scene(free_links, update_objects, context=context),
         )
     else:
         remaining_free_links = []
