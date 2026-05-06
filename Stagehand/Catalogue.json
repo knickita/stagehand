@@ -1231,6 +1231,7 @@
             "mesh3d": "Models/layher_vertical_2m",
             "tags": [
                 "structure",
+                "structure-vertical",
                 "layher"
             ],
             "links": [
@@ -1768,6 +1769,7 @@
             "mesh3d": "Models/layher_horizontal_207cm",
             "tags": [
                 "structure",
+                "structure-horizontal",
                 "layher"
             ],
             "links": [
@@ -1825,6 +1827,7 @@
             "mesh3d": "Models/layher_horizontal_257cm",
             "tags": [
                 "structure",
+                "structure-horizontal",
                 "layher"
             ],
             "links": [
