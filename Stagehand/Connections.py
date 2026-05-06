@@ -679,21 +679,37 @@ def _connection_is_working(
     if other_obj is None:
         return False
 
+    link_entry = None
+    if link_by_uid is not None:
+        link_entry = link_by_uid.get(link_uid)
+    other_link_entry = None
     if link_by_uid is not None:
         other_link_entry = link_by_uid.get(other_link_uid)
-        if other_link_entry is None:
-            return False
-        _other_obj, other_link_index, other_link = other_link_entry
+
+    if other_link_entry is not None:
+        _other_obj, other_link_index, other_link, other_center, other_rotation = other_link_entry
+    elif link_by_uid is not None:
+        return False
     else:
         other_link, other_link_index = find_link_by_uid(other_obj, other_link_uid)
+        other_center = None
+        other_rotation = None
     if other_link is None:
         return False
     if str(connections.get(other_link_uid, "")) != link_uid:
         return False
 
-    distance, angle = _link_alignment_metrics(obj, link_index, other_obj, other_link_index)
-    if distance is None:
-        return False
+    if link_entry is not None:
+        _obj, _link_index, _link, center, rotation = link_entry
+    else:
+        center, rotation = _link_transform(obj, link)
+
+    if other_center is None or other_rotation is None:
+        other_center, other_rotation = _link_transform(other_obj, other_link)
+
+    distance = (other_center - center).length
+    angle = _link_alignment_angle(link, rotation, other_link, other_rotation)
+    angle = min(angle, abs((2.0 * pi) - angle))
 
     if distance > AUTO_CONNECT_DISTANCE_THRESHOLD or angle > AUTO_CONNECT_ANGLE_THRESHOLD:
         return False
@@ -711,10 +727,13 @@ def _remove_connections_not_working(objects):
         if live_uid:
             object_by_uid[live_uid] = live_obj
         for live_link_index, live_link in iter_object_links(live_obj):
+            center, rotation = _link_transform(live_obj, live_link)
             link_by_uid[ensure_stagehand_link_uid(live_link)] = (
                 live_obj,
                 live_link_index,
                 live_link,
+                center,
+                rotation,
             )
 
     live_uids = set(object_by_uid.keys())
@@ -997,7 +1016,7 @@ def _connect_free_links_to_scene(free_items, group_objects):
     ]
 
 
-def UpdateConnections(objects, auto_connect=True):
+def UpdateConnections(objects, auto_connect=True, validate_existing=True):
     _report_connection_profile("\n")
     profile_start_time = time.perf_counter()
     profile_entries = []
@@ -1044,11 +1063,15 @@ def UpdateConnections(objects, auto_connect=True):
         lambda: _unique_stagehand_objects(raw_objects),
     )
 
-    removed_count = _profile_step(
-        profile_entries,
-        "remove invalid connections",
-        lambda: _remove_connections_not_working(update_objects),
-    )
+    if validate_existing:
+        removed_count = _profile_step(
+            profile_entries,
+            "remove invalid connections",
+            lambda: _remove_connections_not_working(update_objects),
+        )
+    else:
+        removed_count = 0
+        profile_entries.append(("remove invalid connections skipped", 0.0))
     if auto_connect:
         free_links = _profile_step(
             profile_entries,
@@ -1074,6 +1097,7 @@ def UpdateConnections(objects, auto_connect=True):
         f"objects: {len(update_objects)}; removed: {removed_count}; "
         f"repaired duplicates: {repaired_duplicate_count}; "
         f"auto connect: {auto_connect}; "
+        f"validate existing: {validate_existing}; "
         f"free links: {len(remaining_free_links)}; {profile_summary}"
     )
     _print_connection_profile(
@@ -1083,13 +1107,18 @@ def UpdateConnections(objects, auto_connect=True):
         removed=removed_count,
         repaired_duplicates=repaired_duplicate_count,
         auto_connect=auto_connect,
+        validate_existing=validate_existing,
         free_links=len(remaining_free_links),
     )
     return remaining_free_links
 
 
-def refresh_connections_for_objects(objects, auto_connect=True):
-    return UpdateConnections(objects, auto_connect=auto_connect)
+def refresh_connections_for_objects(objects, auto_connect=True, validate_existing=True):
+    return UpdateConnections(
+        objects,
+        auto_connect=auto_connect,
+        validate_existing=validate_existing,
+    )
 
 
 def _iter_pending_operators():
@@ -1188,7 +1217,11 @@ def _process_dirty_connection_refresh():
             if obj is not None:
                 refresh_objects.append(obj)
 
-    UpdateConnections(refresh_objects, auto_connect=not processed_all_objects)
+    UpdateConnections(
+        refresh_objects,
+        auto_connect=not processed_all_objects,
+        validate_existing=not processed_all_objects,
+    )
     return processed_all_objects
 
 
