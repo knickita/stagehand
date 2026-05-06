@@ -143,8 +143,18 @@ def _get_connected_link_uid(link):
     return str(connections.get(link_uid, ""))
 
 
+def _get_connected_link_uid_from_connections(link, connections):
+    if link is None:
+        return ""
+    return str(connections.get(ensure_stagehand_link_uid(link), ""))
+
+
 def _is_link_connected(link):
     return bool(_get_connected_link_uid(link))
+
+
+def _is_link_connected_in_connections(link, connections):
+    return bool(_get_connected_link_uid_from_connections(link, connections))
 
 
 def _set_link_parent(link_uid, object_uid):
@@ -589,31 +599,50 @@ def _repair_duplicate_ids():
             connect_links(obj, link_snapshot["link_index"], target_obj, target_link_index)
 
 
-def _connection_is_working(obj, link_index, live_uids=None):
+def _connection_is_working(
+    obj,
+    link_index,
+    live_uids=None,
+    connections=None,
+    link_parents=None,
+    object_by_uid=None,
+    link_by_uid=None,
+):
+    if connections is None:
+        connections = _get_database_connections(create=False)
+    if link_parents is None:
+        link_parents = _get_database_link_parents(create=False)
+
     link = get_link(obj, link_index)
     if link is None:
         return False
 
     link_uid = ensure_stagehand_link_uid(link)
-    other_link_uid = _get_connected_link_uid(link)
+    other_link_uid = str(connections.get(link_uid, ""))
     if not other_link_uid:
         _clear_legacy_link_connection(link)
         return True
 
-    other_obj_uid = get_link_parent_object_uid(other_link_uid)
+    other_obj_uid = str(link_parents.get(other_link_uid, ""))
     if not other_obj_uid:
         return False
     if live_uids is not None and other_obj_uid not in live_uids:
         return False
 
-    other_obj = find_object_by_uid(other_obj_uid)
+    other_obj = object_by_uid.get(other_obj_uid) if object_by_uid is not None else find_object_by_uid(other_obj_uid)
     if other_obj is None:
         return False
 
-    other_link, other_link_index = find_link_by_uid(other_obj, other_link_uid)
+    if link_by_uid is not None:
+        other_link_entry = link_by_uid.get(other_link_uid)
+        if other_link_entry is None:
+            return False
+        _other_obj, other_link_index, other_link = other_link_entry
+    else:
+        other_link, other_link_index = find_link_by_uid(other_obj, other_link_uid)
     if other_link is None:
         return False
-    if _get_connected_link_uid(other_link) != link_uid:
+    if str(connections.get(other_link_uid, "")) != link_uid:
         return False
 
     distance, angle = _link_alignment_metrics(obj, link_index, other_obj, other_link_index)
@@ -627,15 +656,40 @@ def _connection_is_working(obj, link_index, live_uids=None):
 
 
 def _remove_connections_not_working(objects):
-    live_uids = {get_object_uid(obj) for obj in iter_stagehand_objects()}
+    live_objects = list(iter_stagehand_objects())
+    object_by_uid = {}
+    link_by_uid = {}
+
+    for live_obj in live_objects:
+        live_uid = get_object_uid(live_obj)
+        if live_uid:
+            object_by_uid[live_uid] = live_obj
+        for live_link_index, live_link in iter_object_links(live_obj):
+            link_by_uid[ensure_stagehand_link_uid(live_link)] = (
+                live_obj,
+                live_link_index,
+                live_link,
+            )
+
+    live_uids = set(object_by_uid.keys())
+    connections = _get_database_connections(create=False)
+    link_parents = _get_database_link_parents(create=False)
     removed_count = 0
 
     for obj in _unique_stagehand_objects(objects):
         for index, link in iter_object_links(obj):
-            if not _is_link_connected(link):
+            if not _is_link_connected_in_connections(link, connections):
                 _clear_legacy_link_connection(link)
                 continue
-            if _connection_is_working(obj, index, live_uids=live_uids):
+            if _connection_is_working(
+                obj,
+                index,
+                live_uids=live_uids,
+                connections=connections,
+                link_parents=link_parents,
+                object_by_uid=object_by_uid,
+                link_by_uid=link_by_uid,
+            ):
                 _clear_legacy_link_connection(link)
                 continue
             disconnect_link(obj, index)
@@ -693,9 +747,12 @@ def prune_stale_connections():
     _remove_connections_not_working(iter_stagehand_objects())
 
 
-def _iter_compatible_unconnected_links(obj):
+def _iter_compatible_unconnected_links(obj, connections=None):
+    if connections is None:
+        connections = _get_database_connections(create=False)
+
     for index, link in iter_object_links(obj):
-        if _is_link_connected(link):
+        if _is_link_connected_in_connections(link, connections):
             continue
         yield index, link
 
@@ -753,10 +810,13 @@ def _connection_candidate(item_a, item_b):
     )
 
 
-def _free_link_items(objects):
+def _free_link_items(objects, connections=None):
+    if connections is None:
+        connections = _get_database_connections(create=False)
+
     link_items = []
     for obj in _unique_stagehand_objects(objects):
-        for link_index, link in _iter_compatible_unconnected_links(obj):
+        for link_index, link in _iter_compatible_unconnected_links(obj, connections=connections):
             link_items.append((obj, link_index, link))
     return link_items
 
@@ -802,7 +862,8 @@ def _connect_candidate_pairs(candidates):
 
 def _connect_free_links_inside_group(objects):
     candidates = []
-    free_items = _free_link_items(objects)
+    connections = _get_database_connections(create=False)
+    free_items = _free_link_items(objects, connections=connections)
     buckets = defaultdict(list)
 
     for item in free_items:
@@ -830,10 +891,12 @@ def _connect_free_links_inside_group(objects):
         print("  candidate pairs: 0")
         print("  connected pairs: 0")
 
-    return _free_link_items(objects)
+    connections = _get_database_connections(create=False)
+    return _free_link_items(objects, connections=connections)
 
 
 def _connect_free_links_to_scene(free_items, group_objects):
+    connections = _get_database_connections(create=False)
     group_uids = {get_object_uid(obj) for obj in group_objects}
     scene_items = []
 
@@ -841,7 +904,7 @@ def _connect_free_links_to_scene(free_items, group_objects):
         obj_uid = get_object_uid(obj)
         if not obj_uid or obj_uid in group_uids:
             continue
-        scene_items.extend(_free_link_items((obj,)))
+        scene_items.extend(_free_link_items((obj,), connections=connections))
 
     scene_buckets = defaultdict(list)
     for item in scene_items:
@@ -868,6 +931,13 @@ def _connect_free_links_to_scene(free_items, group_objects):
         print(f"  scene free links: {len(scene_items)}")
         print(f"  candidate pairs: {len(candidates)}")
         print(f"  connected pairs: {connected_count}")
+
+    connections = _get_database_connections(create=False)
+    return [
+        item
+        for item in free_items
+        if not _is_link_connected_in_connections(item[2], connections)
+    ]
 
 
 def UpdateConnections(objects):
@@ -914,15 +984,10 @@ def UpdateConnections(objects):
         "connect free links inside group",
         lambda: _connect_free_links_inside_group(update_objects),
     )
-    _profile_step(
+    remaining_free_links = _profile_step(
         profile_entries,
         "connect free links to scene",
         lambda: _connect_free_links_to_scene(free_links, update_objects),
-    )
-    remaining_free_links = _profile_step(
-        profile_entries,
-        "collect remaining free links",
-        lambda: _free_link_items(update_objects),
     )
 
     total_time = time.perf_counter() - profile_start_time
