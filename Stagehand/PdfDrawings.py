@@ -442,6 +442,12 @@ def _segment_key(objects):
     return tuple(sorted(_object_uid(obj) for obj in objects))
 
 
+class _StructureSegment(list):
+    def __init__(self, objects, quote_axis=None):
+        super().__init__(objects)
+        self.quote_axis = quote_axis
+
+
 def _build_truss_segments(truss_objects):
     visible_truss_uids = {_object_uid(obj) for obj in truss_objects}
     trussjoint_objects = [obj for obj in truss_objects if _is_trussjoint_object(obj)]
@@ -615,7 +621,7 @@ def _build_layher_segments(layher_objects):
                 continue
 
             seen_segments.add(key)
-            segments.append([object_by_uid[uid] for uid in sorted(component_uids)])
+            segments.append(_StructureSegment([object_by_uid[uid] for uid in sorted(component_uids)], axis))
 
     return segments
 
@@ -881,6 +887,10 @@ def _layher_center_span(segment_objects, axis, structure_rotation, origin):
 
 
 def _dimension_axis_for_segment(segment_objects, structure_rotation, dimensions):
+    quote_axis = getattr(segment_objects, "quote_axis", None)
+    if quote_axis in {"X", "Y", "Z"}:
+        return quote_axis
+
     layher_axes = [
         _layher_quote_axis(obj, structure_rotation)
         for obj in segment_objects

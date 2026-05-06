@@ -4505,6 +4505,7 @@
             "mesh3d": "Models/layher_basetta",
             "tags": [
                 "structure",
+                "structure-vertical",
                 "layher"
             ],
             "links": [
