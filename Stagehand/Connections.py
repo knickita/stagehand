@@ -1,6 +1,6 @@
 import uuid
 import time
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from math import floor, pi, radians
 
 import bpy
@@ -25,8 +25,22 @@ CONNECTION_REFRESH_SETTLE_INTERVAL = 0.1
 AUTO_CONNECT_DISTANCE_THRESHOLD = 0.0001
 AUTO_CONNECT_ANGLE_THRESHOLD = radians(0.1)
 LINK_ALIGNMENT_FLIP = Quaternion((0.0, 0.0, 1.0), radians(180.0))
+LinkSearchItem = namedtuple(
+    "LinkSearchItem",
+    (
+        "obj",
+        "link_index",
+        "link",
+        "object_uid",
+        "link_uid",
+        "center",
+        "rotation",
+        "bucket_key",
+    ),
+)
 _DIRTY_CONNECTION_OBJECT_UIDS = set()
 _ALL_CONNECTIONS_DIRTY = False
+_DUPLICATE_REPAIR_NEEDED = True
 _DIRTY_CONNECTION_REFRESH_DEADLINE = 0.0
 _LAST_STAGEHAND_OBJECT_NAMES = set()
 addon_keymaps = []
@@ -513,9 +527,18 @@ def _rebuild_database_indexes():
     _set_database_link_parents(link_parents)
 
 
-def _repair_duplicate_ids():
-    _rebuild_database_indexes()
+def mark_duplicate_repair_needed():
+    global _DUPLICATE_REPAIR_NEEDED
+    _DUPLICATE_REPAIR_NEEDED = True
 
+
+def _repair_duplicate_ids(rebuild_indexes=True):
+    if rebuild_indexes:
+        _rebuild_database_indexes()
+
+    repaired_count = 0
+    connections = _get_database_connections(create=False)
+    link_parents = _get_database_link_parents(create=False)
     groups = defaultdict(list)
     for obj in iter_stagehand_objects():
         groups[get_object_uid(obj)].append(obj)
@@ -526,22 +549,25 @@ def _repair_duplicate_ids():
         if uid and len(objects) > 1
     }
     if not duplicate_groups:
-        return
+        return 0
 
     duplicate_snapshots = {}
     object_uid_remap = {}
     link_uid_remap = {}
+    duplicated_link_items = {}
 
     for original_uid, objects in duplicate_groups.items():
         for duplicate_index, obj in enumerate(objects[1:], start=1):
             link_snapshots = []
             for link_index, link in iter_object_links(obj):
+                old_link_uid = ensure_stagehand_link_uid(link)
+                connected_link_uid = str(connections.get(old_link_uid, ""))
                 link_snapshots.append(
                     {
                         "link_index": link_index,
-                        "old_link_uid": link.uid,
-                        "connected_object_uid": get_link_parent_object_uid(_get_connected_link_uid(link)),
-                        "connected_link_uid": _get_connected_link_uid(link),
+                        "old_link_uid": old_link_uid,
+                        "connected_object_uid": str(link_parents.get(connected_link_uid, "")),
+                        "connected_link_uid": connected_link_uid,
                     }
                 )
 
@@ -554,27 +580,31 @@ def _repair_duplicate_ids():
             new_object_uid = str(uuid.uuid4())
             obj.stagehand.uid = new_object_uid
             object_uid_remap[(original_uid, duplicate_index)] = new_object_uid
+            repaired_count += 1
 
             for link_index, link in iter_object_links(obj):
-                old_link_uid = link.uid
+                old_link_uid = ensure_stagehand_link_uid(link)
                 new_link_uid = str(uuid.uuid4())
                 link.uid = new_link_uid
                 link_uid_remap[(original_uid, duplicate_index, old_link_uid)] = new_link_uid
-                _remove_database_connection(old_link_uid)
-                _remove_link_parent(old_link_uid)
+                duplicated_link_items[new_link_uid] = link
                 _clear_legacy_link_connection(link)
 
     _rebuild_database_indexes()
+    link_parents = _get_database_link_parents(create=False)
 
-    for obj_name, snapshot in duplicate_snapshots.items():
-        obj = bpy.data.objects.get(obj_name)
-        if obj is None or not is_stagehand_object(obj):
-            continue
-
+    for _obj_name, snapshot in duplicate_snapshots.items():
         duplicate_index = snapshot["duplicate_index"]
         for link_snapshot in snapshot["links"]:
-            link = get_link(obj, link_snapshot["link_index"])
-            if link is None:
+            new_link_uid = link_uid_remap.get(
+                (
+                    snapshot["original_uid"],
+                    duplicate_index,
+                    link_snapshot["old_link_uid"],
+                )
+            )
+            link = duplicated_link_items.get(new_link_uid)
+            if not new_link_uid or link is None:
                 continue
 
             target_original_uid = link_snapshot["connected_object_uid"]
@@ -587,16 +617,32 @@ def _repair_duplicate_ids():
                 (target_original_uid, duplicate_index, target_original_link_uid)
             )
             if not target_duplicate_uid or not target_duplicate_link_uid:
-                clear_link_connection(obj, link_snapshot["link_index"])
                 continue
 
-            target_obj = find_object_by_uid(target_duplicate_uid)
-            target_link, target_link_index = find_link_by_uid(target_obj, target_duplicate_link_uid)
-            if target_obj is None or target_link is None:
-                clear_link_connection(obj, link_snapshot["link_index"])
+            if target_duplicate_link_uid not in link_parents:
                 continue
 
-            connect_links(obj, link_snapshot["link_index"], target_obj, target_link_index)
+            connections[new_link_uid] = target_duplicate_link_uid
+            connections[target_duplicate_link_uid] = new_link_uid
+            _clear_legacy_link_connection(link)
+            target_link = duplicated_link_items.get(target_duplicate_link_uid)
+            if target_link is not None:
+                _clear_legacy_link_connection(target_link)
+
+    _set_database_connections(connections)
+
+    return repaired_count
+
+
+def _repair_duplicate_ids_if_needed():
+    global _DUPLICATE_REPAIR_NEEDED
+
+    if not _DUPLICATE_REPAIR_NEEDED:
+        return 0
+
+    repaired_count = _repair_duplicate_ids(rebuild_indexes=False)
+    _DUPLICATE_REPAIR_NEEDED = False
+    return repaired_count
 
 
 def _connection_is_working(
@@ -776,30 +822,30 @@ def _unique_stagehand_objects(objects):
 
 
 def _link_candidate_key(item_a, item_b, distance, angle):
-    obj_a, link_index_a, _link_a = item_a
-    obj_b, link_index_b, _link_b = item_b
     return (
         distance,
         angle,
-        get_object_uid(obj_a),
-        get_object_uid(obj_b),
-        link_index_a,
-        link_index_b,
+        item_a.object_uid,
+        item_b.object_uid,
+        item_a.link_index,
+        item_b.link_index,
     )
 
 
 def _connection_candidate(item_a, item_b):
-    obj_a, link_index_a, link_a = item_a
-    obj_b, link_index_b, link_b = item_b
-
-    if obj_a == obj_b:
+    if item_a.obj == item_b.obj:
         return None
-    if not are_link_types_compatible(link_a.type, link_b.type):
+    if not are_link_types_compatible(item_a.link.type, item_b.link.type):
         return None
 
-    distance, angle = _link_alignment_metrics(obj_a, link_index_a, obj_b, link_index_b)
-    if distance is None:
-        return None
+    distance = (item_b.center - item_a.center).length
+    angle = _link_alignment_angle(
+        item_a.link,
+        item_a.rotation,
+        item_b.link,
+        item_b.rotation,
+    )
+    angle = min(angle, abs((2.0 * pi) - angle))
     if distance > AUTO_CONNECT_DISTANCE_THRESHOLD or angle > AUTO_CONNECT_ANGLE_THRESHOLD:
         return None
 
@@ -816,8 +862,21 @@ def _free_link_items(objects, connections=None):
 
     link_items = []
     for obj in _unique_stagehand_objects(objects):
+        object_uid = get_object_uid(obj)
         for link_index, link in _iter_compatible_unconnected_links(obj, connections=connections):
-            link_items.append((obj, link_index, link))
+            center, rotation = _link_transform(obj, link)
+            link_items.append(
+                LinkSearchItem(
+                    obj,
+                    link_index,
+                    link,
+                    object_uid,
+                    ensure_stagehand_link_uid(link),
+                    center,
+                    rotation,
+                    _link_center_bucket_key(center),
+                )
+            )
     return link_items
 
 
@@ -845,17 +904,18 @@ def _nearby_link_center_bucket_keys(bucket_key):
 def _connect_candidate_pairs(candidates):
     connected_any = False
     connected_count = 0
+    connected_link_uids = set(_get_database_connections(create=False).keys())
 
     for candidate in sorted(candidates, key=lambda item: item[:6]):
         item_a, item_b = candidate[6], candidate[7]
-        obj_a, link_index_a, link_a = item_a
-        obj_b, link_index_b, link_b = item_b
 
-        if _is_link_connected(link_a) or _is_link_connected(link_b):
+        if item_a.link_uid in connected_link_uids or item_b.link_uid in connected_link_uids:
             continue
-        if connect_links(obj_a, link_index_a, obj_b, link_index_b):
+        if connect_links(item_a.obj, item_a.link_index, item_b.obj, item_b.link_index):
             connected_any = True
             connected_count += 1
+            connected_link_uids.add(item_a.link_uid)
+            connected_link_uids.add(item_b.link_uid)
 
     return connected_any, connected_count
 
@@ -867,17 +927,13 @@ def _connect_free_links_inside_group(objects):
     buckets = defaultdict(list)
 
     for item in free_items:
-        obj, _link_index, link = item
-        center, _rotation = _link_transform(obj, link)
-        bucket_key = _link_center_bucket_key(center)
-
-        for nearby_bucket_key in _nearby_link_center_bucket_keys(bucket_key):
+        for nearby_bucket_key in _nearby_link_center_bucket_keys(item.bucket_key):
             for other_item in buckets.get(nearby_bucket_key, ()):
                 candidate = _connection_candidate(item, other_item)
                 if candidate is not None:
                     candidates.append(candidate)
 
-        buckets[bucket_key].append(item)
+        buckets[item.bucket_key].append(item)
 
     connected_any, connected_count = _connect_candidate_pairs(candidates)
     if candidates:
@@ -892,7 +948,11 @@ def _connect_free_links_inside_group(objects):
         print("  connected pairs: 0")
 
     connections = _get_database_connections(create=False)
-    return _free_link_items(objects, connections=connections)
+    return [
+        item
+        for item in free_items
+        if not connections.get(item.link_uid)
+    ]
 
 
 def _connect_free_links_to_scene(free_items, group_objects):
@@ -908,17 +968,11 @@ def _connect_free_links_to_scene(free_items, group_objects):
 
     scene_buckets = defaultdict(list)
     for item in scene_items:
-        obj, _link_index, link = item
-        center, _rotation = _link_transform(obj, link)
-        scene_buckets[_link_center_bucket_key(center)].append(item)
+        scene_buckets[item.bucket_key].append(item)
 
     candidates = []
     for item_a in free_items:
-        obj, _link_index, link = item_a
-        center, _rotation = _link_transform(obj, link)
-        bucket_key = _link_center_bucket_key(center)
-
-        for nearby_bucket_key in _nearby_link_center_bucket_keys(bucket_key):
+        for nearby_bucket_key in _nearby_link_center_bucket_keys(item_a.bucket_key):
             for item_b in scene_buckets.get(nearby_bucket_key, ()):
                 candidate = _connection_candidate(item_a, item_b)
                 if candidate is not None:
@@ -936,7 +990,7 @@ def _connect_free_links_to_scene(free_items, group_objects):
     return [
         item
         for item in free_items
-        if not _is_link_connected_in_connections(item[2], connections)
+        if not connections.get(item.link_uid)
     ]
 
 
@@ -966,7 +1020,11 @@ def UpdateConnections(objects):
         return []
 
     _profile_step(profile_entries, "rebuild indexes", _rebuild_database_indexes)
-    _profile_step(profile_entries, "repair duplicate ids", _repair_duplicate_ids)
+    repaired_duplicate_count = _profile_step(
+        profile_entries,
+        "repair duplicate ids",
+        _repair_duplicate_ids_if_needed,
+    )
     _profile_step(profile_entries, "prune orphan database connections", _prune_orphan_database_connections)
     update_objects = _profile_step(
         profile_entries,
@@ -1005,6 +1063,7 @@ def UpdateConnections(objects):
         total_time,
         objects=len(update_objects),
         removed=removed_count,
+        repaired_duplicates=repaired_duplicate_count,
         free_links=len(remaining_free_links),
     )
     return remaining_free_links
@@ -1089,6 +1148,7 @@ def _mark_stagehand_object_membership_changes(delay=CONNECTION_REFRESH_SETTLE_IN
         return False
 
     _LAST_STAGEHAND_OBJECT_NAMES = current_names
+    mark_duplicate_repair_needed()
     mark_all_objects_dirty(delay=delay)
     return True
 
@@ -1096,6 +1156,7 @@ def _mark_stagehand_object_membership_changes(delay=CONNECTION_REFRESH_SETTLE_IN
 def _process_dirty_connection_refresh():
     global _ALL_CONNECTIONS_DIRTY
 
+    processed_all_objects = _ALL_CONNECTIONS_DIRTY
     if _ALL_CONNECTIONS_DIRTY:
         refresh_objects = list(iter_stagehand_objects())
         _DIRTY_CONNECTION_OBJECT_UIDS.clear()
@@ -1109,6 +1170,7 @@ def _process_dirty_connection_refresh():
                 refresh_objects.append(obj)
 
     UpdateConnections(refresh_objects)
+    return processed_all_objects
 
 
 def dirty_connection_refresh_timer():
@@ -1123,7 +1185,7 @@ def dirty_connection_refresh_timer():
         if time.monotonic() < _DIRTY_CONNECTION_REFRESH_DEADLINE:
             return CONNECTION_REFRESH_POLL_INTERVAL
 
-        _process_dirty_connection_refresh()
+        processed_all_objects = _process_dirty_connection_refresh()
     except Exception:
         _log_connection_timer_run(
             "dirty_connection_refresh_timer",
@@ -1132,6 +1194,9 @@ def dirty_connection_refresh_timer():
             next_interval=CONNECTION_REFRESH_POLL_INTERVAL,
         )
         return CONNECTION_REFRESH_POLL_INTERVAL
+
+    if processed_all_objects:
+        _DIRTY_CONNECTION_OBJECT_UIDS.clear()
 
     if _DIRTY_CONNECTION_OBJECT_UIDS or _ALL_CONNECTIONS_DIRTY:
         _log_connection_timer_run(
@@ -1202,6 +1267,7 @@ def stagehand_depsgraph_update_post(_scene, depsgraph):
 
 @persistent
 def stagehand_undo_redo_post(_dummy):
+    mark_duplicate_repair_needed()
     mark_all_objects_dirty(delay=0.0)
 
 
