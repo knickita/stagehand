@@ -5,8 +5,8 @@ from .RegistrationUtils import safe_register_class, safe_remove_keymaps, safe_un
 addon_keymaps = []
 
 class FirstPersonLook(bpy.types.Operator):
-    bl_idname = "view3d.fps_rmb_wasd"
-    bl_label = "first person look RMB+WASD (Hold)"
+    bl_idname = "view3d.fps_alt_wasd"
+    bl_label = "first person look Left Alt+WASD (Hold)"
     bl_options = {'REGISTER'}
 
     def invoke(self, context, event):
@@ -18,7 +18,7 @@ class FirstPersonLook(bpy.types.Operator):
         self.look_sens = prefs.look_sens
 
         self.rv3d = context.space_data.region_3d
-        self.rmb_held = True  # invoked by RMB (or Alt+RMB) press
+        self.alt_held = True  # invoked by Left Alt press
 
         self.keys = {
             "W": False, "A": False, "S": False, "D": False,
@@ -46,8 +46,8 @@ class FirstPersonLook(bpy.types.Operator):
         context.window.cursor_modal_restore()
 
     def modal(self, context, event):
-        # Stop when RMB released
-        if event.type == 'RIGHTMOUSE' and event.value == 'RELEASE':
+        # Stop when Left Alt is released
+        if event.type == 'LEFT_ALT' and event.value == 'RELEASE':
             self.finish(context)
             return {'FINISHED'}
 
@@ -141,16 +141,13 @@ def register_keymap():
     if not kc:
         return
 
-    prefs = get_prefs()
-
     km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
 
-    # RMB PRESS starts the operator; operator ends on RMB RELEASE.
+    # Left Alt press starts the operator; operator ends on Left Alt release.
     kmi = km.keymap_items.new(
         FirstPersonLook.bl_idname,
-        type='RIGHTMOUSE',
-        value='PRESS',  
-        alt=prefs.use_alt
+        type='LEFT_ALT',
+        value='PRESS'
     )
 
     addon_keymaps.append((km, kmi))
@@ -160,7 +157,6 @@ def get_prefs():
     class Fallback:
         speed = 10.0
         look_sens = 0.002
-        use_alt = False
     return Fallback()
 
 

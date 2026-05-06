@@ -16,6 +16,8 @@ class Stagehand_MT_menu(bpy.types.Menu):
         self.layout.separator()
         self.layout.operator("stagehand.generate_pdf_drawings", text="Generate PDF Drawings")
         self.layout.separator()
+        self.layout.operator("stagehand.repair_all_connections", text="Repair All Links")
+        self.layout.separator()
         self.layout.operator("stagehand.reload_catalogue", text="Reload Catalogue")
 
 # --- Draw function to add menu to 3D View header ---

@@ -49,6 +49,7 @@ LinkIndexItem = namedtuple(
 _DIRTY_CONNECTION_OBJECT_UIDS = set()
 _ALL_CONNECTIONS_DIRTY = False
 _DUPLICATE_REPAIR_NEEDED = True
+_LAST_REPAIRED_DUPLICATE_OBJECT_UIDS = set()
 _DIRTY_CONNECTION_REFRESH_DEADLINE = 0.0
 _LAST_STAGEHAND_OBJECT_NAMES = set()
 addon_keymaps = []
@@ -541,6 +542,9 @@ def mark_duplicate_repair_needed():
 
 
 def _repair_duplicate_ids(rebuild_indexes=True):
+    global _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS
+
+    _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS = set()
     if rebuild_indexes:
         _rebuild_database_indexes()
 
@@ -588,6 +592,7 @@ def _repair_duplicate_ids(rebuild_indexes=True):
             new_object_uid = str(uuid.uuid4())
             obj.stagehand.uid = new_object_uid
             object_uid_remap[(original_uid, duplicate_index)] = new_object_uid
+            _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS.add(new_object_uid)
             repaired_count += 1
 
             for link_index, link in iter_object_links(obj):
@@ -1103,7 +1108,13 @@ def _connect_free_links_to_scene(free_items, group_objects, context=None):
     ]
 
 
-def UpdateConnections(objects, auto_connect=True, validate_existing=True):
+def UpdateConnections(
+    objects,
+    auto_connect=True,
+    validate_existing=True,
+    prefer_repaired_duplicates=False,
+    connect_inside_group=True,
+):
     _report_connection_profile("\n")
     profile_start_time = time.perf_counter()
     profile_entries = []
@@ -1149,11 +1160,22 @@ def UpdateConnections(objects, auto_connect=True, validate_existing=True):
         "prune orphan database connections",
         lambda: _prune_orphan_database_connections(context=context),
     )
-    update_objects = _profile_step(
-        profile_entries,
-        "unique update objects",
-        lambda: context.unique_stagehand_objects(raw_objects),
-    )
+    if prefer_repaired_duplicates and _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS:
+        update_objects = _profile_step(
+            profile_entries,
+            "unique update objects",
+            lambda: [
+                context.object_by_uid[uid]
+                for uid in _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS
+                if uid in context.object_by_uid
+            ],
+        )
+    else:
+        update_objects = _profile_step(
+            profile_entries,
+            "unique update objects",
+            lambda: context.unique_stagehand_objects(raw_objects),
+        )
 
     if validate_existing:
         removed_count = _profile_step(
@@ -1165,11 +1187,18 @@ def UpdateConnections(objects, auto_connect=True, validate_existing=True):
         removed_count = 0
         profile_entries.append(("remove invalid connections skipped", 0.0))
     if auto_connect:
-        free_links = _profile_step(
-            profile_entries,
-            "connect free links inside group",
-            lambda: _connect_free_links_inside_group(update_objects, context=context),
-        )
+        if connect_inside_group:
+            free_links = _profile_step(
+                profile_entries,
+                "connect free links inside group",
+                lambda: _connect_free_links_inside_group(update_objects, context=context),
+            )
+        else:
+            free_links = _profile_step(
+                profile_entries,
+                "collect free links for scene connect",
+                lambda: context.free_link_items(update_objects),
+            )
         remaining_free_links = _profile_step(
             profile_entries,
             "connect free links to scene",
@@ -1200,16 +1229,26 @@ def UpdateConnections(objects, auto_connect=True, validate_existing=True):
         repaired_duplicates=repaired_duplicate_count,
         auto_connect=auto_connect,
         validate_existing=validate_existing,
+        prefer_repaired_duplicates=prefer_repaired_duplicates,
+        connect_inside_group=connect_inside_group,
         free_links=len(remaining_free_links),
     )
     return remaining_free_links
 
 
-def refresh_connections_for_objects(objects, auto_connect=True, validate_existing=True):
+def refresh_connections_for_objects(
+    objects,
+    auto_connect=True,
+    validate_existing=True,
+    prefer_repaired_duplicates=False,
+    connect_inside_group=True,
+):
     return UpdateConnections(
         objects,
         auto_connect=auto_connect,
         validate_existing=validate_existing,
+        prefer_repaired_duplicates=prefer_repaired_duplicates,
+        connect_inside_group=connect_inside_group,
     )
 
 
@@ -1297,6 +1336,8 @@ def _process_dirty_connection_refresh():
     global _ALL_CONNECTIONS_DIRTY
 
     processed_all_objects = _ALL_CONNECTIONS_DIRTY
+    dirty_object_uids = set(_DIRTY_CONNECTION_OBJECT_UIDS)
+    dirty_object_count = len(dirty_object_uids)
     if _ALL_CONNECTIONS_DIRTY:
         refresh_objects = list(iter_stagehand_objects())
         _DIRTY_CONNECTION_OBJECT_UIDS.clear()
@@ -1309,10 +1350,13 @@ def _process_dirty_connection_refresh():
             if obj is not None:
                 refresh_objects.append(obj)
 
+    duplicate_membership_refresh = processed_all_objects and dirty_object_count > 0
     UpdateConnections(
         refresh_objects,
-        auto_connect=not processed_all_objects,
+        auto_connect=(not processed_all_objects) or duplicate_membership_refresh,
         validate_existing=not processed_all_objects,
+        prefer_repaired_duplicates=duplicate_membership_refresh,
+        connect_inside_group=not duplicate_membership_refresh,
     )
     return processed_all_objects
 
@@ -1426,6 +1470,34 @@ class STAGEHAND_OT_report_connection_profile(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class STAGEHAND_OT_repair_all_connections(bpy.types.Operator):
+    bl_idname = "stagehand.repair_all_connections"
+    bl_label = "Repair All Stagehand Links"
+    bl_description = "Run a full Stagehand link repair, validation, and auto-connect pass"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, _context):
+        start_time = time.perf_counter()
+        mark_duplicate_repair_needed()
+        remaining_free_links = UpdateConnections(
+            list(iter_stagehand_objects()),
+            auto_connect=True,
+            validate_existing=True,
+            prefer_repaired_duplicates=False,
+            connect_inside_group=True,
+        )
+        elapsed = time.perf_counter() - start_time
+        self.report(
+            {'INFO'},
+            (
+                "Stagehand link repair completed in "
+                f"{_format_profile_time(elapsed)}; "
+                f"free links: {len(remaining_free_links)}"
+            ),
+        )
+        return {'FINISHED'}
+
+
 class STAGEHAND_OT_select_connected_objects(bpy.types.Operator):
     bl_idname = "stagehand.select_connected_objects"
     bl_label = "Select Connected Stagehand Objects"
@@ -1481,6 +1553,7 @@ def unregister_keymap():
 
 def register():
     safe_register_class(STAGEHAND_OT_report_connection_profile)
+    safe_register_class(STAGEHAND_OT_repair_all_connections)
     safe_register_class(STAGEHAND_OT_select_connected_objects)
     register_keymap()
     safe_add_handler(bpy.app.handlers.depsgraph_update_post, stagehand_depsgraph_update_post)
@@ -1509,4 +1582,5 @@ def unregister():
     _DIRTY_CONNECTION_OBJECT_UIDS.clear()
     _ALL_CONNECTIONS_DIRTY = False
     safe_unregister_class(STAGEHAND_OT_select_connected_objects)
+    safe_unregister_class(STAGEHAND_OT_repair_all_connections)
     safe_unregister_class(STAGEHAND_OT_report_connection_profile)

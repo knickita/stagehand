@@ -207,7 +207,7 @@ def _create_placeholder_truss(target_matrix, collection, truss, symbol_name):
 
     apply_stagehand_catalogue_data(obj)
     obj.stagehand.catalogueName = symbol_name or "MVR Truss"
-    for tag_value in ("truss", "mvr"):
+    for tag_value in ("structure", "truss", "mvr"):
         tag_item = obj.stagehand.tags.add()
         tag_item.value = tag_value
 

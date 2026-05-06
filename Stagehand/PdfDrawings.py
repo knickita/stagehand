@@ -287,12 +287,24 @@ def _object_tags(obj):
     if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
         return []
 
-    return [tag.value.lower() for tag in stagehand.tags]
+    return [tag.value.strip().lower() for tag in stagehand.tags if tag.value.strip()]
 
 
 def _has_tag(obj, tag_name):
     tag_name = tag_name.lower()
-    return any(tag_name in tag for tag in _object_tags(obj))
+    return tag_name in _object_tags(obj)
+
+
+def _stagehand_catalogue_name(obj):
+    stagehand = getattr(obj, "stagehand", None)
+    if stagehand is not None and getattr(stagehand, "is_stagehand_object", False):
+        return str(getattr(stagehand, "catalogueName", "")).strip()
+
+    return ""
+
+
+def _is_structure_object(obj):
+    return _has_tag(obj, "structure") or _is_truss_object(obj) or _is_layher_object(obj)
 
 
 def _is_truss_object(obj):
@@ -300,11 +312,27 @@ def _is_truss_object(obj):
     if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
         return False
 
-    return _has_tag(obj, "truss")
+    return _has_tag(obj, "truss") or _has_tag(obj, "trussjoint") or _has_tag(obj, "trusscube")
+
+
+def _is_layher_object(obj):
+    return _has_tag(obj, "layher") or "layher" in _stagehand_catalogue_name(obj).lower() or "layher" in obj.name_full.lower()
+
+
+def _structure_kind(obj):
+    if _is_layher_object(obj):
+        return "layher"
+    if _is_truss_object(obj):
+        return "truss"
+    return None
+
+
+def _is_structure_joint_object(obj):
+    return _has_tag(obj, "structure-joint") or _has_tag(obj, "trussjoint") or _has_tag(obj, "trusscube")
 
 
 def _is_trussjoint_object(obj):
-    return _has_tag(obj, "trussjoint") or _has_tag(obj, "trusscube")
+    return _is_truss_object(obj) and _is_structure_joint_object(obj)
 
 
 def _object_bounds(objects):
@@ -382,12 +410,26 @@ def _object_uid(obj):
     return Connections.get_object_uid(obj)
 
 
-def _connected_truss_neighbors(obj, visible_truss_uids):
+def _connected_structure_neighbors(obj, visible_structure_uids, structure_kind=None):
     neighbors = []
 
     for _link_index, other_obj, _other_link_index, _other_link in Connections.iter_connected_links(obj):
         other_uid = _object_uid(other_obj)
-        if other_uid in visible_truss_uids and _is_truss_object(other_obj):
+        if other_uid not in visible_structure_uids or not _is_structure_object(other_obj):
+            continue
+        if structure_kind is not None and _structure_kind(other_obj) != structure_kind:
+            continue
+
+        neighbors.append(other_obj)
+
+    return neighbors
+
+
+def _connected_truss_neighbors(obj, visible_truss_uids):
+    neighbors = []
+
+    for other_obj in _connected_structure_neighbors(obj, visible_truss_uids, "truss"):
+        if _is_truss_object(other_obj):
             neighbors.append(other_obj)
 
     return neighbors
@@ -453,6 +495,118 @@ def _build_truss_segments(truss_objects):
     return segments
 
 
+def _object_cardinal_axis(obj, structure_rotation, threshold=0.82):
+    local_min = Vector((math.inf, math.inf, math.inf))
+    local_max = Vector((-math.inf, -math.inf, -math.inf))
+
+    for corner in obj.bound_box:
+        corner = Vector(corner)
+        local_min.x = min(local_min.x, corner.x)
+        local_min.y = min(local_min.y, corner.y)
+        local_min.z = min(local_min.z, corner.z)
+        local_max.x = max(local_max.x, corner.x)
+        local_max.y = max(local_max.y, corner.y)
+        local_max.z = max(local_max.z, corner.z)
+
+    dimensions = local_max - local_min
+    local_axis_index = max(range(3), key=lambda index: dimensions[index])
+    local_axis = Vector((
+        1.0 if local_axis_index == 0 else 0.0,
+        1.0 if local_axis_index == 1 else 0.0,
+        1.0 if local_axis_index == 2 else 0.0,
+    ))
+    world_axis = obj.matrix_world.to_quaternion().to_matrix() @ local_axis
+    if world_axis.length_squared <= 0.000001:
+        return None
+
+    structure_axis = structure_rotation.inverted() @ world_axis.normalized()
+    axis_index = max(range(3), key=lambda index: abs(structure_axis[index]))
+    if abs(structure_axis[axis_index]) < threshold:
+        return None
+
+    return ("X", "Y", "Z")[axis_index]
+
+
+def _build_layher_segments(layher_objects):
+    if not layher_objects:
+        return []
+
+    visible_layher_uids = {_object_uid(obj) for obj in layher_objects}
+    object_by_uid = {_object_uid(obj): obj for obj in layher_objects}
+    structure_rotation = _structure_rotation(layher_objects)
+    axis_by_uid = {
+        _object_uid(obj): _object_cardinal_axis(obj, structure_rotation)
+        for obj in layher_objects
+    }
+    neighbors_by_uid = {
+        _object_uid(obj): [
+            _object_uid(neighbor)
+            for neighbor in _connected_structure_neighbors(obj, visible_layher_uids, "layher")
+        ]
+        for obj in layher_objects
+    }
+    segments = []
+    seen_segments = set()
+
+    for axis in ("X", "Y", "Z"):
+        axis_uids = {uid for uid, object_axis in axis_by_uid.items() if object_axis == axis}
+        if not axis_uids:
+            continue
+
+        connector_uids = {
+            uid
+            for uid, object_axis in axis_by_uid.items()
+            if object_axis != axis
+            and sum(1 for neighbor_uid in neighbors_by_uid[uid] if neighbor_uid in axis_uids) >= 2
+        }
+        graph = {uid: set() for uid in axis_uids | connector_uids}
+
+        for uid in axis_uids:
+            for neighbor_uid in neighbors_by_uid[uid]:
+                if neighbor_uid in axis_uids or neighbor_uid in connector_uids:
+                    graph[uid].add(neighbor_uid)
+                    graph.setdefault(neighbor_uid, set()).add(uid)
+
+        unvisited = set(axis_uids)
+        while unvisited:
+            start_uid = min(unvisited)
+            pending = [start_uid]
+            component_uids = set()
+            unvisited.remove(start_uid)
+
+            while pending:
+                current_uid = pending.pop()
+                component_uids.add(current_uid)
+
+                for neighbor_uid in graph.get(current_uid, ()):
+                    if neighbor_uid in component_uids:
+                        continue
+
+                    if neighbor_uid in axis_uids and neighbor_uid in unvisited:
+                        unvisited.remove(neighbor_uid)
+                    pending.append(neighbor_uid)
+
+            key = tuple(sorted(component_uids))
+            if key in seen_segments:
+                continue
+
+            seen_segments.add(key)
+            segments.append([object_by_uid[uid] for uid in sorted(component_uids)])
+
+    if not segments:
+        segments.append(list(layher_objects))
+
+    return segments
+
+
+def _build_structure_segments(structure_objects):
+    structure_kind = _structure_kind(structure_objects[0]) if structure_objects else None
+    if structure_kind == "layher":
+        return _build_layher_segments(structure_objects)
+
+    return _build_truss_segments(structure_objects)
+
+
 def _connected_truss_groups(truss_objects):
     truss_by_uid = {_object_uid(obj): obj for obj in truss_objects}
     unvisited = set(truss_by_uid)
@@ -469,6 +623,34 @@ def _connected_truss_groups(truss_objects):
             group.append(obj)
 
             for neighbor in _connected_truss_neighbors(obj, set(truss_by_uid)):
+                neighbor_uid = _object_uid(neighbor)
+                if neighbor_uid in unvisited:
+                    unvisited.remove(neighbor_uid)
+                    stack.append(neighbor)
+
+        groups.append(sorted(group, key=lambda obj: obj.name_full))
+
+    return groups
+
+
+def _connected_structure_groups(structure_objects):
+    structures_by_uid = {_object_uid(obj): obj for obj in structure_objects}
+    unvisited = set(structures_by_uid)
+    groups = []
+
+    while unvisited:
+        start_uid = min(unvisited)
+        start_obj = structures_by_uid[start_uid]
+        structure_kind = _structure_kind(start_obj)
+        stack = [start_obj]
+        group = []
+        unvisited.remove(start_uid)
+
+        while stack:
+            obj = stack.pop()
+            group.append(obj)
+
+            for neighbor in _connected_structure_neighbors(obj, set(structures_by_uid), structure_kind):
                 neighbor_uid = _object_uid(neighbor)
                 if neighbor_uid in unvisited:
                     unvisited.remove(neighbor_uid)
@@ -1953,14 +2135,14 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, "No visible mesh objects found for PDF drawings")
             return {'CANCELLED'}
 
-        truss_objects = [obj for obj in objects if _is_truss_object(obj)]
-        truss_groups = _connected_truss_groups(truss_objects) if truss_objects else [objects]
-        conversion_workers = min(len(truss_groups) * 4, PDF_MAX_CONVERSION_WORKERS)
+        structure_objects = [obj for obj in objects if _is_structure_object(obj)]
+        structure_groups = _connected_structure_groups(structure_objects) if structure_objects else [objects]
+        conversion_workers = min(len(structure_groups) * 4, PDF_MAX_CONVERSION_WORKERS)
         self._pdf_started_at = time.perf_counter()
         self._pdf_profiler = _PdfPhaseProfiler()
         self._pdf_conversion_executor = ThreadPoolExecutor(max_workers=max(1, conversion_workers))
         self._pdf_timer = context.window_manager.event_timer_add(0.01, window=context.window)
-        self._pdf_steps = self._generate_pdf_steps(context, objects, truss_objects, truss_groups)
+        self._pdf_steps = self._generate_pdf_steps(context, objects, structure_groups)
         self._pdf_last_step_finished_at = time.perf_counter()
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -2054,11 +2236,11 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 profiler.record_since("conversion executor shutdown", shutdown_started_at)
             self._pdf_conversion_executor = None
 
-    def _generate_pdf_steps(self, context, objects, truss_objects, truss_groups):
+    def _generate_pdf_steps(self, context, objects, structure_groups):
         scene = context.scene
         progress = _ProgressReporter(
             context,
-            PDF_PROGRESS_METADATA_STEPS + (len(truss_groups) * 4) + PDF_PROGRESS_WRITE_STEPS,
+            PDF_PROGRESS_METADATA_STEPS + (len(structure_groups) * 4) + PDF_PROGRESS_WRITE_STEPS,
         )
         profiler = getattr(self, "_pdf_profiler", None)
         conversion_executor = getattr(self, "_pdf_conversion_executor", None)
@@ -2102,8 +2284,8 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         try:
             progress.begin("Preparing PDF drawing data")
             if profiler is not None:
-                profiler.count("structures", len(truss_groups))
-                profiler.count("views", len(truss_groups) * 4)
+                profiler.count("structures", len(structure_groups))
+                profiler.count("views", len(structure_groups) * 4)
             yield
             data_started_at = time.perf_counter()
             bom_entries = _collect_bom_entries(objects)
@@ -2125,7 +2307,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 profiler.record_since("render config", render_config_started_at)
             temp_directory_started_at = time.perf_counter()
             with tempfile.TemporaryDirectory() as temp_directory:
-                for group_index, group_objects in enumerate(truss_groups, start=1):
+                for group_index, group_objects in enumerate(structure_groups, start=1):
                     structure_total_started_at = time.perf_counter()
                     page_temp_directory = Path(temp_directory) / f"structure_{group_index}"
                     page_temp_directory.mkdir(exist_ok=True)
@@ -2140,7 +2322,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                         profiler.count("line objects", len(temporary_line_objects))
                     structure_started_at = time.perf_counter()
                     group_center, _group_dimensions = _object_bounds(group_objects)
-                    group_segments = _build_truss_segments(group_objects) if truss_objects else []
+                    group_segments = _build_structure_segments(group_objects) if group_objects else []
                     group_rotation = _structure_rotation(group_objects)
                     if profiler is not None:
                         profiler.record_since("structure prep", structure_started_at)
@@ -2149,7 +2331,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     try:
                         for view_name in ("Front", "Left", "Top", "Iso"):
                             progress.set_message(
-                                f"Rendering structure {group_index}/{len(truss_groups)}: {view_name}"
+                                f"Rendering structure {group_index}/{len(structure_groups)}: {view_name}"
                             )
                             rendered_views[view_name] = _render_view(
                                 context,
@@ -2164,7 +2346,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                                 profile_label=f"structure {group_index} {view_name}",
                             )
                             progress.advance(
-                                message=f"Rendered structure {group_index}/{len(truss_groups)}: {view_name}"
+                                message=f"Rendered structure {group_index}/{len(structure_groups)}: {view_name}"
                             )
                     finally:
                         line_cleanup_started_at = time.perf_counter()
