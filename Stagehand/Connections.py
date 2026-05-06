@@ -20,27 +20,54 @@ from .RegistrationUtils import (
 )
 
 
-CONNECTION_MAINTENANCE_INTERVAL = 0.5
 CONNECTION_REFRESH_POLL_INTERVAL = 0.05
 CONNECTION_REFRESH_SETTLE_INTERVAL = 0.1
-TRANSFORM_WATCH_INTERVAL = 0.1
 AUTO_CONNECT_DISTANCE_THRESHOLD = 0.0001
 AUTO_CONNECT_ANGLE_THRESHOLD = radians(0.1)
 LINK_ALIGNMENT_FLIP = Quaternion((0.0, 0.0, 1.0), radians(180.0))
 _DIRTY_CONNECTION_OBJECT_UIDS = set()
 _ALL_CONNECTIONS_DIRTY = False
 _DIRTY_CONNECTION_REFRESH_DEADLINE = 0.0
-_LAST_KNOWN_MATRICES = {}
 _LAST_STAGEHAND_OBJECT_NAMES = set()
 addon_keymaps = []
 
 
+def _report_connection_profile(message):
+    try:
+        bpy.ops.stagehand.report_connection_profile('EXEC_DEFAULT', message=message)
+    except Exception:
+        pass
+
+
+def _print_connection_profile(profile_entries, total_time, **metadata):
+    print("Stagehand UpdateConnections profile")
+    print(f"  total: {_format_profile_time(total_time)}")
+    for key, value in metadata.items():
+        print(f"  {key}: {value}")
+    for label, elapsed in profile_entries:
+        print(f"  {label}: {_format_profile_time(elapsed)}")
+
+
+def _log_connection_timer_run(name, start_time, **metadata):
+    print(f"Stagehand timer: {name}")
+    print(f"  elapsed: {_format_profile_time(time.perf_counter() - start_time)}")
+    for key, value in metadata.items():
+        print(f"  {key}: {value}")
+
+
+def _format_profile_time(seconds):
+    return f"{seconds * 1000.0:.2f} ms"
+
+
+def _profile_step(profile_entries, label, callback):
+    start_time = time.perf_counter()
+    result = callback()
+    profile_entries.append((label, time.perf_counter() - start_time))
+    return result
+
+
 def _data_objects():
     return getattr(bpy.data, "objects", None)
-
-
-def _matrix_signature(matrix):
-    return tuple(round(value, 9) for row in matrix for value in row)
 
 
 def is_stagehand_object(obj):
@@ -787,21 +814,78 @@ def _connect_free_links_to_scene(free_items, group_objects):
 
 
 def UpdateConnections(objects):
+    _report_connection_profile("\n")
+    profile_start_time = time.perf_counter()
+    profile_entries = []
     raw_objects = [obj for obj in (objects or ()) if is_stagehand_object(obj)]
     if not raw_objects:
-        _rebuild_database_indexes()
-        _prune_orphan_database_connections()
+        _profile_step(profile_entries, "rebuild indexes", _rebuild_database_indexes)
+        _profile_step(profile_entries, "prune orphan database connections", _prune_orphan_database_connections)
+        total_time = time.perf_counter() - profile_start_time
+        profile_summary = "; ".join(
+            f"{label}: {_format_profile_time(elapsed)}"
+            for label, elapsed in profile_entries
+        )
+        _report_connection_profile(
+            f"Stagehand UpdateConnections: total {_format_profile_time(total_time)}; "
+            f"objects: 0; free links: 0; {profile_summary}"
+        )
+        _print_connection_profile(
+            profile_entries,
+            total_time,
+            objects=0,
+            free_links=0,
+        )
         return []
 
-    _rebuild_database_indexes()
-    _repair_duplicate_ids()
-    _prune_orphan_database_connections()
-    update_objects = _unique_stagehand_objects(raw_objects)
+    _profile_step(profile_entries, "rebuild indexes", _rebuild_database_indexes)
+    _profile_step(profile_entries, "repair duplicate ids", _repair_duplicate_ids)
+    _profile_step(profile_entries, "prune orphan database connections", _prune_orphan_database_connections)
+    update_objects = _profile_step(
+        profile_entries,
+        "unique update objects",
+        lambda: _unique_stagehand_objects(raw_objects),
+    )
 
-    _remove_connections_not_working(update_objects)
-    free_links = _connect_free_links_inside_group(update_objects)
-    _connect_free_links_to_scene(free_links, update_objects)
-    return _free_link_items(update_objects)
+    removed_count = _profile_step(
+        profile_entries,
+        "remove invalid connections",
+        lambda: _remove_connections_not_working(update_objects),
+    )
+    free_links = _profile_step(
+        profile_entries,
+        "connect free links inside group",
+        lambda: _connect_free_links_inside_group(update_objects),
+    )
+    _profile_step(
+        profile_entries,
+        "connect free links to scene",
+        lambda: _connect_free_links_to_scene(free_links, update_objects),
+    )
+    remaining_free_links = _profile_step(
+        profile_entries,
+        "collect remaining free links",
+        lambda: _free_link_items(update_objects),
+    )
+
+    total_time = time.perf_counter() - profile_start_time
+    profile_summary = "; ".join(
+        f"{label}: {_format_profile_time(elapsed)}"
+        for label, elapsed in profile_entries
+    )
+    _report_connection_profile(
+        f"Stagehand UpdateConnections: total {_format_profile_time(total_time)}; "
+        f"objects: {len(update_objects)}; removed: {removed_count}; "
+        f"free links: {len(remaining_free_links)}; {profile_summary}"
+    )
+    _print_connection_profile(
+        profile_entries,
+        total_time,
+        objects=len(update_objects),
+        removed=removed_count,
+        free_links=len(remaining_free_links),
+    )
+    return remaining_free_links
 
 
 def refresh_connections_for_objects(objects):
@@ -906,37 +990,95 @@ def _process_dirty_connection_refresh():
 
 
 def dirty_connection_refresh_timer():
+    timer_start = time.perf_counter()
     try:
         if not _DIRTY_CONNECTION_OBJECT_UIDS and not _ALL_CONNECTIONS_DIRTY:
+            _log_connection_timer_run(
+                "dirty_connection_refresh_timer",
+                timer_start,
+                dirty_objects=0,
+                all_dirty=False,
+                action="stop",
+            )
             return None
 
         if _transform_operator_active():
+            _log_connection_timer_run(
+                "dirty_connection_refresh_timer",
+                timer_start,
+                dirty_objects=len(_DIRTY_CONNECTION_OBJECT_UIDS),
+                all_dirty=_ALL_CONNECTIONS_DIRTY,
+                action="wait for transform operator",
+                next_interval=CONNECTION_REFRESH_POLL_INTERVAL,
+            )
             return CONNECTION_REFRESH_POLL_INTERVAL
 
         if time.monotonic() < _DIRTY_CONNECTION_REFRESH_DEADLINE:
+            _log_connection_timer_run(
+                "dirty_connection_refresh_timer",
+                timer_start,
+                dirty_objects=len(_DIRTY_CONNECTION_OBJECT_UIDS),
+                all_dirty=_ALL_CONNECTIONS_DIRTY,
+                action="wait for settle deadline",
+                next_interval=CONNECTION_REFRESH_POLL_INTERVAL,
+            )
             return CONNECTION_REFRESH_POLL_INTERVAL
 
         _process_dirty_connection_refresh()
     except Exception:
+        _log_connection_timer_run(
+            "dirty_connection_refresh_timer",
+            timer_start,
+            action="exception",
+            next_interval=CONNECTION_REFRESH_POLL_INTERVAL,
+        )
         return CONNECTION_REFRESH_POLL_INTERVAL
 
     if _DIRTY_CONNECTION_OBJECT_UIDS or _ALL_CONNECTIONS_DIRTY:
+        _log_connection_timer_run(
+            "dirty_connection_refresh_timer",
+            timer_start,
+            dirty_objects=len(_DIRTY_CONNECTION_OBJECT_UIDS),
+            all_dirty=_ALL_CONNECTIONS_DIRTY,
+            action="processed and reschedule",
+            next_interval=CONNECTION_REFRESH_POLL_INTERVAL,
+        )
         return CONNECTION_REFRESH_POLL_INTERVAL
+    _log_connection_timer_run(
+        "dirty_connection_refresh_timer",
+        timer_start,
+        dirty_objects=0,
+        all_dirty=False,
+        action="processed and stop",
+    )
     return None
 
 
 def initial_connection_refresh_timer():
+    timer_start = time.perf_counter()
     if _data_objects() is None:
+        _log_connection_timer_run(
+            "initial_connection_refresh_timer",
+            timer_start,
+            action="wait for bpy.data.objects",
+            next_interval=CONNECTION_REFRESH_POLL_INTERVAL,
+        )
         return CONNECTION_REFRESH_POLL_INTERVAL
 
     ProjectDatabase.get_database_object(create=True)
     _mark_stagehand_object_membership_changes(delay=0.0)
     mark_all_objects_dirty(delay=0.0)
+    _log_connection_timer_run(
+        "initial_connection_refresh_timer",
+        timer_start,
+        action="initialized and stop",
+    )
     return None
 
 
 @persistent
 def stagehand_depsgraph_update_post(_scene, depsgraph):
+    handler_start = time.perf_counter()
     dirty_objects = []
     for update in getattr(depsgraph, "updates", ()):
         updated_id = getattr(update, "id", None)
@@ -949,7 +1091,14 @@ def stagehand_depsgraph_update_post(_scene, depsgraph):
 
     if dirty_objects:
         mark_objects_dirty(dirty_objects)
-    _mark_stagehand_object_membership_changes()
+    membership_changed = _mark_stagehand_object_membership_changes()
+    if dirty_objects or membership_changed:
+        _log_connection_timer_run(
+            "stagehand_depsgraph_update_post",
+            handler_start,
+            dirty_objects=len(dirty_objects),
+            membership_changed=membership_changed,
+        )
 
 
 @persistent
@@ -957,46 +1106,15 @@ def stagehand_undo_redo_post(_dummy):
     mark_all_objects_dirty(delay=0.0)
 
 
-def _poll_stagehand_transform_changes():
-    live_uids = set()
-    changed_objects = []
+class STAGEHAND_OT_report_connection_profile(bpy.types.Operator):
+    bl_idname = "stagehand.report_connection_profile"
+    bl_label = "Stagehand Connection Profile Report"
 
-    for obj in iter_stagehand_objects():
-        uid = get_object_uid(obj)
-        if not uid:
-            continue
+    message: bpy.props.StringProperty(default="")
 
-        live_uids.add(uid)
-        signature = _matrix_signature(obj.matrix_world)
-        previous_signature = _LAST_KNOWN_MATRICES.get(uid)
-        if previous_signature is None:
-            _LAST_KNOWN_MATRICES[uid] = signature
-            continue
-
-        if signature != previous_signature:
-            _LAST_KNOWN_MATRICES[uid] = signature
-            changed_objects.append(obj)
-
-    for uid in list(_LAST_KNOWN_MATRICES.keys()):
-        if uid not in live_uids:
-            del _LAST_KNOWN_MATRICES[uid]
-
-    if changed_objects:
-        mark_objects_dirty(changed_objects)
-
-
-def connection_maintenance_timer():
-    try:
-        _mark_stagehand_object_membership_changes()
-        _poll_stagehand_transform_changes()
-        _rebuild_database_indexes()
-        _repair_duplicate_ids()
-        _prune_orphan_database_connections()
-        _remove_connections_not_working(iter_stagehand_objects())
-    except Exception:
-        pass
-
-    return TRANSFORM_WATCH_INTERVAL
+    def execute(self, _context):
+        self.report({'INFO'}, self.message)
+        return {'FINISHED'}
 
 
 class STAGEHAND_OT_select_connected_objects(bpy.types.Operator):
@@ -1053,17 +1171,13 @@ def unregister_keymap():
 
 
 def register():
+    safe_register_class(STAGEHAND_OT_report_connection_profile)
     safe_register_class(STAGEHAND_OT_select_connected_objects)
     register_keymap()
     safe_add_handler(bpy.app.handlers.depsgraph_update_post, stagehand_depsgraph_update_post)
     safe_add_handler(bpy.app.handlers.undo_post, stagehand_undo_redo_post)
     safe_add_handler(bpy.app.handlers.redo_post, stagehand_undo_redo_post)
     safe_add_handler(bpy.app.handlers.load_post, stagehand_undo_redo_post)
-    if not bpy.app.timers.is_registered(connection_maintenance_timer):
-        bpy.app.timers.register(
-            connection_maintenance_timer,
-            first_interval=CONNECTION_MAINTENANCE_INTERVAL,
-        )
     if not bpy.app.timers.is_registered(initial_connection_refresh_timer):
         bpy.app.timers.register(
             initial_connection_refresh_timer,
@@ -1085,6 +1199,5 @@ def unregister():
         bpy.app.timers.unregister(dirty_connection_refresh_timer)
     _DIRTY_CONNECTION_OBJECT_UIDS.clear()
     _ALL_CONNECTIONS_DIRTY = False
-    if bpy.app.timers.is_registered(connection_maintenance_timer):
-        bpy.app.timers.unregister(connection_maintenance_timer)
     safe_unregister_class(STAGEHAND_OT_select_connected_objects)
+    safe_unregister_class(STAGEHAND_OT_report_connection_profile)
