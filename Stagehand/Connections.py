@@ -1,7 +1,7 @@
 import uuid
 import time
 from collections import defaultdict
-from math import pi, radians
+from math import floor, pi, radians
 
 import bpy
 from bpy.app.handlers import persistent
@@ -761,6 +761,27 @@ def _free_link_items(objects):
     return link_items
 
 
+def _link_center_bucket_key(center):
+    cell_size = AUTO_CONNECT_DISTANCE_THRESHOLD
+    return (
+        floor(center.x / cell_size),
+        floor(center.y / cell_size),
+        floor(center.z / cell_size),
+    )
+
+
+def _nearby_link_center_bucket_keys(bucket_key):
+    bucket_x, bucket_y, bucket_z = bucket_key
+    for offset_x in (-1, 0, 1):
+        for offset_y in (-1, 0, 1):
+            for offset_z in (-1, 0, 1):
+                yield (
+                    bucket_x + offset_x,
+                    bucket_y + offset_y,
+                    bucket_z + offset_z,
+                )
+
+
 def _connect_candidate_pairs(candidates):
     connected_any = False
     connected_count = 0
@@ -782,14 +803,33 @@ def _connect_candidate_pairs(candidates):
 def _connect_free_links_inside_group(objects):
     candidates = []
     free_items = _free_link_items(objects)
+    buckets = defaultdict(list)
 
-    for item_index, item_a in enumerate(free_items):
-        for item_b in free_items[item_index + 1:]:
-            candidate = _connection_candidate(item_a, item_b)
-            if candidate is not None:
-                candidates.append(candidate)
+    for item in free_items:
+        obj, _link_index, link = item
+        center, _rotation = _link_transform(obj, link)
+        bucket_key = _link_center_bucket_key(center)
 
-    _connect_candidate_pairs(candidates)
+        for nearby_bucket_key in _nearby_link_center_bucket_keys(bucket_key):
+            for other_item in buckets.get(nearby_bucket_key, ()):
+                candidate = _connection_candidate(item, other_item)
+                if candidate is not None:
+                    candidates.append(candidate)
+
+        buckets[bucket_key].append(item)
+
+    connected_any, connected_count = _connect_candidate_pairs(candidates)
+    if candidates:
+        print("Stagehand connect free links inside group")
+        print(f"  free links: {len(free_items)}")
+        print(f"  candidate pairs: {len(candidates)}")
+        print(f"  connected pairs: {connected_count}")
+    elif free_items:
+        print("Stagehand connect free links inside group")
+        print(f"  free links: {len(free_items)}")
+        print("  candidate pairs: 0")
+        print("  connected pairs: 0")
+
     return _free_link_items(objects)
 
 
@@ -803,14 +843,31 @@ def _connect_free_links_to_scene(free_items, group_objects):
             continue
         scene_items.extend(_free_link_items((obj,)))
 
+    scene_buckets = defaultdict(list)
+    for item in scene_items:
+        obj, _link_index, link = item
+        center, _rotation = _link_transform(obj, link)
+        scene_buckets[_link_center_bucket_key(center)].append(item)
+
     candidates = []
     for item_a in free_items:
-        for item_b in scene_items:
-            candidate = _connection_candidate(item_a, item_b)
-            if candidate is not None:
-                candidates.append(candidate)
+        obj, _link_index, link = item_a
+        center, _rotation = _link_transform(obj, link)
+        bucket_key = _link_center_bucket_key(center)
 
-    _connect_candidate_pairs(candidates)
+        for nearby_bucket_key in _nearby_link_center_bucket_keys(bucket_key):
+            for item_b in scene_buckets.get(nearby_bucket_key, ()):
+                candidate = _connection_candidate(item_a, item_b)
+                if candidate is not None:
+                    candidates.append(candidate)
+
+    _connected_any, connected_count = _connect_candidate_pairs(candidates)
+    if candidates or free_items or scene_items:
+        print("Stagehand connect free links to scene")
+        print(f"  group free links: {len(free_items)}")
+        print(f"  scene free links: {len(scene_items)}")
+        print(f"  candidate pairs: {len(candidates)}")
+        print(f"  connected pairs: {connected_count}")
 
 
 def UpdateConnections(objects):
@@ -993,35 +1050,12 @@ def dirty_connection_refresh_timer():
     timer_start = time.perf_counter()
     try:
         if not _DIRTY_CONNECTION_OBJECT_UIDS and not _ALL_CONNECTIONS_DIRTY:
-            _log_connection_timer_run(
-                "dirty_connection_refresh_timer",
-                timer_start,
-                dirty_objects=0,
-                all_dirty=False,
-                action="stop",
-            )
             return None
 
         if _transform_operator_active():
-            _log_connection_timer_run(
-                "dirty_connection_refresh_timer",
-                timer_start,
-                dirty_objects=len(_DIRTY_CONNECTION_OBJECT_UIDS),
-                all_dirty=_ALL_CONNECTIONS_DIRTY,
-                action="wait for transform operator",
-                next_interval=CONNECTION_REFRESH_POLL_INTERVAL,
-            )
             return CONNECTION_REFRESH_POLL_INTERVAL
 
         if time.monotonic() < _DIRTY_CONNECTION_REFRESH_DEADLINE:
-            _log_connection_timer_run(
-                "dirty_connection_refresh_timer",
-                timer_start,
-                dirty_objects=len(_DIRTY_CONNECTION_OBJECT_UIDS),
-                all_dirty=_ALL_CONNECTIONS_DIRTY,
-                action="wait for settle deadline",
-                next_interval=CONNECTION_REFRESH_POLL_INTERVAL,
-            )
             return CONNECTION_REFRESH_POLL_INTERVAL
 
         _process_dirty_connection_refresh()
@@ -1092,7 +1126,7 @@ def stagehand_depsgraph_update_post(_scene, depsgraph):
     if dirty_objects:
         mark_objects_dirty(dirty_objects)
     membership_changed = _mark_stagehand_object_membership_changes()
-    if dirty_objects or membership_changed:
+    if membership_changed:
         _log_connection_timer_run(
             "stagehand_depsgraph_update_post",
             handler_start,
