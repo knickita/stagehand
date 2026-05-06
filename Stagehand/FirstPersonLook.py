@@ -58,6 +58,10 @@ class FirstPersonLook(bpy.types.Operator):
 
         # Track key state
         if event.type in self.keys:
+            if not self.alt_held:
+                self.keys[event.type] = False
+                return {'PASS_THROUGH'}
+
             self.keys[event.type] = (event.value != 'RELEASE')
             return {'RUNNING_MODAL'}
 
