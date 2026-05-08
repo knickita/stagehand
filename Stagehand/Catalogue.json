@@ -1994,9 +1994,9 @@
             "watt": 0.0
         },
         {
-            "name": "litecQX30-107mm",
+            "name": "litecQX30-105mm",
             "uniqueId": 19,
-            "mesh3d": "Models/litecQX30-107mm",
+            "mesh3d": "Models/litecQX30-105mm",
             "tags": [
                 "structure",
                 "truss"
@@ -2021,7 +2021,7 @@
                     "posdir": [
                         0.0,
                         0.0,
-                        0.10499999672174454,
+                        0.105,
                         0.7071068286895752,
                         0.0,
                         0.0,
