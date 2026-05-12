@@ -315,7 +315,7 @@ def _is_truss_object(obj):
     if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
         return False
 
-    return _has_tag(obj, "truss") or _has_tag(obj, "trussjoint") or _has_tag(obj, "trusscube")
+    return _has_tag(obj, "truss")
 
 
 def _is_layher_object(obj):
@@ -331,10 +331,10 @@ def _structure_kind(obj):
 
 
 def _is_structure_joint_object(obj):
-    return _has_tag(obj, "structure-joint") or _has_tag(obj, "trussjoint") or _has_tag(obj, "trusscube")
+    return _has_tag(obj, "structure-joint")
 
 
-def _is_trussjoint_object(obj):
+def _is_truss_joint_object(obj):
     return _is_truss_object(obj) and _is_structure_joint_object(obj)
 
 
@@ -402,11 +402,60 @@ def _segment_local_box(segment_objects, rotation=None):
     }
 
 
+def _object_longest_local_axis(obj):
+    local_min = Vector((math.inf, math.inf, math.inf))
+    local_max = Vector((-math.inf, -math.inf, -math.inf))
+
+    for corner in obj.bound_box:
+        corner = Vector(corner)
+        local_min.x = min(local_min.x, corner.x)
+        local_min.y = min(local_min.y, corner.y)
+        local_min.z = min(local_min.z, corner.z)
+        local_max.x = max(local_max.x, corner.x)
+        local_max.y = max(local_max.y, corner.y)
+        local_max.z = max(local_max.z, corner.z)
+
+    dimensions = local_max - local_min
+    axis_index = max(range(3), key=lambda index: dimensions[index])
+    if dimensions[axis_index] <= 0.000001:
+        return None
+
+    return Vector((
+        1.0 if axis_index == 0 else 0.0,
+        1.0 if axis_index == 1 else 0.0,
+        1.0 if axis_index == 2 else 0.0,
+    ))
+
+
+def _nearest_world_cardinal_axis(direction):
+    direction = direction.normalized()
+    candidates = (
+        Vector((1.0, 0.0, 0.0)),
+        Vector((-1.0, 0.0, 0.0)),
+        Vector((0.0, 1.0, 0.0)),
+        Vector((0.0, -1.0, 0.0)),
+        Vector((0.0, 0.0, 1.0)),
+        Vector((0.0, 0.0, -1.0)),
+    )
+    return max(candidates, key=lambda axis: direction.dot(axis))
+
+
 def _structure_rotation(objects):
     if not objects:
         return Matrix.Identity(3)
 
-    return objects[0].matrix_world.to_quaternion().to_matrix()
+    reference_obj = objects[0]
+    local_axis = _object_longest_local_axis(reference_obj)
+    if local_axis is None:
+        return Matrix.Identity(3)
+
+    world_axis = reference_obj.matrix_world.to_quaternion().to_matrix() @ local_axis
+    if world_axis.length_squared <= 0.000001:
+        return Matrix.Identity(3)
+
+    snapped_axis = _nearest_world_cardinal_axis(world_axis)
+    correction = world_axis.normalized().rotation_difference(snapped_axis)
+    return correction.inverted().to_matrix()
 
 
 def _object_uid(obj):
@@ -450,14 +499,14 @@ class _StructureSegment(list):
 
 def _build_truss_segments(truss_objects):
     visible_truss_uids = {_object_uid(obj) for obj in truss_objects}
-    trussjoint_objects = [obj for obj in truss_objects if _is_trussjoint_object(obj)]
-    segments = [[obj] for obj in trussjoint_objects]
+    truss_joint_objects = [obj for obj in truss_objects if _is_truss_joint_object(obj)]
+    segments = [[obj] for obj in truss_joint_objects]
     seen_segments = set()
 
-    for obj in trussjoint_objects:
+    for obj in truss_joint_objects:
         seen_segments.add((_object_uid(obj),))
 
-    for start_obj in trussjoint_objects:
+    for start_obj in truss_joint_objects:
         start_uid = _object_uid(start_obj)
         for neighbor in _connected_truss_neighbors(start_obj, visible_truss_uids):
             path = [start_obj, neighbor]
@@ -472,8 +521,8 @@ def _build_truss_segments(truss_objects):
 
                 visited.add(current_uid)
 
-                if _is_trussjoint_object(current_obj):
-                    segment = [obj for obj in path if not _is_trussjoint_object(obj)]
+                if _is_truss_joint_object(current_obj):
+                    segment = [obj for obj in path if not _is_truss_joint_object(obj)]
                     key = _segment_key(segment)
                     if segment and key not in seen_segments:
                         seen_segments.add(key)
@@ -487,7 +536,7 @@ def _build_truss_segments(truss_objects):
                 ]
 
                 if not next_objects:
-                    segment = [obj for obj in path if not _is_trussjoint_object(obj)]
+                    segment = [obj for obj in path if not _is_truss_joint_object(obj)]
                     key = _segment_key(segment)
                     if segment and key not in seen_segments:
                         seen_segments.add(key)
@@ -686,6 +735,34 @@ def _connected_structure_groups(structure_objects):
         groups.append(sorted(group, key=lambda obj: obj.name_full))
 
     return groups
+
+
+def _structure_collection_name(objects, fallback):
+    if not objects:
+        return fallback
+
+    common_collection_names = None
+    for obj in objects:
+        collection_names = {
+            collection.name
+            for collection in getattr(obj, "users_collection", ())
+            if getattr(collection, "name", "")
+        }
+        if common_collection_names is None:
+            common_collection_names = collection_names
+        else:
+            common_collection_names &= collection_names
+
+    if common_collection_names:
+        return sorted(common_collection_names, key=str.casefold)[0]
+
+    for obj in objects:
+        for collection in getattr(obj, "users_collection", ()):
+            collection_name = getattr(collection, "name", "")
+            if collection_name:
+                return collection_name
+
+    return fallback
 
 
 def _projected_bounds(objects, camera_rotation):
@@ -1801,7 +1878,7 @@ def _object_truss_z_dimension(obj):
 
 
 def _is_truss_object_for_link_type(obj, link_type):
-    if not _is_truss_object(obj) or _is_trussjoint_object(obj):
+    if not _is_truss_object(obj) or _is_truss_joint_object(obj):
         return False
 
     for _index, link in Connections.iter_object_links(obj):
@@ -1940,7 +2017,7 @@ def _collect_fastener_totals(objects):
                 continue
 
             connection_keys.add(key)
-            if _is_trussjoint_object(obj) or _is_trussjoint_object(other_obj):
+            if _is_truss_joint_object(obj) or _is_truss_joint_object(other_obj):
                 total_chiodi_coppiglie_cubi += 4
             else:
                 total_ovetti_tratte += 4
@@ -2199,7 +2276,7 @@ def _page_content_stream(rendered_views, title, image_object_numbers):
     return "\n".join(content), xobject_entries
 
 
-def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None, profiler=None):
+def _write_pdf(filepath, pages, title, page_titles=None, bom_entries=None, details_data=None, profiler=None):
     write_started_at = time.perf_counter()
     labels = ("Front", "Left", "Top", "Iso")
     object_entries = [None, None, None]
@@ -2260,6 +2337,7 @@ def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None, prof
             None,
         ))
 
+    page_titles = page_titles or []
     for page_index, rendered_views in enumerate(pages, start=1):
         page_object_number = next_object_number
         content_object_number = page_object_number + 1
@@ -2268,7 +2346,10 @@ def _write_pdf(filepath, pages, title, bom_entries=None, details_data=None, prof
             for index in range(len(labels))
         ]
         next_object_number = content_object_number + len(labels) + 1
-        page_title = title if len(pages) == 1 else f"{title} - Structure {page_index}"
+        if page_index <= len(page_titles) and page_titles[page_index - 1]:
+            page_title = page_titles[page_index - 1]
+        else:
+            page_title = title if len(pages) == 1 else f"{title} - Structure {page_index}"
         content_stream, xobject_entries = _page_content_stream(
             rendered_views,
             page_title,
@@ -2535,6 +2616,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         )
 
         rendered_pages = []
+        page_titles = []
         temporary_line_objects = []
         white_material = None
         original_hide_render = []
@@ -2567,6 +2649,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             with tempfile.TemporaryDirectory() as temp_directory:
                 for group_index, group_objects in enumerate(structure_groups, start=1):
                     structure_total_started_at = time.perf_counter()
+                    page_title = _structure_collection_name(group_objects, f"{_project_name()} - Structure {group_index}")
                     page_temp_directory = Path(temp_directory) / f"structure_{group_index}"
                     page_temp_directory.mkdir(exist_ok=True)
                     line_objects_started_at = time.perf_counter()
@@ -2618,6 +2701,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
                     if profiler is not None:
                         profiler.record_structure(f"structure {group_index}", time.perf_counter() - structure_total_started_at)
+                    page_titles.append(page_title)
                     rendered_pages.append(rendered_views)
                     yield
             if profiler is not None:
@@ -2634,6 +2718,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 self.filepath,
                 rendered_pages,
                 _project_name(),
+                page_titles=page_titles,
                 bom_entries=bom_entries,
                 details_data=details_data,
                 profiler=profiler,

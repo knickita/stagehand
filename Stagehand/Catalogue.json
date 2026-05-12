@@ -839,8 +839,7 @@
             "tags": [
                 "structure",
                 "structure-joint",
-                "truss",
-                "trussjoint"
+                "truss"
             ],
             "links": [
                 {
@@ -943,8 +942,7 @@
             "tags": [
                 "structure",
                 "structure-joint",
-                "truss",
-                "trussjoint"
+                "truss"
             ],
             "links": [
                 {
@@ -3655,8 +3653,7 @@
             "tags": [
                 "structure",
                 "structure-joint",
-                "truss",
-                "trussjoint"
+                "truss"
             ],
             "links": [
                 {
@@ -3759,8 +3756,7 @@
             "tags": [
                 "structure",
                 "structure-joint",
-                "truss",
-                "trussjoint"
+                "truss"
             ],
             "links": [
                 {

@@ -50,6 +50,8 @@ _DIRTY_CONNECTION_OBJECT_UIDS = set()
 _ALL_CONNECTIONS_DIRTY = False
 _DUPLICATE_REPAIR_NEEDED = True
 _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS = set()
+_MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT = False
+_MEMBERSHIP_TRACKING_INITIALIZED = False
 _DIRTY_CONNECTION_REFRESH_DEADLINE = 0.0
 _LAST_STAGEHAND_OBJECT_NAMES = set()
 addon_keymaps = []
@@ -1319,25 +1321,30 @@ def _stagehand_object_name_set():
     return {obj.name_full for obj in iter_stagehand_objects()}
 
 
-def _mark_stagehand_object_membership_changes(delay=CONNECTION_REFRESH_SETTLE_INTERVAL):
-    global _LAST_STAGEHAND_OBJECT_NAMES
+def _mark_stagehand_object_membership_changes(delay=CONNECTION_REFRESH_SETTLE_INTERVAL, auto_connect=True):
+    global _LAST_STAGEHAND_OBJECT_NAMES, _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT, _MEMBERSHIP_TRACKING_INITIALIZED
 
     current_names = _stagehand_object_name_set()
     if current_names == _LAST_STAGEHAND_OBJECT_NAMES:
+        _MEMBERSHIP_TRACKING_INITIALIZED = True
         return False
 
+    first_membership_snapshot = not _MEMBERSHIP_TRACKING_INITIALIZED
     _LAST_STAGEHAND_OBJECT_NAMES = current_names
+    _MEMBERSHIP_TRACKING_INITIALIZED = True
     mark_duplicate_repair_needed()
+    if auto_connect and not first_membership_snapshot:
+        _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT = True
     mark_all_objects_dirty(delay=delay)
     return True
 
 
 def _process_dirty_connection_refresh():
-    global _ALL_CONNECTIONS_DIRTY
+    global _ALL_CONNECTIONS_DIRTY, _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT
 
     processed_all_objects = _ALL_CONNECTIONS_DIRTY
-    dirty_object_uids = set(_DIRTY_CONNECTION_OBJECT_UIDS)
-    dirty_object_count = len(dirty_object_uids)
+    membership_autoconnect = _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT
+    _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT = False
     if _ALL_CONNECTIONS_DIRTY:
         refresh_objects = list(iter_stagehand_objects())
         _DIRTY_CONNECTION_OBJECT_UIDS.clear()
@@ -1350,13 +1357,13 @@ def _process_dirty_connection_refresh():
             if obj is not None:
                 refresh_objects.append(obj)
 
-    duplicate_membership_refresh = processed_all_objects and dirty_object_count > 0
+    duplicate_membership_refresh = processed_all_objects and membership_autoconnect
     UpdateConnections(
         refresh_objects,
         auto_connect=(not processed_all_objects) or duplicate_membership_refresh,
         validate_existing=not processed_all_objects,
         prefer_repaired_duplicates=duplicate_membership_refresh,
-        connect_inside_group=not duplicate_membership_refresh,
+        connect_inside_group=True,
     )
     return processed_all_objects
 
@@ -1418,7 +1425,7 @@ def initial_connection_refresh_timer():
         return CONNECTION_REFRESH_POLL_INTERVAL
 
     ProjectDatabase.get_database_object(create=True)
-    _mark_stagehand_object_membership_changes(delay=0.0)
+    _mark_stagehand_object_membership_changes(delay=0.0, auto_connect=False)
     mark_all_objects_dirty(delay=0.0)
     _log_connection_timer_run(
         "initial_connection_refresh_timer",
@@ -1568,7 +1575,7 @@ def register():
 
 
 def unregister():
-    global _ALL_CONNECTIONS_DIRTY
+    global _ALL_CONNECTIONS_DIRTY, _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT, _MEMBERSHIP_TRACKING_INITIALIZED
 
     unregister_keymap()
     safe_remove_handler(bpy.app.handlers.depsgraph_update_post, stagehand_depsgraph_update_post)
@@ -1581,6 +1588,8 @@ def unregister():
         bpy.app.timers.unregister(dirty_connection_refresh_timer)
     _DIRTY_CONNECTION_OBJECT_UIDS.clear()
     _ALL_CONNECTIONS_DIRTY = False
+    _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT = False
+    _MEMBERSHIP_TRACKING_INITIALIZED = False
     safe_unregister_class(STAGEHAND_OT_select_connected_objects)
     safe_unregister_class(STAGEHAND_OT_repair_all_connections)
     safe_unregister_class(STAGEHAND_OT_report_connection_profile)
