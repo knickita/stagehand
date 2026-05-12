@@ -10,6 +10,7 @@ bl_info = {
 
 import bpy
 
+from . import Alerts
 from .RegistrationUtils import (
     safe_define_property,
     safe_register_class,
@@ -40,6 +41,8 @@ class StageHandOptionsPanel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+
+        Alerts.draw_alerts(layout, context)
 
         box = layout.box()
         box.label(text="Cable")

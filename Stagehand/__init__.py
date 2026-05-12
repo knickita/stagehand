@@ -27,6 +27,7 @@ LinkMode = _load_submodule("LinkMode")
 LoadCatalogue = _load_submodule("LoadCatalogue")
 MenuConfiguration = _load_submodule("MenuConfiguration")
 MvrImport = _load_submodule("MvrImport")
+Alerts = _load_submodule("Alerts")
 OptionsPanel = _load_submodule("OptionsPanel")
 PdfDrawings = _load_submodule("PdfDrawings")
 PowerManagement = _load_submodule("PowerManagement")
@@ -43,6 +44,7 @@ classes = (
     PdfDrawings,
     PowerManagement,
     MenuConfiguration,
+    Alerts,
     OptionsPanel,
     SnapLogics,
 )

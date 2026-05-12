@@ -81,6 +81,15 @@ LINK_COMPATIBILITY = {
 }
 
 
+POWER_INPUT_LINK_TYPES = {
+    StagehandLinkType.POWER_IN_CEE16A_MONO,
+    StagehandLinkType.POWER_IN_POWERCON_BLUE,
+    StagehandLinkType.POWER_IN_POWERCON_WHITE,
+    StagehandLinkType.POWER_IN_POWERCONTRUE,
+    StagehandLinkType.POWER_IN_CEE63A_PENTA,
+}
+
+
 def coerce_link_type(value):
     if isinstance(value, StagehandLinkType):
         return value
@@ -97,6 +106,10 @@ def are_link_types_compatible(source_link_type, target_link_type):
     source_link_type = coerce_link_type(source_link_type)
     target_link_type = coerce_link_type(target_link_type)
     return target_link_type in get_compatible_link_types(source_link_type)
+
+
+def is_power_input(link_type):
+    return coerce_link_type(link_type) in POWER_INPUT_LINK_TYPES
 
 
 def link_type_label(link_type):
