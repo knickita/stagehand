@@ -402,7 +402,7 @@ def _segment_local_box(segment_objects, rotation=None):
     }
 
 
-def _object_longest_local_axis(obj):
+def _object_longest_local_axis_data(obj):
     local_min = Vector((math.inf, math.inf, math.inf))
     local_max = Vector((-math.inf, -math.inf, -math.inf))
 
@@ -424,12 +424,47 @@ def _object_longest_local_axis(obj):
         1.0 if axis_index == 0 else 0.0,
         1.0 if axis_index == 1 else 0.0,
         1.0 if axis_index == 2 else 0.0,
+    )), dimensions[axis_index]
+
+
+def _object_longest_local_axis(obj):
+    axis_data = _object_longest_local_axis_data(obj)
+    if axis_data is None:
+        return None
+
+    return axis_data[0]
+
+
+def _object_longest_local_axis_length(obj):
+    axis_data = _object_longest_local_axis_data(obj)
+    if axis_data is None:
+        return 0.0
+
+    return axis_data[1]
+
+
+def _object_longest_world_axis(obj):
+    local_axis = _object_longest_local_axis(obj)
+    if local_axis is None:
+        return None
+
+    world_axis = obj.matrix_world.to_quaternion() @ local_axis
+    if world_axis.length_squared <= 0.000001:
+        return None
+
+    return world_axis.normalized()
+
+
+def _matrix_from_axes(x_axis, y_axis, z_axis):
+    return Matrix((
+        (x_axis.x, y_axis.x, z_axis.x),
+        (x_axis.y, y_axis.y, z_axis.y),
+        (x_axis.z, y_axis.z, z_axis.z),
     ))
 
 
-def _nearest_world_cardinal_axis(direction):
-    direction = direction.normalized()
-    candidates = (
+def _nearest_cardinal_orientation_quaternion(orientation):
+    cardinal_axes = (
         Vector((1.0, 0.0, 0.0)),
         Vector((-1.0, 0.0, 0.0)),
         Vector((0.0, 1.0, 0.0)),
@@ -437,24 +472,64 @@ def _nearest_world_cardinal_axis(direction):
         Vector((0.0, 0.0, 1.0)),
         Vector((0.0, 0.0, -1.0)),
     )
-    return max(candidates, key=lambda axis: direction.dot(axis))
+    world_axes = (
+        orientation @ Vector((1.0, 0.0, 0.0)),
+        orientation @ Vector((0.0, 1.0, 0.0)),
+        orientation @ Vector((0.0, 0.0, 1.0)),
+    )
+    best_axes = None
+    best_score = -math.inf
+
+    for x_axis in cardinal_axes:
+        for y_axis in cardinal_axes:
+            if abs(x_axis.dot(y_axis)) > 0.0001:
+                continue
+
+            z_axis = x_axis.cross(y_axis)
+            if z_axis.length_squared <= 0.0001:
+                continue
+
+            target_axes = (x_axis, y_axis, z_axis.normalized())
+            score = sum(world_axis.dot(target_axis) for world_axis, target_axis in zip(world_axes, target_axes))
+            if score > best_score:
+                best_score = score
+                best_axes = target_axes
+
+    if best_axes is None:
+        return Quaternion()
+
+    return _matrix_from_axes(*best_axes).to_quaternion()
 
 
 def _structure_rotation(objects):
     if not objects:
         return Matrix.Identity(3)
 
-    reference_obj = objects[0]
-    local_axis = _object_longest_local_axis(reference_obj)
-    if local_axis is None:
+    reference_orientation = None
+    fallback_orientation = None
+    best_horizontal_score = 0.0
+    for obj in objects:
+        orientation = obj.matrix_world.to_quaternion()
+        world_axis = _object_longest_world_axis(obj)
+        if world_axis is None:
+            continue
+
+        if fallback_orientation is None:
+            fallback_orientation = orientation
+
+        axis_length = _object_longest_local_axis_length(obj)
+        horizontal_score = axis_length * math.hypot(world_axis.x, world_axis.y)
+        if horizontal_score > best_horizontal_score:
+            best_horizontal_score = horizontal_score
+            reference_orientation = orientation
+
+    if reference_orientation is None or best_horizontal_score <= 0.0001:
+        reference_orientation = fallback_orientation
+    if reference_orientation is None:
         return Matrix.Identity(3)
 
-    world_axis = reference_obj.matrix_world.to_quaternion().to_matrix() @ local_axis
-    if world_axis.length_squared <= 0.000001:
-        return Matrix.Identity(3)
-
-    snapped_axis = _nearest_world_cardinal_axis(world_axis)
-    correction = world_axis.normalized().rotation_difference(snapped_axis)
+    snapped_orientation = _nearest_cardinal_orientation_quaternion(reference_orientation)
+    correction = snapped_orientation @ reference_orientation.inverted()
     return correction.inverted().to_matrix()
 
 
@@ -820,10 +895,10 @@ def _camera_rotation_from_direction(direction, up):
 
 def _view_direction_and_up(view_name, structure_rotation):
     direction, up = {
-        "Front": (Vector((0.0, -1.0, 0.0)), Vector((0.0, 0.0, 1.0))),
-        "Left": (Vector((1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0))),
+        "Front": (Vector((0.0, 1.0, 0.0)), Vector((0.0, 0.0, 1.0))),
+        "Left": (Vector((-1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0))),
         "Top": (Vector((0.0, 0.0, -1.0)), Vector((0.0, 1.0, 0.0))),
-        "Iso": (Vector((-1.0, -1.0, -0.75)), Vector((0.0, 0.0, 1.0))),
+        "Iso": (Vector((-1.0, 1.0, -0.75)), Vector((0.0, 0.0, 1.0))),
     }[view_name]
 
     return structure_rotation @ direction, structure_rotation @ up
@@ -900,22 +975,6 @@ def _same_projected_dimension(axis_dimension, other_dimension, tolerance):
         _same_projected_point(p1, other_p2, tolerance)
         and _same_projected_point(p2, other_p1, tolerance)
     )
-
-
-def _remove_duplicate_dimensions(axis_dimensions, _camera_scale):
-    tolerance = DIMENSION_DUPLICATE_TOLERANCE
-    filtered_dimensions = []
-
-    for axis_dimension in axis_dimensions:
-        if any(
-            _same_projected_dimension(axis_dimension, other_dimension, tolerance)
-            for other_dimension in filtered_dimensions
-        ):
-            continue
-
-        filtered_dimensions.append(axis_dimension)
-
-    return filtered_dimensions
 
 
 def _dimension_axis_vector(axis):
@@ -1018,7 +1077,7 @@ def _build_dimension_candidates(structure_segments, structure_rotation):
             "span": span_override,
         })
 
-    return _prune_dimension_candidates_for_views(candidates, structure_rotation)
+    return candidates
 
 
 def _project_dimension_candidate(dimension_candidate, camera_rotation, center, structure_rotation, assembly_projected_center):
@@ -1078,133 +1137,120 @@ def _segment_orientation(point_a, point_b, point_c):
     return ((point_b.x - point_a.x) * (point_c.y - point_a.y)) - ((point_b.y - point_a.y) * (point_c.x - point_a.x))
 
 
-def _point_on_projected_segment(point, segment_start, segment_end, tolerance):
-    return (
-        min(segment_start.x, segment_end.x) - tolerance <= point.x <= max(segment_start.x, segment_end.x) + tolerance
-        and min(segment_start.y, segment_end.y) - tolerance <= point.y <= max(segment_start.y, segment_end.y) + tolerance
-        and abs(_segment_orientation(segment_start, segment_end, point)) <= tolerance
+def _projected_point_line_distance(point, segment_start, segment_end):
+    line_length = math.hypot(segment_end.x - segment_start.x, segment_end.y - segment_start.y)
+    if line_length <= 0.0001:
+        return math.hypot(point.x - segment_start.x, point.y - segment_start.y)
+
+    return abs(_segment_orientation(segment_start, segment_end, point)) / line_length
+
+
+def _projected_dimension_midpoint(projected_dimension):
+    return (projected_dimension["p1"] + projected_dimension["p2"]) * 0.5
+
+
+def _projected_dimension_direction(projected_dimension):
+    direction_x, direction_y = _normalize_2d(
+        projected_dimension["p2"].x - projected_dimension["p1"].x,
+        projected_dimension["p2"].y - projected_dimension["p1"].y,
     )
+    if direction_x < -0.0001 or (abs(direction_x) <= 0.0001 and direction_y < 0.0):
+        direction_x = -direction_x
+        direction_y = -direction_y
+
+    return direction_x, direction_y
 
 
 def _projected_dimensions_are_parallel(first_dimension, second_dimension, tolerance):
-    first_direction_x, first_direction_y = _normalize_2d(
-        first_dimension["p2"].x - first_dimension["p1"].x,
-        first_dimension["p2"].y - first_dimension["p1"].y,
-    )
-    second_direction_x, second_direction_y = _normalize_2d(
-        second_dimension["p2"].x - second_dimension["p1"].x,
-        second_dimension["p2"].y - second_dimension["p1"].y,
-    )
+    first_direction_x, first_direction_y = _projected_dimension_direction(first_dimension)
+    second_direction_x, second_direction_y = _projected_dimension_direction(second_dimension)
     cross = (first_direction_x * second_direction_y) - (first_direction_y * second_direction_x)
     return abs(cross) <= tolerance
 
 
-def _projected_dimensions_are_redundant(first_dimension, second_dimension, tolerance):
-    if first_dimension["candidate"]["axis"] != second_dimension["candidate"]["axis"]:
+def _projected_dimensions_share_axis_midpoint(first_dimension, second_dimension, tolerance):
+    if not _projected_dimensions_are_parallel(first_dimension, second_dimension, 0.05):
         return False
+
+    direction_x, direction_y = _projected_dimension_direction(first_dimension)
+    first_midpoint = _projected_dimension_midpoint(first_dimension)
+    second_midpoint = _projected_dimension_midpoint(second_dimension)
+    first_axis_midpoint = (first_midpoint.x * direction_x) + (first_midpoint.y * direction_y)
+    second_axis_midpoint = (second_midpoint.x * direction_x) + (second_midpoint.y * direction_y)
+    return abs(first_axis_midpoint - second_axis_midpoint) <= tolerance
+
+
+def _projected_dimension_preference_key(projected_dimension):
+    direction_x, direction_y = _projected_dimension_direction(projected_dimension)
+    midpoint = _projected_dimension_midpoint(projected_dimension)
+    if abs(direction_x) >= abs(direction_y):
+        return midpoint.y, midpoint.x
+
+    return midpoint.x, midpoint.y
+
+
+def _projected_dimensions_are_redundant(first_dimension, second_dimension, tolerance, view_name=None):
     if abs(first_dimension["value"] - second_dimension["value"]) > tolerance:
         return False
 
-    return _projected_dimensions_are_parallel(first_dimension, second_dimension, 0.05)
-
-
-def _projected_dimensions_intersect(first_dimension, second_dimension, tolerance):
-    if (
-        _same_projected_dimension(first_dimension, second_dimension, tolerance)
-        or _projected_dimensions_are_redundant(first_dimension, second_dimension, tolerance)
-    ):
+    if _same_projected_dimension(first_dimension, second_dimension, tolerance):
+        return True
+    if view_name != "Iso" and _projected_dimensions_share_axis_midpoint(first_dimension, second_dimension, tolerance):
         return True
 
     p1 = first_dimension["p1"]
     p2 = first_dimension["p2"]
     q1 = second_dimension["p1"]
     q2 = second_dimension["p2"]
-    first_orientation = _segment_orientation(p1, p2, q1)
-    second_orientation = _segment_orientation(p1, p2, q2)
-    third_orientation = _segment_orientation(q1, q2, p1)
-    fourth_orientation = _segment_orientation(q1, q2, p2)
-
     if not (
-        abs(first_orientation) <= tolerance
-        and abs(second_orientation) <= tolerance
-        and abs(third_orientation) <= tolerance
-        and abs(fourth_orientation) <= tolerance
+        _projected_point_line_distance(q1, p1, p2) <= tolerance
+        and _projected_point_line_distance(q2, p1, p2) <= tolerance
+        and _projected_point_line_distance(p1, q1, q2) <= tolerance
+        and _projected_point_line_distance(p2, q1, q2) <= tolerance
     ):
         return False
 
-    return (
-        _point_on_projected_segment(q1, p1, p2, tolerance)
-        or _point_on_projected_segment(q2, p1, p2, tolerance)
-        or _point_on_projected_segment(p1, q1, q2, tolerance)
-        or _point_on_projected_segment(p2, q1, q2, tolerance)
-    )
+    first_midpoint = _projected_dimension_midpoint(first_dimension)
+    second_midpoint = _projected_dimension_midpoint(second_dimension)
+    return _same_projected_point(first_midpoint, second_midpoint, tolerance)
 
 
-def _remove_intersecting_dimension_candidates(projected_dimensions):
+def _remove_aligned_duplicate_dimensions(projected_dimensions, view_name=None):
     kept = []
-    removed_candidates = set()
 
     for projected_dimension in sorted(
         projected_dimensions,
-        key=lambda dimension: (-dimension["value"], dimension["candidate"]["index"]),
+        key=lambda dimension: (
+            -dimension["value"],
+            _projected_dimension_preference_key(dimension),
+            dimension["candidate"]["index"],
+        ),
     ):
-        candidate_id = id(projected_dimension["candidate"])
-        if candidate_id in removed_candidates:
-            continue
-
         if any(
-            _projected_dimensions_intersect(projected_dimension, kept_dimension, DIMENSION_DUPLICATE_TOLERANCE)
+            _projected_dimensions_are_redundant(
+                projected_dimension,
+                kept_dimension,
+                DIMENSION_DUPLICATE_TOLERANCE,
+                view_name=view_name,
+            )
             for kept_dimension in kept
         ):
-            removed_candidates.add(candidate_id)
             continue
 
         kept.append(projected_dimension)
 
-    return removed_candidates
+    return sorted(kept, key=lambda dimension: dimension["candidate"]["index"])
 
 
-def _prune_dimension_candidates_for_views(dimension_candidates, structure_rotation):
-    if len(dimension_candidates) <= 1:
-        return dimension_candidates
-
-    all_objects = [obj for candidate in dimension_candidates for obj in candidate["segment"]]
-    all_min_corner, all_max_corner = _world_box(all_objects)
-    center = (all_min_corner + all_max_corner) * 0.5
-    removed_candidates = set()
-
-    for view_name in ("Top", "Front", "Left", "Iso"):
-        view_direction, view_up = _view_direction_and_up(view_name, structure_rotation)
-        camera_rotation = _camera_rotation_from_direction(view_direction, view_up).to_matrix()
-        assembly_projected_center = camera_rotation.inverted() @ center
-        projected_dimensions = []
-
-        for dimension_candidate in dimension_candidates:
-            if id(dimension_candidate) in removed_candidates:
-                continue
-            if not _dimension_axis_is_visible(dimension_candidate["axis"], view_name, structure_rotation):
-                continue
-
-            projected_dimension = _project_dimension_candidate(
-                dimension_candidate,
-                camera_rotation,
-                center,
-                structure_rotation,
-                assembly_projected_center,
-            )
-            if projected_dimension is not None:
-                projected_dimensions.append(projected_dimension)
-
-        removed_candidates.update(_remove_intersecting_dimension_candidates(projected_dimensions))
-
-    return [
-        dimension_candidate
-        for dimension_candidate in dimension_candidates
-        if id(dimension_candidate) not in removed_candidates
-    ]
-
-
-def _view_dimension_data(scene, camera, center, dimension_candidates, view_name, structure_rotation):
+def _view_dimension_data(
+    scene,
+    camera,
+    center,
+    dimension_candidates,
+    view_name,
+    structure_rotation,
+    allowed_dimension_candidate_indices=None,
+):
     if not dimension_candidates:
         return None
 
@@ -1216,6 +1262,11 @@ def _view_dimension_data(scene, camera, center, dimension_candidates, view_name,
     assembly_projected_center = camera_rotation.inverted() @ ((all_min_corner + all_max_corner) * 0.5)
     axes = []
     for dimension_candidate in dimension_candidates:
+        if (
+            allowed_dimension_candidate_indices is not None
+            and dimension_candidate["index"] not in allowed_dimension_candidate_indices
+        ):
+            continue
         if not _dimension_axis_is_visible(dimension_candidate["axis"], view_name, structure_rotation):
             continue
 
@@ -1229,7 +1280,7 @@ def _view_dimension_data(scene, camera, center, dimension_candidates, view_name,
         if projected_dimension is not None:
             axes.append(projected_dimension)
 
-    axes = _remove_duplicate_dimensions(axes, camera.data.ortho_scale)
+    axes = _remove_aligned_duplicate_dimensions(axes, view_name=view_name)
 
     return {
         "frame_width": frame_width,
@@ -1633,6 +1684,8 @@ def _render_view(
     profiler=None,
     conversion_executor=None,
     profile_label=None,
+    allowed_dimension_candidate_indices=None,
+    visible_dimension_candidate_indices=None,
 ):
     view_started_at = time.perf_counter()
     scene = context.scene
@@ -1657,12 +1710,21 @@ def _render_view(
         fit_changed = False
         fit_pass_count = 0
         dimension_object_count = 0
+        dimension_data = None
         for _fit_pass in range(5):
             fit_pass_count += 1
             _remove_dimension_render_objects(dimension_objects, dimension_material)
             dimension_objects = []
             dimension_material = None
-            dimension_data = _view_dimension_data(scene, camera, view_center, dimension_candidates, view_name, structure_rotation)
+            dimension_data = _view_dimension_data(
+                scene,
+                camera,
+                view_center,
+                dimension_candidates,
+                view_name,
+                structure_rotation,
+                allowed_dimension_candidate_indices=allowed_dimension_candidate_indices,
+            )
             dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
             dimension_object_count += len(dimension_objects)
             context.view_layer.update()
@@ -1679,10 +1741,23 @@ def _render_view(
             _remove_dimension_render_objects(dimension_objects, dimension_material)
             dimension_objects = []
             dimension_material = None
-            dimension_data = _view_dimension_data(scene, camera, view_center, dimension_candidates, view_name, structure_rotation)
+            dimension_data = _view_dimension_data(
+                scene,
+                camera,
+                view_center,
+                dimension_candidates,
+                view_name,
+                structure_rotation,
+                allowed_dimension_candidate_indices=allowed_dimension_candidate_indices,
+            )
             dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
             dimension_object_count += len(dimension_objects)
             context.view_layer.update()
+        if visible_dimension_candidate_indices is not None and dimension_data is not None:
+            visible_dimension_candidate_indices.update(
+                axis_dimension["candidate"]["index"]
+                for axis_dimension in dimension_data["axes"]
+            )
         if profiler is not None:
             profiler.record_since("dimension fitting", fitting_started_at)
             profiler.count("fit passes", fit_pass_count)
@@ -2256,6 +2331,7 @@ def _page_content_stream(rendered_views, title, image_object_numbers):
         x = PAGE_MARGIN + (slot_width + PAGE_GUTTER) * column
         y = PAGE_MARGIN + (slot_height + PAGE_GUTTER) * row
         image = rendered_views[label]
+        display_label = "Side" if label == "Left" else label
 
         scale = min(slot_width / image["width"], (slot_height - 18.0) / image["height"])
         draw_width = image["width"] * scale
@@ -2269,7 +2345,7 @@ def _page_content_stream(rendered_views, title, image_object_numbers):
             f"/Im{index + 1} Do",
             "Q",
             f"{x:.2f} {y:.2f} {slot_width:.2f} {slot_height:.2f} re S",
-            f"BT /F1 10 Tf {x:.2f} {y + slot_height - 10.0:.2f} Td ({_pdf_escape(label)}) Tj ET",
+            f"BT /F1 10 Tf {x:.2f} {y + slot_height - 10.0:.2f} Td ({_pdf_escape(display_label)}) Tj ET",
         ])
 
     content.append("Q")
@@ -2669,6 +2745,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     if profiler is not None:
                         profiler.record_since("structure prep", structure_started_at)
                     rendered_views = {}
+                    non_iso_dimension_candidate_indices = set()
 
                     try:
                         for view_name in ("Front", "Left", "Top", "Iso"):
@@ -2686,6 +2763,12 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                                 profiler=profiler,
                                 conversion_executor=conversion_executor,
                                 profile_label=f"structure {group_index} {view_name}",
+                                allowed_dimension_candidate_indices=(
+                                    non_iso_dimension_candidate_indices if view_name == "Iso" else None
+                                ),
+                                visible_dimension_candidate_indices=(
+                                    None if view_name == "Iso" else non_iso_dimension_candidate_indices
+                                ),
                             )
                             progress.advance(
                                 message=f"Rendered structure {group_index}/{len(structure_groups)}: {view_name}"
