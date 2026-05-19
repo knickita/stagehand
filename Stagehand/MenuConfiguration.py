@@ -19,6 +19,7 @@ class Stagehand_MT_menu(bpy.types.Menu):
         self.layout.operator("stagehand.repair_all_connections", text="Repair All Links")
         self.layout.separator()
         self.layout.operator("stagehand.reload_catalogue", text="Reload Catalogue")
+        self.layout.operator("stagehand.update_addon", text="Update Addon")
 
 # --- Draw function to add menu to 3D View header ---
 def draw_custom_menu(self, context):

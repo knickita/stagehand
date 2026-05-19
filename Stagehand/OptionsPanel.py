@@ -11,6 +11,7 @@ bl_info = {
 import bpy
 
 from . import Alerts
+from . import UpdateAddon
 from .RegistrationUtils import (
     safe_define_property,
     safe_register_class,
@@ -55,6 +56,11 @@ class StageHandOptionsPanel(bpy.types.Panel):
             else "Show Anchor Points"
         )
         box.operator("stagehand.toggle_cable_anchor_points", text=anchor_text)
+
+        box = layout.box()
+        box.label(text="Addon")
+        box.label(text=f"Version: {UpdateAddon.current_version()}")
+        box.operator("stagehand.update_addon", text="Update Addon", icon='FILE_REFRESH')
 
 
 def register():

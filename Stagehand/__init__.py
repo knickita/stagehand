@@ -28,6 +28,7 @@ LoadCatalogue = _load_submodule("LoadCatalogue")
 MenuConfiguration = _load_submodule("MenuConfiguration")
 MvrImport = _load_submodule("MvrImport")
 Alerts = _load_submodule("Alerts")
+UpdateAddon = _load_submodule("UpdateAddon")
 OptionsPanel = _load_submodule("OptionsPanel")
 PdfDrawings = _load_submodule("PdfDrawings")
 PowerManagement = _load_submodule("PowerManagement")
@@ -45,6 +46,7 @@ classes = (
     PowerManagement,
     MenuConfiguration,
     Alerts,
+    UpdateAddon,
     OptionsPanel,
     SnapLogics,
 )
