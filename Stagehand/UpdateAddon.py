@@ -191,6 +191,12 @@ def _sync_directory(source, target, addon_directory):
 
 def _reload_scripts_timer():
     try:
+        import addon_utils
+
+        try:
+            addon_utils.modules_refresh()
+        except TypeError:
+            addon_utils.modules(refresh=True)
         bpy.ops.script.reload()
     except Exception as exc:
         print(f"Stagehand addon updated, but automatic reload failed: {exc}")

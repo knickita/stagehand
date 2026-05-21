@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Stagehand",
     "author": "Nick",
-    "version": (0, 0, 7),
+    "version": (0, 0, 8),
     "blender": (3, 0, 0)
 }
 
