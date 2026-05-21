@@ -37,6 +37,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -52,6 +53,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -67,6 +69,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.2880000174045563
                 },
@@ -82,6 +85,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.2880000174045563
                 },
@@ -97,6 +101,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.2880000174045563
                 },
@@ -112,6 +117,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.2880000174045563
                 }
@@ -139,6 +145,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -154,6 +161,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -169,6 +177,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.49799999594688416
                 },
@@ -184,6 +193,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.49799999594688416
                 },
@@ -199,6 +209,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.49799999594688416
                 },
@@ -214,6 +225,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.49799999594688416
                 }
@@ -241,6 +253,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -256,6 +269,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -271,6 +285,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.9980000257492065
                 },
@@ -286,6 +301,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.9980000257492065
                 },
@@ -301,6 +317,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.9980000257492065
                 },
@@ -316,6 +333,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.9980000257492065
                 }
@@ -343,6 +361,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -358,6 +377,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -373,6 +393,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.4980000257492065
                 },
@@ -388,6 +409,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.4980000257492065
                 },
@@ -403,6 +425,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.4980000257492065
                 },
@@ -418,6 +441,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.4980000257492065
                 }
@@ -445,6 +469,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -460,6 +485,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -475,6 +501,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 },
@@ -490,6 +517,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 },
@@ -505,6 +533,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 },
@@ -520,6 +549,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 }
@@ -547,6 +577,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -562,6 +593,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -577,6 +609,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.497999906539917
                 },
@@ -592,6 +625,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.497999906539917
                 },
@@ -607,6 +641,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.497999906539917
                 },
@@ -622,6 +657,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.497999906539917
                 }
@@ -649,6 +685,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -664,6 +701,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -679,6 +717,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.997999906539917
                 },
@@ -694,6 +733,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.997999906539917
                 },
@@ -709,6 +749,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.997999906539917
                 },
@@ -724,6 +765,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.997999906539917
                 }
@@ -751,6 +793,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -766,6 +809,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -781,6 +825,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.497999906539917
                 },
@@ -796,6 +841,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.497999906539917
                 },
@@ -811,6 +857,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.497999906539917
                 },
@@ -826,6 +873,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.497999906539917
                 }
@@ -854,6 +902,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -869,6 +918,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -884,6 +934,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -899,6 +950,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -914,6 +966,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -929,6 +982,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -957,6 +1011,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -983,6 +1038,7 @@
                     ],
                     "displayradius": 0.02500000037252903,
                     "type": 1,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -998,6 +1054,7 @@
                     ],
                     "displayradius": 0.02500000037252903,
                     "type": 1,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1013,6 +1070,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 9,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -1037,6 +1095,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1052,6 +1111,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1067,6 +1127,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1082,6 +1143,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1097,6 +1159,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1112,6 +1175,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1127,6 +1191,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1142,6 +1207,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1157,6 +1223,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1172,6 +1239,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1187,6 +1255,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1202,6 +1271,7 @@
                     ],
                     "displayradius": 0.029999999329447746,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1217,6 +1287,7 @@
                     ],
                     "displayradius": 0.05999999865889549,
                     "type": 11,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -1245,6 +1316,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 16,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1260,6 +1332,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 15,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1275,6 +1348,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1290,6 +1364,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1305,6 +1380,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1320,6 +1396,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1335,6 +1412,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1350,6 +1428,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1365,6 +1444,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1380,6 +1460,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1395,6 +1476,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1410,6 +1492,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1425,6 +1508,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1440,6 +1524,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1455,6 +1540,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1470,6 +1556,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1485,6 +1572,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1500,6 +1588,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1515,6 +1604,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1530,6 +1620,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1545,6 +1636,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1560,6 +1652,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1575,6 +1668,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1590,6 +1684,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1605,6 +1700,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1620,6 +1716,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1635,6 +1732,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1650,6 +1748,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1665,6 +1764,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1680,6 +1780,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1695,6 +1796,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1710,6 +1812,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1725,6 +1828,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1740,6 +1844,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1755,6 +1860,7 @@
                     ],
                     "displayradius": 0.025,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 }
@@ -1783,6 +1889,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 14,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1798,6 +1905,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 14,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1813,6 +1921,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.899999976158142
                 }
@@ -1841,6 +1950,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 14,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1856,6 +1966,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 14,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1871,6 +1982,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.4000000953674316
                 }
@@ -1898,6 +2010,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 14,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1913,6 +2026,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 14,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1928,6 +2042,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.7623782372356254
                 }
@@ -1955,6 +2070,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 14,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1970,6 +2086,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 14,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -1985,6 +2102,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.140329961898909
                 }
@@ -2012,6 +2130,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2027,6 +2146,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2042,6 +2162,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.09799999743700027
                 },
@@ -2057,6 +2178,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.09799999743700027
                 },
@@ -2072,6 +2194,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.09799999743700027
                 },
@@ -2087,6 +2210,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.09799999743700027
                 }
@@ -2113,6 +2237,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 17,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2128,6 +2253,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 19,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2143,6 +2269,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 18,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2158,6 +2285,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 20,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2173,6 +2301,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 9,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2188,6 +2317,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 10,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -2214,6 +2344,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 17,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2229,6 +2360,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 19,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2244,6 +2376,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 18,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2259,6 +2392,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 20,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2274,6 +2408,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 5,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2289,6 +2424,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 6,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -2315,6 +2451,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 17,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2330,6 +2467,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 19,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2345,6 +2483,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 18,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2360,6 +2499,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 20,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2375,6 +2515,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 5,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2390,6 +2531,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 6,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -2416,6 +2558,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 21,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2431,6 +2574,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 23,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2446,6 +2590,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 22,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2461,6 +2606,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 24,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2476,6 +2622,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 9,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2491,6 +2638,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 10,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -2517,6 +2665,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 21,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2532,6 +2681,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 21,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2547,6 +2697,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 23,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2562,6 +2713,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 22,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2577,6 +2729,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 22,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2592,6 +2745,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 24,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2607,6 +2761,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 9,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2622,6 +2777,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 10,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -2648,6 +2804,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 17,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2663,6 +2820,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 19,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2678,6 +2836,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 18,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2693,6 +2852,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 20,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2708,6 +2868,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 9,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2723,6 +2884,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 10,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -2749,6 +2911,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 17,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2764,6 +2927,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 19,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2779,6 +2943,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 18,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2794,6 +2959,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 20,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2809,6 +2975,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 9,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2824,6 +2991,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 10,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -2851,6 +3019,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2866,6 +3035,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2881,6 +3051,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.2880000174045563
                 },
@@ -2896,6 +3067,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.2880000174045563
                 },
@@ -2911,6 +3083,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.2880000174045563
                 },
@@ -2926,6 +3099,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.2880000174045563
                 }
@@ -2953,6 +3127,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2968,6 +3143,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -2983,6 +3159,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.49799999594688416
                 },
@@ -2998,6 +3175,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.49799999594688416
                 },
@@ -3013,6 +3191,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.49799999594688416
                 },
@@ -3028,6 +3207,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.49799999594688416
                 }
@@ -3055,6 +3235,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3070,6 +3251,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3085,6 +3267,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.9980000257492065
                 },
@@ -3100,6 +3283,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.9980000257492065
                 },
@@ -3115,6 +3299,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.9980000257492065
                 },
@@ -3130,6 +3315,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.9980000257492065
                 }
@@ -3157,6 +3343,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3172,6 +3359,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3187,6 +3375,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.4980000257492065
                 },
@@ -3202,6 +3391,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.4980000257492065
                 },
@@ -3217,6 +3407,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.4980000257492065
                 },
@@ -3232,6 +3423,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.4980000257492065
                 }
@@ -3259,6 +3451,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3274,6 +3467,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3289,6 +3483,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 },
@@ -3304,6 +3499,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 },
@@ -3319,6 +3515,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 },
@@ -3334,6 +3531,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 1.9980000257492065
                 }
@@ -3361,6 +3559,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3376,6 +3575,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3391,6 +3591,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.497999906539917
                 },
@@ -3406,6 +3607,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.497999906539917
                 },
@@ -3421,6 +3623,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.497999906539917
                 },
@@ -3436,6 +3639,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.497999906539917
                 }
@@ -3463,6 +3667,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3478,6 +3683,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3493,6 +3699,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.997999906539917
                 },
@@ -3508,6 +3715,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.997999906539917
                 },
@@ -3523,6 +3731,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.997999906539917
                 },
@@ -3538,6 +3747,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 2.997999906539917
                 }
@@ -3565,6 +3775,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3580,6 +3791,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3595,6 +3807,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.497999906539917
                 },
@@ -3610,6 +3823,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.497999906539917
                 },
@@ -3625,6 +3839,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.497999906539917
                 },
@@ -3640,6 +3855,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 3.497999906539917
                 }
@@ -3668,6 +3884,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3683,6 +3900,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3698,6 +3916,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3713,6 +3932,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3728,6 +3948,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3743,6 +3964,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 25,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -3771,6 +3993,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 26,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3786,6 +4009,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 26,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3801,6 +4025,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 26,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3816,6 +4041,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 26,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3831,6 +4057,7 @@
                     ],
                     "displayradius": 0.15000000596046448,
                     "type": 28,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -3858,6 +4085,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3873,6 +4101,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -3888,6 +4117,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.20800000429153442
                 },
@@ -3903,6 +4133,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.20800000429153442
                 },
@@ -3918,6 +4149,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.20800000429153442
                 },
@@ -3933,6 +4165,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.20800000429153442
                 }
@@ -3959,6 +4192,7 @@
                     ],
                     "displayradius": 0.02500000037252903,
                     "type": 4,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -3986,6 +4220,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4001,6 +4236,7 @@
                     ],
                     "displayradius": 0.10000000149011612,
                     "type": 0,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4016,6 +4252,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.24800001084804535
                 },
@@ -4031,6 +4268,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.24800001084804535
                 },
@@ -4046,6 +4284,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.24800001084804535
                 },
@@ -4061,6 +4300,7 @@
                     ],
                     "displayradius": 0.025499999523162842,
                     "type": 2,
+                    "allowrotations": "none",
                     "cylindricaltype": true,
                     "length": 0.24800001084804535
                 }
@@ -4087,6 +4327,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4102,6 +4343,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4117,6 +4359,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4132,6 +4375,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4147,6 +4391,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4162,6 +4407,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4177,6 +4423,7 @@
                     ],
                     "displayradius": 0.04500000178813934,
                     "type": 30,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4192,6 +4439,7 @@
                     ],
                     "displayradius": 0.04500000178813934,
                     "type": 30,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4207,6 +4455,7 @@
                     ],
                     "displayradius": 0.04500000178813934,
                     "type": 30,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4222,6 +4471,7 @@
                     ],
                     "displayradius": 0.04500000178813934,
                     "type": 30,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -4248,6 +4498,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4263,6 +4514,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4278,6 +4530,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4293,6 +4546,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -4319,6 +4573,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4334,6 +4589,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4349,6 +4605,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4364,6 +4621,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4379,6 +4637,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4394,6 +4653,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -4420,6 +4680,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4435,6 +4696,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4450,6 +4712,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4465,6 +4728,7 @@
                     ],
                     "displayradius": 0.05000000074505806,
                     "type": 29,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -4489,6 +4753,7 @@
                     ],
                     "displayradius": 0.04500000178813934,
                     "type": 31,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 }
@@ -4517,6 +4782,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 15,
+                    "allowrotations": "90",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4532,6 +4798,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4547,6 +4814,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4562,6 +4830,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4577,6 +4846,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4592,6 +4862,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4607,6 +4878,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4622,6 +4894,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 },
@@ -4637,6 +4910,7 @@
                     ],
                     "displayradius": 0.014999999664723873,
                     "type": 13,
+                    "allowrotations": "none",
                     "cylindricaltype": false,
                     "length": 0.0
                 }

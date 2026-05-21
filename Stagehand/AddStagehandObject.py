@@ -1,7 +1,7 @@
 import bpy
 import uuid
 
-from .LinkTypes import get_compatible_link_types, link_type_label
+from .LinkTypes import default_link_allow_rotations, get_compatible_link_types, link_type_label
 from .RegistrationUtils import (
     safe_define_property,
     safe_register_class,
@@ -31,6 +31,11 @@ class StagehandLinkItem(bpy.types.PropertyGroup):
     type: bpy.props.IntProperty(
         name="Type",
         default=0,
+    )
+
+    allowRotations: bpy.props.StringProperty(
+        name="Allow Rotations",
+        default="none",
     )
 
     cylindricalType: bpy.props.BoolProperty(
@@ -122,6 +127,13 @@ def _round_link_float(value):
     return round(float(value), 6)
 
 
+def _normalize_link_rotation_mode(value):
+    value = str(value or "none").strip().lower()
+    if value not in {"none", "90", "free"}:
+        return "none"
+    return value
+
+
 def _link_signature(type_value, cylindrical_type, display_radius, length, pos_dir):
     return (
         int(type_value),
@@ -151,6 +163,7 @@ def _snapshot_stagehand_links(links):
                 "index": index,
                 "uid": str(link.uid),
                 "type": int(link.type),
+                "allowRotations": str(getattr(link, "allowRotations", "none")),
                 "cylindricalType": bool(link.cylindricalType),
                 "displayRadius": float(link.displayRadius),
                 "length": float(link.length),
@@ -213,6 +226,9 @@ def _apply_stagehand_link_data(link_item, link_data, preserved_state=None):
 
     ensure_stagehand_link_uid(link_item)
     link_item.type = int(link_data.get("type", 0))
+    link_item.allowRotations = _normalize_link_rotation_mode(
+        link_data.get("allowrotations", default_link_allow_rotations(link_item.type))
+    )
     link_item.cylindricalType = bool(link_data.get("cylindricaltype", False))
     link_item.displayRadius = float(link_data.get("displayradius", 0.0))
     link_item.length = float(link_data.get("length", 0.0))
@@ -384,6 +400,7 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
                 if link_item.uid:
                     item_box.label(text=f"Link UID: {link_item.uid}")
                 item_box.prop(link_item, "type")
+                item_box.prop(link_item, "allowRotations")
                 item_box.prop(link_item, "cylindricalType")
                 item_box.prop(link_item, "displayRadius")
                 item_box.prop(link_item, "length")

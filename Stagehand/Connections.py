@@ -9,7 +9,7 @@ from bpy_extras import view3d_utils
 from mathutils import Matrix, Quaternion, Vector
 
 from .AddStagehandObject import ensure_stagehand_link_uid, ensure_stagehand_uid
-from .LinkTypes import are_link_types_compatible
+from .LinkTypes import are_link_types_compatible, default_link_allow_rotations
 from . import ProjectDatabase
 from .RegistrationUtils import (
     safe_add_handler,
@@ -25,6 +25,14 @@ CONNECTION_REFRESH_SETTLE_INTERVAL = 0.1
 AUTO_CONNECT_DISTANCE_THRESHOLD = 0.0001
 AUTO_CONNECT_ANGLE_THRESHOLD = radians(0.1)
 LINK_ALIGNMENT_FLIP = Quaternion((0.0, 0.0, 1.0), radians(180.0))
+LINK_ROTATION_MODE_NONE = "none"
+LINK_ROTATION_MODE_90 = "90"
+LINK_ROTATION_MODE_FREE = "free"
+LINK_ROTATION_MODES = {
+    LINK_ROTATION_MODE_NONE,
+    LINK_ROTATION_MODE_90,
+    LINK_ROTATION_MODE_FREE,
+}
 LinkSearchItem = namedtuple(
     "LinkSearchItem",
     (
@@ -276,6 +284,49 @@ def _link_forward(rotation):
     return forward.normalized()
 
 
+def _link_allow_rotations(link):
+    if hasattr(link, "is_property_set") and not link.is_property_set("allowRotations"):
+        return default_link_allow_rotations(link.type)
+
+    mode = str(
+        getattr(link, "allowRotations", LINK_ROTATION_MODE_NONE)
+        or LINK_ROTATION_MODE_NONE
+    ).strip().lower()
+    if mode not in LINK_ROTATION_MODES:
+        return LINK_ROTATION_MODE_NONE
+    return mode
+
+
+def _combined_link_rotation_mode(link, other_link):
+    modes = {_link_allow_rotations(link), _link_allow_rotations(other_link)}
+    if LINK_ROTATION_MODE_FREE in modes:
+        return LINK_ROTATION_MODE_FREE
+    if LINK_ROTATION_MODE_90 in modes:
+        return LINK_ROTATION_MODE_90
+    return LINK_ROTATION_MODE_NONE
+
+
+def _project_to_plane(vector, normal):
+    projected = vector - (normal * vector.dot(normal))
+    if projected.length_squared <= 0.000001:
+        return None
+    return projected.normalized()
+
+
+def _quarter_turn_roll_error(rotation, desired_rotation, forward):
+    actual_x = _project_to_plane(rotation @ Vector((1, 0, 0)), forward)
+    desired_x = _project_to_plane(desired_rotation @ Vector((1, 0, 0)), forward)
+    if actual_x is None or desired_x is None:
+        return pi
+
+    roll_angle = desired_x.angle(actual_x, 0.0)
+    return min(
+        abs(roll_angle),
+        abs(roll_angle - (pi * 0.5)),
+        abs(roll_angle - pi),
+    )
+
+
 def link_alignment_rotation_delta(link_rotation, target_rotation):
     desired_link_rotation = target_rotation @ LINK_ALIGNMENT_FLIP
     return desired_link_rotation @ link_rotation.inverted()
@@ -284,6 +335,16 @@ def link_alignment_rotation_delta(link_rotation, target_rotation):
 def _link_alignment_angle(link, rotation, other_link, other_rotation):
     if link.cylindricalType or other_link.cylindricalType:
         return _link_forward(rotation).angle(-_link_forward(other_rotation), 0.0)
+
+    mode = _combined_link_rotation_mode(link, other_link)
+    if mode != LINK_ROTATION_MODE_NONE:
+        forward_angle = _link_forward(rotation).angle(-_link_forward(other_rotation), 0.0)
+        if mode == LINK_ROTATION_MODE_FREE:
+            return forward_angle
+
+        forward = _link_forward(rotation)
+        desired_rotation = other_rotation @ LINK_ALIGNMENT_FLIP
+        return max(forward_angle, _quarter_turn_roll_error(rotation, desired_rotation, forward))
 
     desired_rotation = other_rotation @ LINK_ALIGNMENT_FLIP
     return desired_rotation.rotation_difference(rotation).angle

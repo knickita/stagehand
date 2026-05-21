@@ -90,6 +90,16 @@ POWER_INPUT_LINK_TYPES = {
 }
 
 
+QUARTER_TURN_ROTATION_LINK_TYPES = {
+    StagehandLinkType.LITEC30,
+    StagehandLinkType.LAYHER_UP,
+    StagehandLinkType.LAYHER_DOWN,
+    StagehandLinkType.LITEC40,
+    StagehandLinkType.SIXTEMA_LEG_SITE,
+    StagehandLinkType.SIXTEMA_LEG,
+}
+
+
 def coerce_link_type(value):
     if isinstance(value, StagehandLinkType):
         return value
@@ -110,6 +120,13 @@ def are_link_types_compatible(source_link_type, target_link_type):
 
 def is_power_input(link_type):
     return coerce_link_type(link_type) in POWER_INPUT_LINK_TYPES
+
+
+def default_link_allow_rotations(link_type):
+    if coerce_link_type(link_type) in QUARTER_TURN_ROTATION_LINK_TYPES:
+        return "90"
+
+    return "none"
 
 
 def link_type_label(link_type):
