@@ -46,10 +46,11 @@ jobs:
         shell: bash
         run: |
           version="${{ steps.version.outputs.version }}"
-          package="Stagehand-v${version}.zip"
-          zip -r "${package}" Stagehand \
-            -x "Stagehand/**/__pycache__/*" \
-            -x "Stagehand/**/*.pyc"
+          package="../Stagehand-v${version}.zip"
+          cd Stagehand
+          zip -r "${package}" . \
+            -x "**/__pycache__/*" \
+            -x "**/*.pyc"
 
       - name: Create tag
         if: steps.tag.outputs.exists == 'false'
