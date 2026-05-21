@@ -22,13 +22,18 @@ jobs:
         id: version
         shell: bash
         run: |
-          version="$(python -c 'import pathlib, tomllib; manifest = tomllib.loads(pathlib.Path("Stagehand/blender_manifest.toml").read_text(encoding="utf-8")); print(manifest["version"])')"
+          version="$(python -c 'import ast, pathlib; tree = ast.parse(pathlib.Path("Stagehand/__init__.py").read_text(encoding="utf-8")); node = next(n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "bl_info" for t in n.targets)); info = ast.literal_eval(node.value); print(".".join(str(part) for part in info["version"]))')"
           if [[ -z "${version}" ]]; then
-            echo "Unable to read Stagehand/blender_manifest.toml version"
+            echo "Unable to read Stagehand/__init__.py bl_info version"
             exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Sync manifest version
+        shell: bash
+        run: |
+          python -c 'import pathlib, re; path = pathlib.Path("Stagehand/blender_manifest.toml"); text = path.read_text(encoding="utf-8"); version = "${{ steps.version.outputs.version }}"; text, count = re.subn(r"(?m)^version\s*=\s*\"[^\"]*\"", f"version = \"{version}\"", text, count=1); assert count == 1, "Unable to update blender_manifest.toml version"; path.write_text(text, encoding="utf-8")'
 
       - name: Check whether tag exists
         id: tag
