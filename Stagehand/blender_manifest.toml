@@ -6,7 +6,7 @@ name = "Stagehand"
 schema_version = "1.0.0"
 tagline = "descrizione del programma"
 type = "add-on"
-version = "0.0.3"
+version = "0.0.5"
 
 [permissions]
 network = "Check GitHub Releases and download Stagehand addon updates"

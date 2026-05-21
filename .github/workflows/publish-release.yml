@@ -1,0 +1,77 @@
+name: Publish Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read addon version
+        id: version
+        shell: bash
+        run: |
+          version="$(python - <<'PY'
+import pathlib
+import tomllib
+
+manifest = tomllib.loads(pathlib.Path("Stagehand/blender_manifest.toml").read_text(encoding="utf-8"))
+print(manifest["version"])
+PY
+)"
+          if [[ -z "${version}" ]]; then
+            echo "Unable to read Stagehand/blender_manifest.toml version"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check whether tag exists
+        id: tag
+        shell: bash
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists. Nothing to publish."
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Build addon zip
+        if: steps.tag.outputs.exists == 'false'
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          package="Stagehand-v${version}.zip"
+          zip -r "${package}" Stagehand \
+            -x "Stagehand/**/__pycache__/*" \
+            -x "Stagehand/**/*.pyc"
+
+      - name: Create tag
+        if: steps.tag.outputs.exists == 'false'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Stagehand ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create GitHub Release
+        if: steps.tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          files: Stagehand-v${{ steps.version.outputs.version }}.zip
+          generate_release_notes: true
