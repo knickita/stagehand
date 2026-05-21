@@ -1893,6 +1893,20 @@ def _pdf_text_line(font_size, x, y, text):
     return f"BT /F1 {font_size} Tf {x:.2f} {y:.2f} Td ({_pdf_escape(text)}) Tj ET"
 
 
+def _pdf_right_text_line(font_size, right_x, y, text):
+    estimated_width = len(text) * font_size * 0.55
+    return _pdf_text_line(font_size, right_x - estimated_width, y, text)
+
+
+def _pdf_page_number_line(page_index, page_count):
+    return _pdf_right_text_line(
+        9,
+        PAGE_WIDTH - PAGE_MARGIN,
+        PAGE_MARGIN * 0.45,
+        f"{page_index}/{page_count}",
+    )
+
+
 def _pdf_stream(data):
     if isinstance(data, str):
         data = data.encode("latin-1")
@@ -2121,37 +2135,42 @@ def _truncate_pdf_text(text, max_characters):
     return f"{text[:max(0, max_characters - 3)].rstrip()}..."
 
 
-def _bom_page_content_stream(rows, page_title):
+def _bom_page_content_stream(rows, page_title, show_title=True):
     top_y = PAGE_HEIGHT - PAGE_MARGIN
-    table_top = top_y - 42.0
     row_height = 18.0
+    header_rows = 1 if show_title else 0
+    table_top = top_y - 42.0 if show_title else top_y
     table_width = PAGE_WIDTH - (PAGE_MARGIN * 2.0)
     item_column_x = PAGE_MARGIN + 12.0
     quantity_column_x = PAGE_WIDTH - PAGE_MARGIN - 54.0
     quantity_divider_x = PAGE_WIDTH - PAGE_MARGIN - 72.0
-    table_bottom = table_top - (row_height * (len(rows) + 1))
+    table_bottom = table_top - (row_height * (len(rows) + header_rows))
 
-    content = [
-        "q",
-        _pdf_text_line(18, PAGE_MARGIN, top_y - 7.0, page_title),
-        _pdf_text_line(14, PAGE_MARGIN, top_y - 29.0, "Elenco materiale"),
-        f"{PAGE_MARGIN:.2f} {table_bottom:.2f} {table_width:.2f} {table_top - table_bottom:.2f} re S",
-    ]
+    content = ["q"]
+    if show_title:
+        content.extend([
+            _pdf_text_line(18, PAGE_MARGIN, top_y - 7.0, page_title),
+            _pdf_text_line(14, PAGE_MARGIN, top_y - 29.0, "Elenco materiale"),
+        ])
 
-    for line_index in range(1, len(rows) + 1):
+    content.append(f"{PAGE_MARGIN:.2f} {table_bottom:.2f} {table_width:.2f} {table_top - table_bottom:.2f} re S")
+
+    separator_count = len(rows) + header_rows - 1
+    for line_index in range(1, separator_count + 1):
         y = table_top - (row_height * line_index)
         content.append(
             f"{PAGE_MARGIN:.2f} {y:.2f} m {PAGE_WIDTH - PAGE_MARGIN:.2f} {y:.2f} l S"
         )
 
-    content.extend([
-        f"{quantity_divider_x:.2f} {table_bottom:.2f} m {quantity_divider_x:.2f} {table_top:.2f} l S",
-        _pdf_text_line(11, item_column_x, table_top - 12.0, "Item"),
-        _pdf_text_line(11, quantity_column_x, table_top - 12.0, "Qty"),
-    ])
+    content.append(f"{quantity_divider_x:.2f} {table_bottom:.2f} m {quantity_divider_x:.2f} {table_top:.2f} l S")
+    if show_title:
+        content.extend([
+            _pdf_text_line(11, item_column_x, table_top - 12.0, "Item"),
+            _pdf_text_line(11, quantity_column_x, table_top - 12.0, "Qty"),
+        ])
 
     for row_index, row in enumerate(rows, start=1):
-        baseline_y = table_top - (row_height * row_index) - 12.0
+        baseline_y = table_top - (row_height * (row_index + header_rows - 1)) - 12.0
         content.extend([
             _pdf_text_line(10, item_column_x, baseline_y, _truncate_pdf_text(row["name"], 88)),
             _pdf_text_line(10, quantity_column_x, baseline_y, str(row["quantity"])),
@@ -2161,32 +2180,66 @@ def _bom_page_content_stream(rows, page_title):
     return "\n".join(content)
 
 
+def _bom_rows_per_page(show_title=True):
+    top_y = PAGE_HEIGHT - PAGE_MARGIN
+    row_height = 18.0
+    table_top = top_y - 42.0 if show_title else top_y
+    header_rows = 1 if show_title else 0
+    available_height = table_top - PAGE_MARGIN
+    return max(1, int(available_height // row_height) - header_rows)
+
+
 def _bom_page_streams(title, bom_entries):
     if not bom_entries:
         bom_entries = [{"name": "No visible items", "quantity": 0}]
 
-    rows_per_page = 25
     page_streams = []
+    start = 0
+    page_index = 1
 
-    for page_index, start in enumerate(range(0, len(bom_entries), rows_per_page), start=1):
+    while start < len(bom_entries):
+        show_title = page_index == 1
+        rows_per_page = _bom_rows_per_page(show_title=show_title)
         page_rows = bom_entries[start:start + rows_per_page]
-        page_title = title
-        if page_index > 1:
-            page_title = f"{page_title} (cont. {page_index})"
-        page_streams.append(_bom_page_content_stream(page_rows, page_title))
+        page_streams.append(_bom_page_content_stream(page_rows, title, show_title=show_title))
+        start += rows_per_page
+        page_index += 1
 
     return page_streams
 
 
-def _detail_page_content_stream(details):
+def _detail_page_streams(details):
     top_y = PAGE_HEIGHT - PAGE_MARGIN
     left_x = PAGE_MARGIN
+    bottom_y = PAGE_MARGIN
     line_height = 17.0
-    y = top_y - 7.0
-    content = ["q"]
+    page_streams = []
+    content = None
+    y = None
 
-    def add_line(text, font_size=10, extra_gap=0.0):
+    def start_page(page_index):
+        nonlocal content, y
+        y = top_y - 7.0
+        content = ["q"]
+        if page_index == 1:
+            content.append(_pdf_text_line(18, left_x, y, "Dettagli Struttture"))
+            y -= line_height + 10.0
+
+    def finish_page():
+        content.append("Q")
+        page_streams.append("\n".join(content))
+
+    def add_line(text, font_size=10, extra_gap=0.0, before_gap=0.0):
         nonlocal y
+        if y - before_gap < bottom_y:
+            finish_page()
+            start_page(len(page_streams) + 1)
+
+        y -= before_gap
+        if y < bottom_y:
+            finish_page()
+            start_page(len(page_streams) + 1)
+
         content.append(_pdf_text_line(font_size, left_x, y, text))
         y -= line_height + extra_gap
 
@@ -2201,7 +2254,7 @@ def _detail_page_content_stream(details):
             return f"{int(round(centimeters))} cm"
         return f"{centimeters:.0f} cm"
 
-    add_line("Dettagli Struttture", font_size=18, extra_gap=10.0)
+    start_page(1)
     add_line("Lunghezze americane da 30", font_size=13, extra_gap=2.0)
 
     if details["litec30_lengths"]:
@@ -2210,32 +2263,28 @@ def _detail_page_content_stream(details):
     else:
         add_line("- Nessuna")
 
-    y -= 8.0
-    add_line("Tipi di cubi da 30", font_size=13, extra_gap=2.0)
+    add_line("Tipi di cubi da 30", font_size=13, extra_gap=2.0, before_gap=8.0)
     if details["cube30_types"]:
         for entry in details["cube30_types"]:
             add_line(f"- {entry['quantity']} da {entry['label']}")
     else:
         add_line("- Nessuna")
 
-    y -= 8.0
-    add_line("Lunghezze americane da 40", font_size=13, extra_gap=2.0)
+    add_line("Lunghezze americane da 40", font_size=13, extra_gap=2.0, before_gap=8.0)
     if details["litec40_lengths"]:
         for entry in details["litec40_lengths"]:
             add_line(f"- {entry['quantity']} da {format_meters_label(entry['length'])}")
     else:
         add_line("- Nessuna")
 
-    y -= 8.0
-    add_line("Tipi di cubi da 40", font_size=13, extra_gap=2.0)
+    add_line("Tipi di cubi da 40", font_size=13, extra_gap=2.0, before_gap=8.0)
     if details["cube40_types"]:
         for entry in details["cube40_types"]:
             add_line(f"- {entry['quantity']} da {entry['label']}")
     else:
         add_line("- Nessuna")
 
-    y -= 8.0
-    add_line(f"{details['fasteners']['ovetti_tratte']} totale ovetti per le tratte", font_size=12)
+    add_line(f"{details['fasteners']['ovetti_tratte']} totale ovetti per le tratte", font_size=12, before_gap=8.0)
     add_line(
         f"{details['fasteners']['chiodi_coppiglie_tratte']} totale chiodi e coppiglie per le tratte",
         font_size=12,
@@ -2245,8 +2294,8 @@ def _detail_page_content_stream(details):
         font_size=12,
     )
 
-    content.append("Q")
-    return "\n".join(content)
+    finish_page()
+    return page_streams
 
 
 def _format_dimension(value):
@@ -2363,8 +2412,7 @@ def _write_pdf(filepath, pages, title, page_titles=None, bom_entries=None, detai
     layout_started_at = time.perf_counter()
     bom_streams = _bom_page_streams(title, bom_entries or [])
 
-    if bom_streams:
-        bom_stream = bom_streams[0]
+    for bom_stream in bom_streams:
         page_object_number = next_object_number
         content_object_number = page_object_number + 1
         next_object_number = content_object_number + 1
@@ -2381,37 +2429,21 @@ def _write_pdf(filepath, pages, title, page_titles=None, bom_entries=None, detai
         ))
 
     if details_data is not None:
-        detail_stream = _detail_page_content_stream(details_data)
-        page_object_number = next_object_number
-        content_object_number = page_object_number + 1
-        next_object_number = content_object_number + 1
+        for detail_stream in _detail_page_streams(details_data):
+            page_object_number = next_object_number
+            content_object_number = page_object_number + 1
+            next_object_number = content_object_number + 1
 
-        page_object_numbers.append(page_object_number)
-        pending_pages.append((
-            "details",
-            page_object_number,
-            content_object_number,
-            [],
-            "",
-            detail_stream,
-            None,
-        ))
-
-    for bom_stream in bom_streams[1:]:
-        page_object_number = next_object_number
-        content_object_number = page_object_number + 1
-        next_object_number = content_object_number + 1
-
-        page_object_numbers.append(page_object_number)
-        pending_pages.append((
-            "bom",
-            page_object_number,
-            content_object_number,
-            [],
-            "",
-            bom_stream,
-            None,
-        ))
+            page_object_numbers.append(page_object_number)
+            pending_pages.append((
+                "details",
+                page_object_number,
+                content_object_number,
+                [],
+                "",
+                detail_stream,
+                None,
+            ))
 
     page_titles = page_titles or []
     for page_index, rendered_views in enumerate(pages, start=1):
@@ -2451,7 +2483,8 @@ def _write_pdf(filepath, pages, title, page_titles=None, bom_entries=None, detai
     object_entries[2] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
 
     stream_started_at = time.perf_counter()
-    for (
+    page_count = len(page_object_numbers)
+    for page_index, (
         page_type,
         page_object_number,
         content_object_number,
@@ -2459,7 +2492,7 @@ def _write_pdf(filepath, pages, title, page_titles=None, bom_entries=None, detai
         xobject_entries,
         content_stream,
         rendered_views,
-    ) in pending_pages:
+    ) in enumerate(pending_pages, start=1):
         if page_type == "views":
             page_object = (
                 f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] "
@@ -2474,6 +2507,7 @@ def _write_pdf(filepath, pages, title, page_titles=None, bom_entries=None, detai
                 f"/Contents {content_object_number} 0 R >>"
             ).encode("ascii")
         object_entries.append(page_object)
+        content_stream = f"{content_stream}\n{_pdf_page_number_line(page_index, page_count)}"
         object_entries.append(_pdf_stream(content_stream))
 
         if page_type == "views":
