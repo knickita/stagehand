@@ -42,7 +42,6 @@ LINK_COMPATIBILITY = {
         StagehandLinkType.LITEC_CARRELLO_TRUSS,
     ),
     StagehandLinkType.HOOK: (StagehandLinkType.PIPE,),
-    StagehandLinkType.PIPE: (StagehandLinkType.HOOK,),
     StagehandLinkType.POWER_IN_CEE16A_MONO: (StagehandLinkType.POWER_OUT_CEE16A_MONO,),
     StagehandLinkType.POWER_OUT_CEE16A_MONO: (StagehandLinkType.POWER_IN_CEE16A_MONO,),
     StagehandLinkType.POWER_IN_POWERCON_BLUE: (StagehandLinkType.POWER_OUT_POWERCON_BLUE,),
