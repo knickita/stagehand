@@ -9,7 +9,7 @@ from bpy_extras import view3d_utils
 from mathutils import Matrix, Quaternion, Vector
 
 from .AddStagehandObject import ensure_stagehand_link_uid, ensure_stagehand_uid
-from .LinkTypes import are_link_types_compatible, default_link_allow_rotations
+from .LinkTypes import StagehandLinkType, are_link_types_compatible, default_link_allow_rotations
 from . import ProjectDatabase
 from .RegistrationUtils import (
     safe_add_handler,
@@ -24,6 +24,7 @@ CONNECTION_REFRESH_POLL_INTERVAL = 0.05
 CONNECTION_REFRESH_SETTLE_INTERVAL = 0.1
 AUTO_CONNECT_DISTANCE_THRESHOLD = 0.0001
 AUTO_CONNECT_ANGLE_THRESHOLD = radians(0.1)
+CYLINDRICAL_LINK_SEARCH_BUCKET_SIZE = 0.25
 LINK_ALIGNMENT_FLIP = Quaternion((0.0, 0.0, 1.0), radians(180.0))
 LINK_ROTATION_MODE_NONE = "none"
 LINK_ROTATION_MODE_90 = "90"
@@ -284,6 +285,77 @@ def _link_forward(rotation):
     return forward.normalized()
 
 
+def _is_hook_pipe_pair(link, other_link):
+    link_type = StagehandLinkType(int(link.type))
+    other_link_type = StagehandLinkType(int(other_link.type))
+    return (
+        (link_type == StagehandLinkType.HOOK and other_link_type == StagehandLinkType.PIPE)
+        or (link_type == StagehandLinkType.PIPE and other_link_type == StagehandLinkType.HOOK)
+    )
+
+
+def _cylindrical_link_length(link):
+    if link.length > 0.0:
+        return float(link.length)
+    return float(link.displayRadius if link.displayRadius > 0.0 else 0.0)
+
+
+def _closest_point_on_cylindrical_link(point, cylindrical_link, cylindrical_center, cylindrical_rotation):
+    axis = _link_forward(cylindrical_rotation)
+    length = _cylindrical_link_length(cylindrical_link)
+    offset = point - cylindrical_center
+    projected_distance = offset.dot(axis)
+    clamped_distance = max(0.0, min(length, projected_distance))
+    closest_point = cylindrical_center + (axis * clamped_distance)
+    outside_distance = 0.0
+    if projected_distance < 0.0:
+        outside_distance = -projected_distance
+    elif projected_distance > length:
+        outside_distance = projected_distance - length
+    return closest_point, projected_distance, outside_distance
+
+
+def link_snap_target_point(link, center, rotation, other_link, other_center, other_rotation):
+    if _is_hook_pipe_pair(link, other_link):
+        if other_link.cylindricalType:
+            closest_point, _projected_distance, _outside_distance = _closest_point_on_cylindrical_link(
+                center,
+                other_link,
+                other_center,
+                other_rotation,
+            )
+            return closest_point
+        if link.cylindricalType:
+            return other_center
+    return other_center
+
+
+def _link_position_distance(link, center, rotation, other_link, other_center, other_rotation):
+    if _is_hook_pipe_pair(link, other_link):
+        if other_link.cylindricalType:
+            closest_point, _projected_distance, outside_distance = _closest_point_on_cylindrical_link(
+                center,
+                other_link,
+                other_center,
+                other_rotation,
+            )
+            if outside_distance > AUTO_CONNECT_DISTANCE_THRESHOLD:
+                return None
+            return (closest_point - center).length
+        if link.cylindricalType:
+            closest_point, _projected_distance, outside_distance = _closest_point_on_cylindrical_link(
+                other_center,
+                link,
+                center,
+                rotation,
+            )
+            if outside_distance > AUTO_CONNECT_DISTANCE_THRESHOLD:
+                return None
+            return (closest_point - other_center).length
+
+    return (other_center - center).length
+
+
 def _link_allow_rotations(link):
     if hasattr(link, "is_property_set") and not link.is_property_set("allowRotations"):
         return default_link_allow_rotations(link.type)
@@ -333,6 +405,8 @@ def link_alignment_rotation_delta(link_rotation, target_rotation):
 
 
 def _link_alignment_angle(link, rotation, other_link, other_rotation):
+    if _is_hook_pipe_pair(link, other_link) and (link.cylindricalType or other_link.cylindricalType):
+        return 0.0
     if link.cylindricalType or other_link.cylindricalType:
         return _link_forward(rotation).angle(-_link_forward(other_rotation), 0.0)
 
@@ -380,7 +454,9 @@ def _link_alignment_metrics(obj, link_index, other_obj, other_link_index):
 
     center, rotation = _link_transform(obj, link)
     other_center, other_rotation = _link_transform(other_obj, other_link)
-    distance = (other_center - center).length
+    distance = _link_position_distance(link, center, rotation, other_link, other_center, other_rotation)
+    if distance is None:
+        return None, None
     angle = _link_alignment_angle(link, rotation, other_link, other_rotation)
     angle = min(angle, abs((2.0 * pi) - angle))
     return distance, angle
@@ -792,7 +868,9 @@ def _connection_is_working(
     else:
         other_center, other_rotation = _link_transform(other_obj, other_link)
 
-    distance = (other_center - center).length
+    distance = _link_position_distance(link, center, rotation, other_link, other_center, other_rotation)
+    if distance is None:
+        return False
     angle = _link_alignment_angle(link, rotation, other_link, other_rotation)
     angle = min(angle, abs((2.0 * pi) - angle))
 
@@ -929,7 +1007,16 @@ def _connection_candidate(item_a, item_b):
     if not are_link_types_compatible(item_a.link.type, item_b.link.type):
         return None
 
-    distance = (item_b.center - item_a.center).length
+    distance = _link_position_distance(
+        item_a.link,
+        item_a.center,
+        item_a.rotation,
+        item_b.link,
+        item_b.center,
+        item_b.rotation,
+    )
+    if distance is None:
+        return None
     angle = _link_alignment_angle(
         item_a.link,
         item_a.rotation,
@@ -1068,6 +1155,65 @@ def _nearby_link_center_bucket_keys(bucket_key):
                 )
 
 
+def _cylindrical_search_bucket_key(point):
+    return (
+        floor(point.x / CYLINDRICAL_LINK_SEARCH_BUCKET_SIZE),
+        floor(point.y / CYLINDRICAL_LINK_SEARCH_BUCKET_SIZE),
+        floor(point.z / CYLINDRICAL_LINK_SEARCH_BUCKET_SIZE),
+    )
+
+
+def _iter_cylindrical_search_bucket_range(min_point, max_point):
+    min_key = _cylindrical_search_bucket_key(min_point)
+    max_key = _cylindrical_search_bucket_key(max_point)
+    for bucket_x in range(min_key[0], max_key[0] + 1):
+        for bucket_y in range(min_key[1], max_key[1] + 1):
+            for bucket_z in range(min_key[2], max_key[2] + 1):
+                yield (bucket_x, bucket_y, bucket_z)
+
+
+def _is_pipe_item(item):
+    return item.link.cylindricalType and int(item.link.type) == int(StagehandLinkType.PIPE)
+
+
+def _is_hook_item(item):
+    return int(item.link.type) == int(StagehandLinkType.HOOK)
+
+
+def _pipe_item_bucket_keys(item):
+    axis = _link_forward(item.rotation)
+    length = _cylindrical_link_length(item.link)
+    end_point = item.center + (axis * length)
+    min_point = Vector((
+        min(item.center.x, end_point.x) - AUTO_CONNECT_DISTANCE_THRESHOLD,
+        min(item.center.y, end_point.y) - AUTO_CONNECT_DISTANCE_THRESHOLD,
+        min(item.center.z, end_point.z) - AUTO_CONNECT_DISTANCE_THRESHOLD,
+    ))
+    max_point = Vector((
+        max(item.center.x, end_point.x) + AUTO_CONNECT_DISTANCE_THRESHOLD,
+        max(item.center.y, end_point.y) + AUTO_CONNECT_DISTANCE_THRESHOLD,
+        max(item.center.z, end_point.z) + AUTO_CONNECT_DISTANCE_THRESHOLD,
+    ))
+    yield from _iter_cylindrical_search_bucket_range(min_point, max_point)
+
+
+def _append_hook_pipe_candidates(candidates, hook_items, pipe_items, seen_pair_keys):
+    pipe_buckets = defaultdict(list)
+    for pipe_item in pipe_items:
+        for bucket_key in _pipe_item_bucket_keys(pipe_item):
+            pipe_buckets[bucket_key].append(pipe_item)
+
+    for hook_item in hook_items:
+        bucket_key = _cylindrical_search_bucket_key(hook_item.center)
+        for pipe_item in pipe_buckets.get(bucket_key, ()):
+            pair_key = tuple(sorted((hook_item.link_uid, pipe_item.link_uid)))
+            if pair_key in seen_pair_keys:
+                continue
+            seen_pair_keys.add(pair_key)
+            candidate = _connection_candidate(hook_item, pipe_item)
+            if candidate is not None:
+                candidates.append(candidate)
+
 def _connect_candidate_pairs(candidates, context=None):
     connected_any = False
     connected_count = 0
@@ -1112,6 +1258,17 @@ def _connect_free_links_inside_group(objects, context=None):
 
         buckets[item.bucket_key].append(item)
 
+    seen_pair_keys = {
+        tuple(sorted((candidate[6].link_uid, candidate[7].link_uid)))
+        for candidate in candidates
+    }
+    _append_hook_pipe_candidates(
+        candidates,
+        [item for item in free_items if _is_hook_item(item)],
+        [item for item in free_items if _is_pipe_item(item)],
+        seen_pair_keys,
+    )
+
     connected_any, connected_count = _connect_candidate_pairs(candidates, context=context)
     if candidates:
         print("Stagehand connect free links inside group")
@@ -1155,6 +1312,23 @@ def _connect_free_links_to_scene(free_items, group_objects, context=None):
                 candidate = _connection_candidate(item_a, item_b)
                 if candidate is not None:
                     candidates.append(candidate)
+
+    seen_pair_keys = {
+        tuple(sorted((candidate[6].link_uid, candidate[7].link_uid)))
+        for candidate in candidates
+    }
+    _append_hook_pipe_candidates(
+        candidates,
+        [item for item in free_items if _is_hook_item(item)],
+        [item for item in scene_items if _is_pipe_item(item)],
+        seen_pair_keys,
+    )
+    _append_hook_pipe_candidates(
+        candidates,
+        [item for item in scene_items if _is_hook_item(item)],
+        [item for item in free_items if _is_pipe_item(item)],
+        seen_pair_keys,
+    )
 
     _connected_any, connected_count = _connect_candidate_pairs(candidates, context=context)
     if candidates or free_items or scene_items:

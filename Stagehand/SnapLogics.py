@@ -64,8 +64,8 @@ def _find_best_snap_pair(context, moving_objects):
         if target_obj.name_full in moving_names or not _is_stagehand_object(target_obj):
             continue
 
-        for target_link_index, target_link, target_center, _target_rotation in _iter_available_links(target_obj):
-            for moving_obj, moving_link_index, moving_link, moving_center, _moving_rotation in moving_links:
+        for target_link_index, target_link, target_center, target_rotation in _iter_available_links(target_obj):
+            for moving_obj, moving_link_index, moving_link, moving_center, moving_rotation in moving_links:
                 if not are_link_types_compatible(moving_link.type, target_link.type):
                     continue
 
@@ -80,6 +80,15 @@ def _find_best_snap_pair(context, moving_objects):
                 if angle > Connections.AUTO_CONNECT_ANGLE_THRESHOLD:
                     continue
 
+                target_snap_point = Connections.link_snap_target_point(
+                    moving_link,
+                    moving_center,
+                    moving_rotation,
+                    target_link,
+                    target_center,
+                    target_rotation,
+                )
+
                 moving_screen = view3d_utils.location_3d_to_region_2d(
                     context.region,
                     context.region_data,
@@ -88,7 +97,7 @@ def _find_best_snap_pair(context, moving_objects):
                 target_screen = view3d_utils.location_3d_to_region_2d(
                     context.region,
                     context.region_data,
-                    target_center,
+                    target_snap_point,
                 )
                 if moving_screen is None or target_screen is None:
                     screen_distance = float('inf')
@@ -107,7 +116,7 @@ def _find_best_snap_pair(context, moving_objects):
                         target_obj,
                         target_link_index,
                         target_link,
-                        target_center,
+                        target_snap_point,
                     )
 
     return best_pair
@@ -182,10 +191,10 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
             _target_obj,
             _target_link_index,
             _target_link,
-            target_center,
+            target_snap_point,
         ) = best_pair
 
-        snap_delta = target_center - moving_center
+        snap_delta = target_snap_point - moving_center
         for obj in self.moving_objects:
             obj.matrix_world.translation += snap_delta
 
