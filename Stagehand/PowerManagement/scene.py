@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import os
@@ -37,6 +37,26 @@ POWER_OUTPUT_TYPES = {
     int(StagehandLinkType.POWER_OUT_CEE63A_PENTA),
 }
 
+POWER_16A_OUTPUT_TYPE = int(StagehandLinkType.POWER_OUT_CEE16A_MONO)
+
+
+@dataclass(frozen=True)
+class PowerOutputNode:
+    position: tuple
+    label: str = ""
+    object_name: str = ""
+    link_index: int = -1
+    node_id: int = -1
+
+
+@dataclass(frozen=True)
+class PowerLineOutputAssignment:
+    line_id: int
+    output_index: int
+    output_node_id: int
+    output_label: str
+    output_position: tuple
+
 
 @dataclass
 class PowerGenerationResult:
@@ -45,6 +65,11 @@ class PowerGenerationResult:
     route_edge_count: int
     power_node_count: int
     starting_label: str
+    required_power_lines: int = 0
+    available_16a_outputs: int = 0
+    power_line_output_assignments: dict = field(default_factory=dict)
+    power_line_routes: dict = field(default_factory=dict)
+    power_line_roots: dict = field(default_factory=dict)
     cable_anchor_offsets: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
 
@@ -309,6 +334,20 @@ def _iter_power_output_nodes(objects):
             yield tuple(position), _power_link_label(obj, link_index)
 
 
+def _iter_power_16a_output_nodes():
+    for obj in _iter_stagehand_objects():
+        for link_index, link in enumerate(obj.stagehand.links):
+            if int(link.type) != POWER_16A_OUTPUT_TYPE:
+                continue
+            position, _rotation = _link_world_transform(obj, link)
+            yield PowerOutputNode(
+                position=tuple(position),
+                label=_power_link_label(obj, link_index),
+                object_name=obj.name_full,
+                link_index=link_index,
+            )
+
+
 def _selected_stagehand_objects(context):
     return [
         obj
@@ -373,6 +412,213 @@ def _calculate_power_edges(structure_vertices, power_nodes):
     return edges
 
 
+def _deduplicate_route_edges(route_edges):
+    deduplicated_edges = []
+    seen_edges = set()
+
+    for start_position, end_position in route_edges:
+        start_key = position_key(start_position)
+        end_key = position_key(end_position)
+        edge_key = tuple(sorted((start_key, end_key)))
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        deduplicated_edges.append((start_position, end_position))
+
+    return deduplicated_edges
+
+
+def _node_id_for_position(solver, position):
+    key = position_key(position)
+    node_lookup = getattr(solver, "node_lookup", None)
+    if node_lookup is not None:
+        node_id = node_lookup.get(key)
+        if node_id is not None:
+            return node_id
+
+    for node_id, node_position in enumerate(solver.nodes):
+        if position_key(node_position) == key:
+            return node_id
+    return None
+
+
+def _resolve_power_output_nodes(solver, output_nodes):
+    resolved_outputs = []
+    for output_node in output_nodes:
+        node_id = _node_id_for_position(solver, output_node.position)
+        if node_id is None:
+            raise PowerSolverError(f"16A output is not present in graph: {output_node.label}")
+        resolved_outputs.append(PowerOutputNode(
+            position=output_node.position,
+            label=output_node.label,
+            object_name=output_node.object_name,
+            link_index=output_node.link_index,
+            node_id=node_id,
+        ))
+    return resolved_outputs
+
+
+def _iter_solver_neighbors(solver, node_id):
+    start = solver.edges_index[node_id]
+    end = solver.edges_index[node_id + 1]
+    yielded = set()
+    for edge_index in range(start, end):
+        neighbor = solver.edges[edge_index]
+        if neighbor in yielded:
+            continue
+        yielded.add(neighbor)
+        yield neighbor
+
+
+def _bfs_from_node(solver, root_node):
+    distances = {root_node: 0}
+    parents = {}
+    to_explore = deque([root_node])
+
+    while to_explore:
+        actual_node = to_explore.popleft()
+        next_distance = distances[actual_node] + 1
+        for neighbor in _iter_solver_neighbors(solver, actual_node):
+            if neighbor in distances:
+                continue
+            distances[neighbor] = next_distance
+            parents[neighbor] = actual_node
+            to_explore.append(neighbor)
+
+    return distances, parents
+
+
+def _line_destination_nodes(solver, line_id):
+    return tuple(sorted(
+        node
+        for node in solver.power_lines_path.get(line_id, ())
+        if node != solver.start_node and node in solver.power_node_consumptions
+    ))
+
+
+def _required_power_line_ids(solver):
+    return tuple(sorted(
+        line_id
+        for line_id, consumption in solver.power_lines_consumption.items()
+        if int(consumption) > 0 and _line_destination_nodes(solver, line_id)
+    ))
+
+
+def _line_representative_position(solver, line_id):
+    destinations = _line_destination_nodes(solver, line_id)
+    if not destinations:
+        return Vector((0.0, 0.0, 0.0))
+
+    position = Vector((0.0, 0.0, 0.0))
+    for node_id in destinations:
+        position += Vector(solver.nodes[node_id])
+    position /= len(destinations)
+    return position
+
+
+def _build_power_line_routes(solver, required_line_ids, assignments, bfs_cache):
+    power_line_roots = {}
+    power_line_routes = {}
+
+    for line_id in required_line_ids:
+        assignment = assignments[line_id]
+        distances, parents = bfs_cache[assignment.output_index]
+        root_node = assignment.output_node_id
+        route_edges = set()
+        power_line_roots[line_id] = root_node
+
+        for destination in _line_destination_nodes(solver, line_id):
+            if destination not in distances:
+                raise PowerSolverError(
+                    f"Powerline {line_id} cannot reach 16A output {assignment.output_label}."
+                )
+
+            actual_node = destination
+            while actual_node != root_node:
+                parent_node = parents.get(actual_node)
+                if parent_node is None:
+                    raise PowerSolverError(
+                        f"Powerline {line_id} has an incomplete route from {assignment.output_label}."
+                    )
+                route_edges.add((parent_node, actual_node))
+                actual_node = parent_node
+
+        power_line_routes[line_id] = route_edges
+
+    return power_line_roots, power_line_routes
+
+
+def _assign_power_lines_to_outputs(solver, required_line_ids, output_nodes):
+    required_count = len(required_line_ids)
+    available_count = len(output_nodes)
+    if required_count == 0:
+        return {}, {}, {}
+
+    if available_count < required_count:
+        missing_count = required_count - available_count
+        raise PowerSolverError(
+            f"Servono {required_count} powerline 16A, ma ci sono solo "
+            f"{available_count} uscite 16A. Mancano {missing_count} uscite."
+        )
+
+    resolved_outputs = _resolve_power_output_nodes(solver, output_nodes)
+    representatives = {
+        line_id: _line_representative_position(solver, line_id)
+        for line_id in required_line_ids
+    }
+    bfs_cache = {}
+    candidates = []
+
+    for output_index, output_node in enumerate(resolved_outputs):
+        distances, parents = _bfs_from_node(solver, output_node.node_id)
+        bfs_cache[output_index] = (distances, parents)
+        output_position = Vector(output_node.position)
+
+        for line_id in required_line_ids:
+            destinations = _line_destination_nodes(solver, line_id)
+            if not destinations or any(destination not in distances for destination in destinations):
+                continue
+            graph_distance = sum(distances[destination] for destination in destinations)
+            euclidean_distance = (output_position - representatives[line_id]).length_squared
+            candidates.append((graph_distance, euclidean_distance, line_id, output_index))
+
+    assignments = {}
+    assigned_lines = set()
+    used_outputs = set()
+
+    for _graph_distance, _euclidean_distance, line_id, output_index in sorted(candidates):
+        if line_id in assigned_lines or output_index in used_outputs:
+            continue
+
+        output_node = resolved_outputs[output_index]
+        assignments[line_id] = PowerLineOutputAssignment(
+            line_id=line_id,
+            output_index=output_index,
+            output_node_id=output_node.node_id,
+            output_label=output_node.label,
+            output_position=output_node.position,
+        )
+        assigned_lines.add(line_id)
+        used_outputs.add(output_index)
+
+    missing_lines = [line_id for line_id in required_line_ids if line_id not in assignments]
+    if missing_lines:
+        missing_label = ", ".join(str(line_id) for line_id in missing_lines)
+        raise PowerSolverError(
+            "Impossibile collegare le powerline "
+            f"{missing_label} alle uscite 16A disponibili. "
+            "Controlla che le uscite siano collegate al grafo di truss/anchor."
+        )
+
+    power_line_roots, power_line_routes = _build_power_line_routes(
+        solver,
+        required_line_ids,
+        assignments,
+        bfs_cache,
+    )
+    return assignments, power_line_roots, power_line_routes
+
+
 def generate_power_solution(
     context,
     edge_resolution=EDGE_RESOLUTION,
@@ -390,6 +636,7 @@ def generate_power_solution(
 
     route_edges = _calculate_structure_edges(structure_vertices, edge_resolution)
 
+    power_16a_outputs = list(_iter_power_16a_output_nodes())
     starting_position, starting_label = _find_starting_power_node(context)
     power_nodes = [PowerInputNode(starting_position, 0, starting_label)]
     input_power_nodes = list(_iter_power_input_nodes())
@@ -398,7 +645,10 @@ def generate_power_solution(
     if not input_power_nodes:
         warnings.append("No power input nodes were found; generated mesh may be empty.")
 
-    route_edges.extend(_calculate_power_edges(structure_vertices, power_nodes))
+    graph_attachment_nodes = list(power_nodes)
+    graph_attachment_nodes.extend(power_16a_outputs)
+    route_edges.extend(_calculate_power_edges(structure_vertices, graph_attachment_nodes))
+    route_edges = _deduplicate_route_edges(route_edges)
 
     solver = PowerSolver(
         max_power_for_line=max_power_for_line,
@@ -407,12 +657,24 @@ def generate_power_solution(
     solver.construct_indices(route_edges, power_nodes, starting_position)
     solver.solve()
 
+    required_line_ids = _required_power_line_ids(solver)
+    assignments, power_line_roots, power_line_routes = _assign_power_lines_to_outputs(
+        solver,
+        required_line_ids,
+        power_16a_outputs,
+    )
+
     return PowerGenerationResult(
         solver=solver,
         structure_vertex_count=len(structure_vertices),
         route_edge_count=len(route_edges),
         power_node_count=len(power_nodes),
         starting_label=starting_label,
+        required_power_lines=len(required_line_ids),
+        available_16a_outputs=len(power_16a_outputs),
+        power_line_output_assignments=assignments,
+        power_line_routes=power_line_routes,
+        power_line_roots=power_line_roots,
         cable_anchor_offsets=cable_anchor_offsets,
         warnings=warnings,
     )

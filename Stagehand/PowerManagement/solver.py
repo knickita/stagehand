@@ -38,6 +38,7 @@ def _run_parallel(func, inputs):
 class PowerSolver:
     def __init__(self, max_power_for_line=3000, delta_excess=10):
         self.nodes = []
+        self.node_lookup = {}
         self.edges_index = []
         self.edges = []
         self.power_nodes = []
@@ -97,6 +98,7 @@ class PowerSolver:
                 self.edges.append(node_index[adjacent_key])
 
         self.edges_index[actual_index] = len(self.edges)
+        self.node_lookup = dict(node_index)
 
         self.power_nodes = []
         self.power_node_consumptions = {}

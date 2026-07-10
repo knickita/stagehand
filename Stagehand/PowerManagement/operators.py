@@ -325,6 +325,8 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
                 context,
                 result.solver,
                 result.cable_anchor_offsets,
+                result.power_line_routes,
+                result.power_line_roots,
             )
         except PowerSolverError as exc:
             self.report({'ERROR'}, str(exc))
@@ -333,9 +335,11 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
             self.report({'ERROR'}, f"Unable to generate power lines: {exc}")
             return {'CANCELLED'}
 
+        used_outputs = len(result.power_line_output_assignments)
         message = (
-            f"Generated {link_count} cable spans, {node_count} cable nodes, "
-            f"{vertex_count} vertices, {face_count} faces"
+            f"Generated {result.required_power_lines} power lines from "
+            f"{used_outputs} 16A outputs, {link_count} cable spans, "
+            f"{node_count} cable nodes, {vertex_count} vertices, {face_count} faces"
         )
         if result.warnings:
             message += f" ({'; '.join(result.warnings)})"

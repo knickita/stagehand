@@ -1,4 +1,4 @@
-from collections import deque
+from collections import defaultdict, deque
 import colorsys
 from dataclasses import dataclass, field
 
@@ -739,6 +739,155 @@ def _build_render_graph(solver, cable_anchor_offsets=None):
     return list(render_nodes.values()), render_links
 
 
+def _build_render_graph_from_routes(solver, power_line_routes, power_line_roots=None, cable_anchor_offsets=None):
+    edge_line_ids = defaultdict(set)
+    edge_directions = {}
+    node_line_ids = defaultdict(set)
+    adjacency = defaultdict(list)
+    render_nodes = {}
+    render_links = []
+    incoming_links_by_node = {}
+    root_nodes = set((power_line_roots or {}).values())
+
+    for line_id, route_edges in power_line_routes.items():
+        for node_a_id, node_b_id in route_edges:
+            if node_a_id == node_b_id:
+                continue
+            edge_key = tuple(sorted((node_a_id, node_b_id)))
+            edge_line_ids[edge_key].add(line_id)
+            edge_directions.setdefault(edge_key, (node_a_id, node_b_id))
+            node_line_ids[node_a_id].add(line_id)
+            node_line_ids[node_b_id].add(line_id)
+
+    for edge_key in edge_line_ids:
+        node_a_id, node_b_id = edge_key
+        adjacency[node_a_id].append(node_b_id)
+        adjacency[node_b_id].append(node_a_id)
+
+    for line_id, root_node_id in (power_line_roots or {}).items():
+        node_line_ids[root_node_id].add(line_id)
+
+    def ensure_node(node_id, scale=None):
+        line_count = len(node_line_ids.get(node_id, ()))
+        if node_id not in render_nodes:
+            render_nodes[node_id] = _RenderNode(
+                node_id=node_id,
+                position=_offset_node_position(
+                    _node_position(solver, node_id),
+                    line_count,
+                    cable_anchor_offsets,
+                ),
+                scale=calculate_node_scale(line_count),
+            )
+        if scale is not None:
+            render_nodes[node_id].scale = scale
+        return render_nodes[node_id]
+
+    def edge_key_for(node_a_id, node_b_id):
+        return tuple(sorted((node_a_id, node_b_id)))
+
+    def next_collinear_node(previous_node_id, current_node_id, line_id_set, blocked_edges):
+        if current_node_id in root_nodes:
+            return None
+        if node_line_ids.get(current_node_id, set()) != line_id_set:
+            return None
+
+        incoming_direction = _node_position(solver, current_node_id) - _node_position(solver, previous_node_id)
+        if incoming_direction.length_squared <= 0.0:
+            return None
+        incoming_direction.normalize()
+
+        candidates = []
+        for next_node_id in adjacency.get(current_node_id, ()):
+            if next_node_id == previous_node_id:
+                continue
+            candidate_key = edge_key_for(current_node_id, next_node_id)
+            if candidate_key in blocked_edges:
+                continue
+            if edge_line_ids.get(candidate_key, set()) != line_id_set:
+                continue
+
+            outgoing_direction = _node_position(solver, next_node_id) - _node_position(solver, current_node_id)
+            if outgoing_direction.length_squared <= 0.0:
+                continue
+            outgoing_direction.normalize()
+            if not _same_direction(incoming_direction, outgoing_direction):
+                continue
+            candidates.append(next_node_id)
+
+        if len(candidates) != 1:
+            return None
+        return candidates[0]
+
+    def extend_segment(start_node_id, end_node_id, line_id_set, segment_edges):
+        previous_node_id = start_node_id
+        current_node_id = end_node_id
+        while True:
+            next_node_id = next_collinear_node(
+                previous_node_id,
+                current_node_id,
+                line_id_set,
+                segment_edges,
+            )
+            if next_node_id is None:
+                return current_node_id
+            segment_edges.add(edge_key_for(current_node_id, next_node_id))
+            previous_node_id, current_node_id = current_node_id, next_node_id
+
+    def append_render_link(node_a_id, node_b_id, line_ids):
+        line_count = len(line_ids)
+        node_a = ensure_node(node_a_id, scale=0.0 if node_a_id in root_nodes else None)
+        node_b = ensure_node(
+            node_b_id,
+            scale=0.0 if node_b_id in root_nodes else calculate_node_scale(line_count),
+        )
+        link_direction = node_b.position - node_a.position
+        if line_count <= 0 or link_direction.length_squared <= 0.0:
+            return
+
+        link_direction.normalize()
+        length = (node_b.position - node_a.position).length
+        rotation = _look_rotation(link_direction)
+        ordered_line_ids = _ordered_line_ids_for_link(
+            line_ids,
+            node_a,
+            link_direction,
+            rotation,
+            length,
+            incoming_links_by_node.get(node_a_id),
+        )
+        render_link = _RenderLink(
+            a=node_a,
+            b=node_b,
+            line_ids=ordered_line_ids,
+            rotation=rotation,
+            direction=link_direction,
+            length=length,
+        )
+        node_a.links.append(render_link)
+        node_b.links.append(render_link)
+        render_links.append(render_link)
+        incoming_links_by_node.setdefault(node_b_id, render_link)
+
+    for root_node_id in root_nodes:
+        ensure_node(root_node_id, scale=0.0)
+
+    visited_edges = set()
+    for edge_key in sorted(edge_line_ids):
+        if edge_key in visited_edges:
+            continue
+
+        original_start_id, original_end_id = edge_directions.get(edge_key, edge_key)
+        line_id_set = set(edge_line_ids[edge_key])
+        segment_edges = {edge_key}
+        end_node_id = extend_segment(original_start_id, original_end_id, line_id_set, segment_edges)
+        start_node_id = extend_segment(original_end_id, original_start_id, line_id_set, segment_edges)
+        visited_edges.update(segment_edges)
+        append_render_link(start_node_id, end_node_id, tuple(sorted(line_id_set)))
+
+    return list(render_nodes.values()), render_links
+
+
 def _power_line_color(line_id, color_mode='POWERLINES'):
     if color_mode == 'BLACK':
         return 0.0, 0.0, 0.0, 1.0
@@ -837,8 +986,22 @@ def _remove_existing_power_lines_object():
         bpy.data.meshes.remove(existing_mesh)
 
 
-def build_power_lines_mesh(context, solver, cable_anchor_offsets=None):
-    render_nodes, render_links = _build_render_graph(solver, cable_anchor_offsets)
+def build_power_lines_mesh(
+    context,
+    solver,
+    cable_anchor_offsets=None,
+    power_line_routes=None,
+    power_line_roots=None,
+):
+    if power_line_routes is None:
+        render_nodes, render_links = _build_render_graph(solver, cable_anchor_offsets)
+    else:
+        render_nodes, render_links = _build_render_graph_from_routes(
+            solver,
+            power_line_routes,
+            power_line_roots,
+            cable_anchor_offsets,
+        )
     vertices = []
     faces = []
     face_line_ids = []
