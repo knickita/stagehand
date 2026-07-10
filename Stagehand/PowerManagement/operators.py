@@ -144,6 +144,7 @@ def _set_cable_anchor_points_mesh(obj, anchor_points):
     mesh.clear_geometry()
     mesh.from_pydata(vertices, edges, [])
     mesh.update(calc_edges=True)
+    obj.hide_select = True
 
 
 def _refresh_cable_anchor_points_object(obj):
@@ -170,6 +171,7 @@ def _build_cable_anchor_points_object(context):
     obj["stagehand_generated_cable_anchor_points"] = True
     obj.display_type = 'WIRE'
     obj.show_in_front = True
+    obj.hide_select = True
     obj.hide_render = True
     obj.data.materials.append(_cable_anchor_points_material())
     context.collection.objects.link(obj)
@@ -240,6 +242,7 @@ class STAGEHAND_OT_toggle_cable_anchor_points(bpy.types.Operator):
                     return {'CANCELLED'}
             existing.hide_viewport = should_hide
             existing.hide_set(should_hide)
+            existing.hide_select = True
             self.report({'INFO'}, "Cable anchor points hidden" if should_hide else "Cable anchor points shown")
             return {'FINISHED'}
 

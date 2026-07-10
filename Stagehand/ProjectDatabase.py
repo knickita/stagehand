@@ -145,7 +145,7 @@ def set_object_names(object_names):
 
 
 def register():
-    return
+    get_database_object(create=True)
 
 
 def unregister():
