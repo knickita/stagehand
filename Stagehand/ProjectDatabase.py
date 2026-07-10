@@ -7,6 +7,7 @@ DATABASE_VERSION_KEY = "stagehand_database_version"
 CONNECTIONS_KEY = "stagehand_connections"
 LINK_PARENTS_KEY = "stagehand_link_parents"
 OBJECT_NAMES_KEY = "stagehand_object_names"
+DATABASE_SELECT_GUARD_INTERVAL = 0.5
 
 
 def _data_objects():
@@ -50,6 +51,17 @@ def _ensure_database_shape(obj):
         current_value = _coerce_string_dict(obj.get(key))
         if key not in obj or dict(current_value) != current_value:
             _set_mapping_value(obj, key, current_value)
+
+
+def _lock_database_selection(obj):
+    obj.hide_select = True
+    obj.hide_viewport = True
+    obj.hide_render = True
+    obj.select_set(False)
+
+    view_layer = getattr(bpy.context, "view_layer", None)
+    if view_layer is not None and view_layer.objects.active == obj:
+        view_layer.objects.active = None
 
 
 def _link_database_to_scene(obj):
@@ -145,8 +157,23 @@ def set_object_names(object_names):
 
 
 def register():
-    get_database_object(create=True)
+    database_object = get_database_object(create=True)
+    if database_object is not None:
+        _lock_database_selection(database_object)
+    if not bpy.app.timers.is_registered(database_selection_guard):
+        bpy.app.timers.register(database_selection_guard, first_interval=DATABASE_SELECT_GUARD_INTERVAL)
 
 
 def unregister():
-    return
+    if bpy.app.timers.is_registered(database_selection_guard):
+        bpy.app.timers.unregister(database_selection_guard)
+
+
+def database_selection_guard():
+    database_object = get_database_object(create=False)
+    if database_object is not None:
+        try:
+            _lock_database_selection(database_object)
+        except RuntimeError:
+            pass
+    return DATABASE_SELECT_GUARD_INTERVAL
