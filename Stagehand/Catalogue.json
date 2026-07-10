@@ -2218,7 +2218,7 @@
             "watt": 0.0
         },
         {
-            "name": "Ledwall Outdoor Yestech 3.9",
+            "name": "Ledwall Outdoor Yestech 3,9",
             "uniqueId": 20,
             "mesh3d": "Models/yestech_outdoor_39",
             "tags": [
@@ -2325,7 +2325,7 @@
             "watt": 150.0
         },
         {
-            "name": "Ledwall Outdoor Yestech 4.8",
+            "name": "Ledwall Outdoor Yestech 4,8",
             "uniqueId": 21,
             "mesh3d": "Models/yestech_outdoor_39",
             "tags": [
@@ -2432,7 +2432,7 @@
             "watt": 120.0
         },
         {
-            "name": "Ledwall Indoor Yestech 2.6",
+            "name": "Ledwall Indoor Yestech 2,6",
             "uniqueId": 22,
             "mesh3d": "Models/yestech_outdoor_39",
             "tags": [
@@ -2539,7 +2539,7 @@
             "watt": 120.0
         },
         {
-            "name": "Ledwall Outdoor Infiled 4.6 50x50cm",
+            "name": "Ledwall Outdoor Infiled 4,6 50x50cm",
             "uniqueId": 23,
             "mesh3d": "Models/yestech_outdoor_39",
             "tags": [
@@ -2646,7 +2646,7 @@
             "watt": 120.0
         },
         {
-            "name": "Ledwall Outdoor Infiled 4.6 50x100cm",
+            "name": "Ledwall Outdoor Infiled 4,6 50x100cm",
             "uniqueId": 24,
             "mesh3d": "Models/infiled_outdoor_46_1m",
             "tags": [
@@ -2785,7 +2785,7 @@
             "watt": 120.0
         },
         {
-            "name": "Ledwall Outdoor Yestech 3.9 Angle Left",
+            "name": "Ledwall Outdoor Yestech 3,9 Angle Left",
             "uniqueId": 25,
             "mesh3d": "Models/yestech_outdoor_39_angle_left",
             "tags": [
@@ -2892,7 +2892,7 @@
             "watt": 120.0
         },
         {
-            "name": "Ledwall Outdoor Yestech 3.9 Angle Right",
+            "name": "Ledwall Outdoor Yestech 3,9 Angle Right",
             "uniqueId": 26,
             "mesh3d": "Models/yestech_outdoor_39_angle_right",
             "tags": [

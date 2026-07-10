@@ -7,6 +7,7 @@ DATABASE_VERSION_KEY = "stagehand_database_version"
 CONNECTIONS_KEY = "stagehand_connections"
 LINK_PARENTS_KEY = "stagehand_link_parents"
 OBJECT_NAMES_KEY = "stagehand_object_names"
+GENERATED_POWERLINES_KEY = "stagehand_generated_powerlines"
 DATABASE_SELECT_GUARD_INTERVAL = 0.5
 STAGEHAND_COLLECTION_NAME = "stagehand"
 
@@ -79,7 +80,7 @@ def _ensure_database_shape(obj):
     obj.empty_display_type = 'PLAIN_AXES'
     obj.empty_display_size = 0.25
 
-    for key in (CONNECTIONS_KEY, LINK_PARENTS_KEY, OBJECT_NAMES_KEY):
+    for key in (CONNECTIONS_KEY, LINK_PARENTS_KEY, OBJECT_NAMES_KEY, GENERATED_POWERLINES_KEY):
         current_value = _coerce_string_dict(obj.get(key))
         if key not in obj or dict(current_value) != current_value:
             _set_mapping_value(obj, key, current_value)
@@ -169,6 +170,41 @@ def set_object_names(object_names):
     if database_object is None:
         return
     _set_mapping_value(database_object, OBJECT_NAMES_KEY, object_names)
+
+
+def get_generated_powerlines(create=False):
+    database_object = get_database_object(create=create)
+    if database_object is None:
+        return {}
+    return _coerce_string_dict(database_object.get(GENERATED_POWERLINES_KEY))
+
+
+def set_generated_powerlines(generated_powerlines):
+    database_object = get_database_object(create=True)
+    if database_object is None:
+        return
+    _set_mapping_value(database_object, GENERATED_POWERLINES_KEY, generated_powerlines)
+
+
+def clear_generated_powerlines():
+    set_generated_powerlines({})
+
+
+def remove_generated_powerlines_for_link_uids(link_uids):
+    link_uid_set = {str(link_uid) for link_uid in link_uids if str(link_uid)}
+    if not link_uid_set:
+        return 0
+
+    generated_powerlines = get_generated_powerlines(create=False)
+    filtered_powerlines = {
+        input_link_uid: output_link_uid
+        for input_link_uid, output_link_uid in generated_powerlines.items()
+        if input_link_uid not in link_uid_set and output_link_uid not in link_uid_set
+    }
+    removed_count = len(generated_powerlines) - len(filtered_powerlines)
+    if removed_count > 0:
+        set_generated_powerlines(filtered_powerlines)
+    return removed_count
 
 
 def register():

@@ -9,6 +9,10 @@ class PowerInputNode:
     position: tuple
     consumption: int = 0
     label: str = ""
+    object_uid: str = ""
+    link_uid: str = ""
+    object_name: str = ""
+    link_index: int = -1
 
 
 class PowerSolverError(RuntimeError):

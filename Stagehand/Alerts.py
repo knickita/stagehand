@@ -173,7 +173,9 @@ def _nearby_bucket_keys(bucket_key):
                 )
 
 
-def _iter_stagehand_link_candidates(connections):
+def _iter_stagehand_link_candidates(connections, generated_powerlines=None):
+    generated_powerlines = generated_powerlines or {}
+    generated_link_uids = set(generated_powerlines.keys()) | set(generated_powerlines.values())
     for obj in Connections.iter_stagehand_objects():
         if _CANCEL_SCAN_EVENT.is_set() or _STOP_EVENT.is_set():
             return
@@ -190,6 +192,8 @@ def _iter_stagehand_link_candidates(connections):
             if not link_uid:
                 continue
             if connections.get(link_uid):
+                continue
+            if link_uid in generated_link_uids:
                 continue
 
             center, _rotation = _link_transform(obj, link)
@@ -299,7 +303,8 @@ def _link_types_are_compatible(link_a, link_b):
 
 def _analyze_links():
     connections = ProjectDatabase.get_connections(create=False)
-    candidates = list(_iter_stagehand_link_candidates(connections))
+    generated_powerlines = ProjectDatabase.get_generated_powerlines(create=False)
+    candidates = list(_iter_stagehand_link_candidates(connections, generated_powerlines))
     buckets = {}
     alerts = []
 

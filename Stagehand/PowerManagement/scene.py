@@ -6,6 +6,7 @@ import os
 import bpy
 from mathutils import Quaternion, Vector
 
+from ..AddStagehandObject import ensure_stagehand_link_uid, ensure_stagehand_uid
 from ..LinkTypes import StagehandLinkType
 from .solver import PowerInputNode, PowerSolver, PowerSolverError, position_key
 
@@ -44,6 +45,8 @@ POWER_16A_OUTPUT_TYPE = int(StagehandLinkType.POWER_OUT_CEE16A_MONO)
 class PowerOutputNode:
     position: tuple
     label: str = ""
+    object_uid: str = ""
+    link_uid: str = ""
     object_name: str = ""
     link_index: int = -1
     node_id: int = -1
@@ -56,6 +59,8 @@ class PowerLineOutputAssignment:
     output_node_id: int
     output_label: str
     output_position: tuple
+    output_object_uid: str = ""
+    output_link_uid: str = ""
 
 
 @dataclass
@@ -70,6 +75,7 @@ class PowerGenerationResult:
     power_line_output_assignments: dict = field(default_factory=dict)
     power_line_routes: dict = field(default_factory=dict)
     power_line_roots: dict = field(default_factory=dict)
+    generated_powerline_connections: dict = field(default_factory=dict)
     cable_anchor_offsets: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
 
@@ -311,6 +317,7 @@ def _power_link_label(obj, link_index):
 
 def _iter_power_input_nodes():
     for obj in _iter_stagehand_objects():
+        object_uid = ensure_stagehand_uid(obj)
         for link_index, link in enumerate(obj.stagehand.links):
             if int(link.type) not in POWER_INPUT_TYPES:
                 continue
@@ -320,6 +327,10 @@ def _iter_power_input_nodes():
                 position=tuple(position),
                 consumption=int(obj.stagehand.watt),
                 label=_power_link_label(obj, link_index),
+                object_uid=object_uid,
+                link_uid=ensure_stagehand_link_uid(link),
+                object_name=obj.name_full,
+                link_index=link_index,
             )
 
 
@@ -336,6 +347,7 @@ def _iter_power_output_nodes(objects):
 
 def _iter_power_16a_output_nodes():
     for obj in _iter_stagehand_objects():
+        object_uid = ensure_stagehand_uid(obj)
         for link_index, link in enumerate(obj.stagehand.links):
             if int(link.type) != POWER_16A_OUTPUT_TYPE:
                 continue
@@ -343,6 +355,8 @@ def _iter_power_16a_output_nodes():
             yield PowerOutputNode(
                 position=tuple(position),
                 label=_power_link_label(obj, link_index),
+                object_uid=object_uid,
+                link_uid=ensure_stagehand_link_uid(link),
                 object_name=obj.name_full,
                 link_index=link_index,
             )
@@ -451,6 +465,8 @@ def _resolve_power_output_nodes(solver, output_nodes):
         resolved_outputs.append(PowerOutputNode(
             position=output_node.position,
             label=output_node.label,
+            object_uid=output_node.object_uid,
+            link_uid=output_node.link_uid,
             object_name=output_node.object_name,
             link_index=output_node.link_index,
             node_id=node_id,
@@ -487,6 +503,29 @@ def _bfs_from_node(solver, root_node):
 
     return distances, parents
 
+
+def _power_input_link_uids_by_node(solver, input_power_nodes):
+    input_link_uids_by_node = {}
+    for power_node in input_power_nodes:
+        if not power_node.link_uid:
+            continue
+        node_id = _node_id_for_position(solver, power_node.position)
+        if node_id is not None:
+            input_link_uids_by_node[node_id] = power_node.link_uid
+    return input_link_uids_by_node
+
+
+def _generated_powerline_connections(solver, required_line_ids, assignments, input_link_uids_by_node):
+    generated_connections = {}
+    for line_id in required_line_ids:
+        assignment = assignments.get(line_id)
+        if assignment is None or not assignment.output_link_uid:
+            continue
+        for destination in _line_destination_nodes(solver, line_id):
+            input_link_uid = input_link_uids_by_node.get(destination)
+            if input_link_uid:
+                generated_connections[input_link_uid] = assignment.output_link_uid
+    return generated_connections
 
 def _line_destination_nodes(solver, line_id):
     return tuple(sorted(
@@ -597,6 +636,8 @@ def _assign_power_lines_to_outputs(solver, required_line_ids, output_nodes):
             output_node_id=output_node.node_id,
             output_label=output_node.label,
             output_position=output_node.position,
+            output_object_uid=output_node.object_uid,
+            output_link_uid=output_node.link_uid,
         )
         assigned_lines.add(line_id)
         used_outputs.add(output_index)
@@ -663,6 +704,12 @@ def generate_power_solution(
         required_line_ids,
         power_16a_outputs,
     )
+    generated_powerline_connections = _generated_powerline_connections(
+        solver,
+        required_line_ids,
+        assignments,
+        _power_input_link_uids_by_node(solver, input_power_nodes),
+    )
 
     return PowerGenerationResult(
         solver=solver,
@@ -675,6 +722,7 @@ def generate_power_solution(
         power_line_output_assignments=assignments,
         power_line_routes=power_line_routes,
         power_line_roots=power_line_roots,
+        generated_powerline_connections=generated_powerline_connections,
         cable_anchor_offsets=cable_anchor_offsets,
         warnings=warnings,
     )

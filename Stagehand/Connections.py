@@ -56,6 +56,7 @@ LinkIndexItem = namedtuple(
     ),
 )
 _DIRTY_CONNECTION_OBJECT_UIDS = set()
+_DIRTY_GENERATED_POWERLINE_OBJECT_UIDS = set()
 _ALL_CONNECTIONS_DIRTY = False
 _DUPLICATE_REPAIR_NEEDED = True
 _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS = set()
@@ -1574,6 +1575,32 @@ def _mark_stagehand_object_membership_changes(delay=CONNECTION_REFRESH_SETTLE_IN
     return True
 
 
+def _mark_generated_powerlines_dirty(objects):
+    for obj in objects:
+        if not is_stagehand_object(obj):
+            continue
+
+        uid = get_object_uid(obj)
+        if uid:
+            _DIRTY_GENERATED_POWERLINE_OBJECT_UIDS.add(uid)
+
+
+def _clear_generated_powerlines_for_dirty_objects():
+    if not _DIRTY_GENERATED_POWERLINE_OBJECT_UIDS:
+        return 0
+
+    link_uids = set()
+    while _DIRTY_GENERATED_POWERLINE_OBJECT_UIDS:
+        uid = _DIRTY_GENERATED_POWERLINE_OBJECT_UIDS.pop()
+        obj = find_object_by_uid(uid)
+        if obj is None:
+            continue
+
+        for _link_index, link in iter_object_links(obj):
+            link_uids.add(ensure_stagehand_link_uid(link))
+
+    return ProjectDatabase.remove_generated_powerlines_for_link_uids(link_uids)
+
 def _process_dirty_connection_refresh():
     global _ALL_CONNECTIONS_DIRTY, _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT
 
@@ -1591,6 +1618,8 @@ def _process_dirty_connection_refresh():
             obj = find_object_by_uid(uid)
             if obj is not None:
                 refresh_objects.append(obj)
+
+    _clear_generated_powerlines_for_dirty_objects()
 
     duplicate_membership_refresh = processed_all_objects and membership_autoconnect
     UpdateConnections(
@@ -1684,6 +1713,7 @@ def stagehand_depsgraph_update_post(_scene, depsgraph):
             dirty_objects.append(updated_id)
 
     if dirty_objects:
+        _mark_generated_powerlines_dirty(dirty_objects)
         mark_objects_dirty(dirty_objects)
     membership_changed = _mark_stagehand_object_membership_changes()
     if membership_changed:
@@ -1822,6 +1852,7 @@ def unregister():
     if bpy.app.timers.is_registered(dirty_connection_refresh_timer):
         bpy.app.timers.unregister(dirty_connection_refresh_timer)
     _DIRTY_CONNECTION_OBJECT_UIDS.clear()
+    _DIRTY_GENERATED_POWERLINE_OBJECT_UIDS.clear()
     _ALL_CONNECTIONS_DIRTY = False
     _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT = False
     _MEMBERSHIP_TRACKING_INITIALIZED = False

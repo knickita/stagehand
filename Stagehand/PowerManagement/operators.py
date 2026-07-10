@@ -1,5 +1,6 @@
 import bpy
 
+from .. import ProjectDatabase
 from .mesh import build_power_lines_mesh
 from .scene import collect_cable_anchor_points, generate_power_solution
 from .solver import PowerSolverError
@@ -320,6 +321,7 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
     def execute(self, context):
         try:
             _normalize_cable_obstacle_collections(context)
+            ProjectDatabase.clear_generated_powerlines()
             result = generate_power_solution(context)
             _obj, link_count, node_count, vertex_count, face_count = build_power_lines_mesh(
                 context,
@@ -328,6 +330,7 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
                 result.power_line_routes,
                 result.power_line_roots,
             )
+            ProjectDatabase.set_generated_powerlines(result.generated_powerline_connections)
         except PowerSolverError as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
