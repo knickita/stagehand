@@ -4915,6 +4915,65 @@
                     "length": 0.0
                 }
             ]
+        },
+        {
+            "name": "Robe@iPainte LTM",
+            "uniqueId": 48,
+            "mesh3d": "Models/Lights/robeipainteltm",
+            "tags": [
+                "movinghead"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        -0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none",
+                    "cylindricaltype": false,
+                    "length": 0.0
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none",
+                    "cylindricaltype": false,
+                    "length": 0.0
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.10999999940395355,
+                        0.05000000074505806,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.015,
+                    "type": 9,
+                    "allowrotations": "none",
+                    "cylindricaltype": false,
+                    "length": 0.0
+                }
+            ],
+            "watt": 750.0
         }
     ]
 }
