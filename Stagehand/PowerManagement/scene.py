@@ -27,7 +27,6 @@ POWER_INPUT_TYPES = {
     int(StagehandLinkType.POWER_IN_POWERCON_BLUE),
     int(StagehandLinkType.POWER_IN_POWERCON_WHITE),
     int(StagehandLinkType.POWER_IN_POWERCONTRUE),
-    int(StagehandLinkType.POWER_IN_CEE63A_PENTA),
 }
 
 POWER_OUTPUT_TYPES = {
@@ -35,7 +34,6 @@ POWER_OUTPUT_TYPES = {
     int(StagehandLinkType.POWER_OUT_POWERCON_BLUE),
     int(StagehandLinkType.POWER_OUT_POWERCON_WHITE),
     int(StagehandLinkType.POWER_OUT_POWERCONTRUE),
-    int(StagehandLinkType.POWER_OUT_CEE63A_PENTA),
 }
 
 POWER_16A_OUTPUT_TYPE = int(StagehandLinkType.POWER_OUT_CEE16A_MONO)

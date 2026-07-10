@@ -11,7 +11,7 @@ from mathutils import Quaternion, Vector
 
 from . import Connections
 from . import ProjectDatabase
-from .LinkTypes import are_link_types_compatible, is_power_input
+from .LinkTypes import are_link_types_compatible, is_any_power_input
 from .RegistrationUtils import (
     safe_define_property,
     safe_register_class,
@@ -289,7 +289,7 @@ def _make_unconnected_power_input_alert(item):
 
 def _is_power_input_link(link):
     try:
-        return is_power_input(link.type)
+        return is_any_power_input(link.type)
     except (TypeError, ValueError):
         return False
 

@@ -80,11 +80,21 @@ LINK_COMPATIBILITY = {
 }
 
 
-POWER_INPUT_LINK_TYPES = {
+MONOPHASE_POWER_INPUT_LINK_TYPES = {
     StagehandLinkType.POWER_IN_CEE16A_MONO,
     StagehandLinkType.POWER_IN_POWERCON_BLUE,
     StagehandLinkType.POWER_IN_POWERCON_WHITE,
     StagehandLinkType.POWER_IN_POWERCONTRUE,
+}
+
+
+THREEPHASE_POWER_LINK_TYPES = {
+    StagehandLinkType.POWER_IN_CEE63A_PENTA,
+    StagehandLinkType.POWER_OUT_CEE63A_PENTA,
+}
+
+
+POWER_INPUT_LINK_TYPES = MONOPHASE_POWER_INPUT_LINK_TYPES | {
     StagehandLinkType.POWER_IN_CEE63A_PENTA,
 }
 
@@ -117,8 +127,16 @@ def are_link_types_compatible(source_link_type, target_link_type):
     return target_link_type in get_compatible_link_types(source_link_type)
 
 
-def is_power_input(link_type):
+def is_monophase_power_input(link_type):
+    return coerce_link_type(link_type) in MONOPHASE_POWER_INPUT_LINK_TYPES
+
+
+def is_any_power_input(link_type):
     return coerce_link_type(link_type) in POWER_INPUT_LINK_TYPES
+
+
+def is_threephase_power_link(link_type):
+    return coerce_link_type(link_type) in THREEPHASE_POWER_LINK_TYPES
 
 
 def default_link_allow_rotations(link_type):
