@@ -4175,7 +4175,7 @@
         {
             "name": "fornitura 16A monofase",
             "uniqueId": 38,
-            "mesh3d": "Models/plug",
+            "mesh3d": "Models/16Amono-plug",
             "tags": [
                 "powersupply"
             ],
@@ -4183,8 +4183,8 @@
                 {
                     "posdir": [
                         0.0,
-                        0.0,
-                        0.018300000578165054,
+                        -0.06,
+                        0.05,
                         1.0,
                         0.0,
                         0.0,
@@ -4974,6 +4974,33 @@
                 }
             ],
             "watt": 750.0
+        },
+        {
+            "name": "fornitura 63A pentapolare",
+            "uniqueId": 49,
+            "mesh3d": "Models/63Apenta-plug",
+            "tags": [
+                "powersupply"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        -0.06,
+                        0.1,
+                        1.0,
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 12,
+                    "allowrotations": "none",
+                    "cylindricaltype": false,
+                    "length": 0.0
+                }
+            ],
+            "watt": 0.0
         }
     ]
 }
