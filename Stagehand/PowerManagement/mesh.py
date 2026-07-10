@@ -11,6 +11,9 @@ from .solver import position_key
 POWER_LINES_OBJECT_NAME = "Stagehand Power Lines"
 POWER_LINES_MESH_NAME = "Stagehand Power Lines Mesh"
 POWER_LINES_MATERIAL_NAME = "Stagehand Cable Material"
+THREEPHASE_POWER_LINES_OBJECT_NAME = "Stagehand Threephase Power Lines"
+THREEPHASE_POWER_LINES_MESH_NAME = "Stagehand Threephase Power Lines Mesh"
+THREEPHASE_POWER_LINES_MATERIAL_NAME = "Stagehand Threephase Cable Material"
 POWER_LINES_COLOR_ATTRIBUTE = "PowerLineColor"
 STAGEHAND_COLLECTION_NAME = "stagehand"
 
@@ -206,10 +209,10 @@ def _cable_centers(dimension):
     return _CABLE_CENTER_CACHE[dimension]
 
 
-def _cable_profile_radius(dimension):
+def _cable_profile_radius(dimension, cable_radius_scale=1.0):
     profile_vertices, _profile_faces = _cable_profile(max(1, int(dimension)))
     half_vertices = len(profile_vertices) // 2
-    return max((profile_vertices[index].x ** 2 + profile_vertices[index].y ** 2) ** 0.5 for index in range(half_vertices)) * 0.02
+    return max((profile_vertices[index].x ** 2 + profile_vertices[index].y ** 2) ** 0.5 for index in range(half_vertices)) * 0.02 * cable_radius_scale
 
 
 def _look_rotation(direction):
@@ -218,8 +221,9 @@ def _look_rotation(direction):
     return direction.normalized().to_track_quat("Z", "Y")
 
 
-def _transformed_cable_point(point, midpoint, rotation, length):
-    local_point = Vector((point.x * 0.02, point.y * 0.02, point.z * length))
+def _transformed_cable_point(point, midpoint, rotation, length, cable_radius_scale=1.0):
+    radius = 0.02 * cable_radius_scale
+    local_point = Vector((point.x * radius, point.y * radius, point.z * length))
     return midpoint + (rotation @ local_point)
 
 
@@ -263,7 +267,7 @@ def _profile_face_line_ids(profile_vertices, centers, line_ids):
     return face_line_ids
 
 
-def _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_internal_faces=False):
+def _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_internal_faces=False, cable_radius_scale=1.0):
     if render_link.lines <= 0 or render_link.length <= 0.0:
         return
 
@@ -284,6 +288,7 @@ def _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_interna
                     midpoint,
                     render_link.rotation,
                     length,
+                    cable_radius_scale,
                 ))
                 for point in profile_vertices
             )
@@ -298,7 +303,7 @@ def _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_interna
     centers = _cable_centers(render_link.lines)
     base_index = len(vertices)
     vertices.extend(
-        tuple(_transformed_cable_point(point, midpoint, render_link.rotation, length))
+        tuple(_transformed_cable_point(point, midpoint, render_link.rotation, length, cable_radius_scale))
         for point in profile_vertices
     )
     faces.extend(
@@ -308,14 +313,15 @@ def _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_interna
     face_line_ids.extend(_profile_face_line_ids(profile_vertices, centers, render_link.line_ids))
 
 
-def _socket_transform_for_link(render_node, render_link, is_output):
+def _socket_transform_for_link(render_node, render_link, is_output, cable_radius_scale=1.0):
     endpoint_offset = render_link.direction * render_node.scale * 0.5
     if is_output:
         endpoint = render_node.position + endpoint_offset
     else:
         endpoint = render_node.position - endpoint_offset
 
-    return endpoint, render_link.rotation, (0.02, 0.02, max(render_link.length, 0.0001))
+    radius = 0.02 * cable_radius_scale
+    return endpoint, render_link.rotation, (radius, radius, max(render_link.length, 0.0001))
 
 
 def _socket_position(endpoint, rotation, scale, center):
@@ -324,8 +330,8 @@ def _socket_position(endpoint, rotation, scale, center):
     )
 
 
-def _link_socket_positions(render_node, render_link, is_output):
-    endpoint, rotation, scale = _socket_transform_for_link(render_node, render_link, is_output)
+def _link_socket_positions(render_node, render_link, is_output, cable_radius_scale=1.0):
+    endpoint, rotation, scale = _socket_transform_for_link(render_node, render_link, is_output, cable_radius_scale)
     positions = {}
     for line_id, center in zip(render_link.line_ids, _cable_centers(render_link.lines)):
         positions[line_id] = _socket_position(endpoint, rotation, scale, center)
@@ -456,7 +462,7 @@ def _optimize_line_order(ordered_line_ids, incoming_positions, outgoing_position
     return tuple(ordered_line_ids)
 
 
-def _ordered_line_ids_for_link(line_ids, node_a, link_direction, rotation, length, incoming_link):
+def _ordered_line_ids_for_link(line_ids, node_a, link_direction, rotation, length, incoming_link, cable_radius_scale=1.0):
     line_ids = tuple(sorted(line_ids))
     if not line_ids or incoming_link is None:
         return line_ids
@@ -465,12 +471,14 @@ def _ordered_line_ids_for_link(line_ids, node_a, link_direction, rotation, lengt
         node_a,
         incoming_link,
         is_output=incoming_link.a is node_a,
+        cable_radius_scale=cable_radius_scale,
     )
     if not incoming_positions:
         return line_ids
 
     endpoint = node_a.position + (link_direction * node_a.scale * 0.5)
-    scale = (0.02, 0.02, max(length, 0.0001))
+    radius = 0.02 * cable_radius_scale
+    scale = (radius, radius, max(length, 0.0001))
     available_slots = [
         (
             center_index,
@@ -502,7 +510,7 @@ def _ordered_line_ids_for_link(line_ids, node_a, link_direction, rotation, lengt
     return _optimize_line_order(ordered_line_ids, incoming_positions, outgoing_positions)
 
 
-def _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node):
+def _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node, cable_radius_scale=1.0):
     if not render_node.links or render_node.scale <= 0.0:
         return
 
@@ -511,7 +519,7 @@ def _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node):
 
     for render_link in render_node.links:
         is_output = render_link.a is render_node
-        endpoint, rotation, scale = _socket_transform_for_link(render_node, render_link, is_output)
+        endpoint, rotation, scale = _socket_transform_for_link(render_node, render_link, is_output, cable_radius_scale)
         target = outputs if is_output else inputs
         for line_id, center in zip(render_link.line_ids, _cable_centers(render_link.lines)):
             target.append(_SocketTransform(tuple(endpoint), rotation, scale, tuple(center), line_id))
@@ -639,7 +647,7 @@ def _node_position(solver, node_id):
     return Vector(solver.nodes[node_id])
 
 
-def _offset_node_position(position, line_count, cable_anchor_offsets):
+def _offset_node_position(position, line_count, cable_anchor_offsets, cable_radius_scale=1.0):
     if not cable_anchor_offsets:
         return position
 
@@ -653,7 +661,7 @@ def _offset_node_position(position, line_count, cable_anchor_offsets):
     direction.normalize()
 
     display_radius = max(0.0, float(offset_data.get("display_radius", 0.0)))
-    clearance = display_radius + _cable_profile_radius(max(1, int(line_count))) + 0.005
+    clearance = display_radius + _cable_profile_radius(max(1, int(line_count)), cable_radius_scale) + 0.005
     return position + (direction * clearance)
 
 
@@ -661,7 +669,7 @@ def _first_child(children):
     return next(iter(children))
 
 
-def _build_render_graph(solver, cable_anchor_offsets=None):
+def _build_render_graph(solver, cable_anchor_offsets=None, cable_radius_scale=1.0):
     render_nodes = {}
     render_links = []
     incoming_links_by_node = {}
@@ -675,6 +683,7 @@ def _build_render_graph(solver, cable_anchor_offsets=None):
                     _node_position(solver, node_id),
                     line_count,
                     cable_anchor_offsets,
+                    cable_radius_scale,
                 ),
                 scale=calculate_node_scale(line_count),
             )
@@ -719,6 +728,7 @@ def _build_render_graph(solver, cable_anchor_offsets=None):
                     rotation,
                     length,
                     incoming_links_by_node.get(start_node),
+                    cable_radius_scale,
                 )
                 render_link = _RenderLink(
                     a=node_a,
@@ -739,7 +749,7 @@ def _build_render_graph(solver, cable_anchor_offsets=None):
     return list(render_nodes.values()), render_links
 
 
-def _build_render_graph_from_routes(solver, power_line_routes, power_line_roots=None, cable_anchor_offsets=None):
+def _build_render_graph_from_routes(solver, power_line_routes, power_line_roots=None, cable_anchor_offsets=None, cable_radius_scale=1.0):
     edge_line_ids = defaultdict(set)
     edge_directions = {}
     node_line_ids = defaultdict(set)
@@ -776,6 +786,7 @@ def _build_render_graph_from_routes(solver, power_line_routes, power_line_roots=
                     _node_position(solver, node_id),
                     line_count,
                     cable_anchor_offsets,
+                    cable_radius_scale,
                 ),
                 scale=calculate_node_scale(line_count),
             )
@@ -855,6 +866,7 @@ def _build_render_graph_from_routes(solver, power_line_routes, power_line_roots=
             rotation,
             length,
             incoming_links_by_node.get(node_a_id),
+            cable_radius_scale,
         )
         render_link = _RenderLink(
             a=node_a,
@@ -917,10 +929,10 @@ def _apply_power_line_colors(mesh, face_line_ids, color_mode='POWERLINES'):
             color_attribute.data[loop_index].color = color
 
 
-def _material(context=None):
-    material = bpy.data.materials.get(POWER_LINES_MATERIAL_NAME)
+def _material(context=None, material_name=POWER_LINES_MATERIAL_NAME):
+    material = bpy.data.materials.get(material_name)
     if material is None:
-        material = bpy.data.materials.new(POWER_LINES_MATERIAL_NAME)
+        material = bpy.data.materials.new(material_name)
     material.diffuse_color = (
         (0.0, 0.0, 0.0, 1.0)
         if _scene_cable_color_mode(context) == 'BLACK'
@@ -975,8 +987,8 @@ def _move_to_stagehand_collection(obj, context):
             user_collection.objects.unlink(obj)
 
 
-def _remove_existing_power_lines_object():
-    existing = bpy.data.objects.get(POWER_LINES_OBJECT_NAME)
+def _remove_existing_power_lines_object(object_name=POWER_LINES_OBJECT_NAME):
+    existing = bpy.data.objects.get(object_name)
     if existing is None:
         return
 
@@ -992,15 +1004,20 @@ def build_power_lines_mesh(
     cable_anchor_offsets=None,
     power_line_routes=None,
     power_line_roots=None,
+    object_name=POWER_LINES_OBJECT_NAME,
+    mesh_name=POWER_LINES_MESH_NAME,
+    material_name=POWER_LINES_MATERIAL_NAME,
+    cable_radius_scale=1.0,
 ):
     if power_line_routes is None:
-        render_nodes, render_links = _build_render_graph(solver, cable_anchor_offsets)
+        render_nodes, render_links = _build_render_graph(solver, cable_anchor_offsets, cable_radius_scale)
     else:
         render_nodes, render_links = _build_render_graph_from_routes(
             solver,
             power_line_routes,
             power_line_roots,
             cable_anchor_offsets,
+            cable_radius_scale,
         )
     vertices = []
     faces = []
@@ -1009,22 +1026,22 @@ def build_power_lines_mesh(
     cable_color_mode = _scene_cable_color_mode(context)
 
     for render_link in render_links:
-        _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_internal_faces)
+        _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_internal_faces, cable_radius_scale)
 
     for render_node in render_nodes:
-        _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node)
+        _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node, cable_radius_scale)
 
-    _remove_existing_power_lines_object()
+    _remove_existing_power_lines_object(object_name)
 
-    mesh = bpy.data.meshes.new(POWER_LINES_MESH_NAME)
+    mesh = bpy.data.meshes.new(mesh_name)
     mesh.from_pydata(vertices, [], faces)
     mesh.update(calc_edges=True)
     _apply_power_line_colors(mesh, face_line_ids, cable_color_mode)
 
-    power_lines_object = bpy.data.objects.new(POWER_LINES_OBJECT_NAME, mesh)
+    power_lines_object = bpy.data.objects.new(object_name, mesh)
     power_lines_object["stagehand_generated_power_lines"] = True
     power_lines_object.hide_select = True
-    power_lines_object.data.materials.append(_material(context))
+    power_lines_object.data.materials.append(_material(context, material_name))
     _move_to_stagehand_collection(power_lines_object, context)
 
     return power_lines_object, len(render_links), len(render_nodes), len(vertices), len(faces)

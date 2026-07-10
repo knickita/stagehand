@@ -37,6 +37,8 @@ POWER_OUTPUT_TYPES = {
 }
 
 POWER_16A_OUTPUT_TYPE = int(StagehandLinkType.POWER_OUT_CEE16A_MONO)
+THREEPHASE_POWER_INPUT_TYPE = int(StagehandLinkType.POWER_IN_CEE63A_PENTA)
+THREEPHASE_POWER_OUTPUT_TYPE = int(StagehandLinkType.POWER_OUT_CEE63A_PENTA)
 
 
 @dataclass(frozen=True)
@@ -70,9 +72,16 @@ class PowerGenerationResult:
     starting_label: str
     required_power_lines: int = 0
     available_16a_outputs: int = 0
+    missing_16a_outputs: int = 0
     power_line_output_assignments: dict = field(default_factory=dict)
     power_line_routes: dict = field(default_factory=dict)
     power_line_roots: dict = field(default_factory=dict)
+    required_threephase_lines: int = 0
+    available_threephase_outputs: int = 0
+    missing_threephase_outputs: int = 0
+    threephase_output_assignments: dict = field(default_factory=dict)
+    threephase_routes: dict = field(default_factory=dict)
+    threephase_roots: dict = field(default_factory=dict)
     generated_powerline_connections: dict = field(default_factory=dict)
     cable_anchor_offsets: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
@@ -360,6 +369,42 @@ def _iter_power_16a_output_nodes():
             )
 
 
+def _iter_threephase_input_nodes():
+    for obj in _iter_stagehand_objects():
+        object_uid = ensure_stagehand_uid(obj)
+        for link_index, link in enumerate(obj.stagehand.links):
+            if int(link.type) != THREEPHASE_POWER_INPUT_TYPE:
+                continue
+
+            position, _rotation = _link_world_transform(obj, link)
+            yield PowerInputNode(
+                position=tuple(position),
+                consumption=0,
+                label=_power_link_label(obj, link_index),
+                object_uid=object_uid,
+                link_uid=ensure_stagehand_link_uid(link),
+                object_name=obj.name_full,
+                link_index=link_index,
+            )
+
+
+def _iter_threephase_output_nodes():
+    for obj in _iter_stagehand_objects():
+        object_uid = ensure_stagehand_uid(obj)
+        for link_index, link in enumerate(obj.stagehand.links):
+            if int(link.type) != THREEPHASE_POWER_OUTPUT_TYPE:
+                continue
+            position, _rotation = _link_world_transform(obj, link)
+            yield PowerOutputNode(
+                position=tuple(position),
+                label=_power_link_label(obj, link_index),
+                object_uid=object_uid,
+                link_uid=ensure_stagehand_link_uid(link),
+                object_name=obj.name_full,
+                link_index=link_index,
+            )
+
+
 def _selected_stagehand_objects(context):
     return [
         obj
@@ -454,12 +499,12 @@ def _node_id_for_position(solver, position):
     return None
 
 
-def _resolve_power_output_nodes(solver, output_nodes):
+def _resolve_power_output_nodes(solver, output_nodes, output_description="16A output"):
     resolved_outputs = []
     for output_node in output_nodes:
         node_id = _node_id_for_position(solver, output_node.position)
         if node_id is None:
-            raise PowerSolverError(f"16A output is not present in graph: {output_node.label}")
+            raise PowerSolverError(f"{output_description} is not present in graph: {output_node.label}")
         resolved_outputs.append(PowerOutputNode(
             position=output_node.position,
             label=output_node.label,
@@ -525,6 +570,18 @@ def _generated_powerline_connections(solver, required_line_ids, assignments, inp
                 generated_connections[input_link_uid] = assignment.output_link_uid
     return generated_connections
 
+
+def _generated_direct_powerline_connections(input_nodes, assignments):
+    generated_connections = {}
+    for input_index, assignment in assignments.items():
+        if input_index >= len(input_nodes) or not assignment.output_link_uid:
+            continue
+        input_link_uid = input_nodes[input_index].link_uid
+        if input_link_uid:
+            generated_connections[input_link_uid] = assignment.output_link_uid
+    return generated_connections
+
+
 def _line_destination_nodes(solver, line_id):
     return tuple(sorted(
         node
@@ -553,6 +610,21 @@ def _line_representative_position(solver, line_id):
     return position
 
 
+def _route_edges_from_parent_tree(destination, root_node, distances, parents, route_label):
+    if destination not in distances:
+        raise PowerSolverError(f"{route_label} cannot reach its assigned output.")
+
+    route_edges = set()
+    actual_node = destination
+    while actual_node != root_node:
+        parent_node = parents.get(actual_node)
+        if parent_node is None:
+            raise PowerSolverError(f"{route_label} has an incomplete generated route.")
+        route_edges.add((parent_node, actual_node))
+        actual_node = parent_node
+    return route_edges
+
+
 def _build_power_line_routes(solver, required_line_ids, assignments, bfs_cache):
     power_line_roots = {}
     power_line_routes = {}
@@ -565,38 +637,44 @@ def _build_power_line_routes(solver, required_line_ids, assignments, bfs_cache):
         power_line_roots[line_id] = root_node
 
         for destination in _line_destination_nodes(solver, line_id):
-            if destination not in distances:
-                raise PowerSolverError(
-                    f"Powerline {line_id} cannot reach 16A output {assignment.output_label}."
-                )
-
-            actual_node = destination
-            while actual_node != root_node:
-                parent_node = parents.get(actual_node)
-                if parent_node is None:
-                    raise PowerSolverError(
-                        f"Powerline {line_id} has an incomplete route from {assignment.output_label}."
-                    )
-                route_edges.add((parent_node, actual_node))
-                actual_node = parent_node
+            route_edges.update(_route_edges_from_parent_tree(
+                destination,
+                root_node,
+                distances,
+                parents,
+                f"Powerline {line_id}",
+            ))
 
         power_line_routes[line_id] = route_edges
 
     return power_line_roots, power_line_routes
 
 
-def _assign_power_lines_to_outputs(solver, required_line_ids, output_nodes):
-    required_count = len(required_line_ids)
-    available_count = len(output_nodes)
-    if required_count == 0:
-        return {}, {}, {}
+def _build_direct_power_line_routes(solver, input_node_ids, assignments, bfs_cache):
+    power_line_roots = {}
+    power_line_routes = {}
 
-    if available_count < required_count:
-        missing_count = required_count - available_count
-        raise PowerSolverError(
-            f"Servono {required_count} powerline 16A, ma ci sono solo "
-            f"{available_count} uscite 16A. Mancano {missing_count} uscite."
+    for line_id, assignment in assignments.items():
+        destination = input_node_ids.get(line_id)
+        if destination is None:
+            continue
+        distances, parents = bfs_cache[assignment.output_index]
+        root_node = assignment.output_node_id
+        power_line_roots[line_id] = root_node
+        power_line_routes[line_id] = _route_edges_from_parent_tree(
+            destination,
+            root_node,
+            distances,
+            parents,
+            f"Threephase powerline {line_id}",
         )
+
+    return power_line_roots, power_line_routes
+
+
+def _assign_power_lines_to_outputs(solver, required_line_ids, output_nodes):
+    if not required_line_ids:
+        return {}, {}, {}, ()
 
     resolved_outputs = _resolve_power_output_nodes(solver, output_nodes)
     representatives = {
@@ -640,22 +718,76 @@ def _assign_power_lines_to_outputs(solver, required_line_ids, output_nodes):
         assigned_lines.add(line_id)
         used_outputs.add(output_index)
 
-    missing_lines = [line_id for line_id in required_line_ids if line_id not in assignments]
-    if missing_lines:
-        missing_label = ", ".join(str(line_id) for line_id in missing_lines)
-        raise PowerSolverError(
-            "Impossibile collegare le powerline "
-            f"{missing_label} alle uscite 16A disponibili. "
-            "Controlla che le uscite siano collegate al grafo di truss/anchor."
-        )
-
+    missing_lines = tuple(line_id for line_id in required_line_ids if line_id not in assignments)
+    assigned_line_ids = tuple(line_id for line_id in required_line_ids if line_id in assignments)
     power_line_roots, power_line_routes = _build_power_line_routes(
         solver,
-        required_line_ids,
+        assigned_line_ids,
         assignments,
         bfs_cache,
     )
-    return assignments, power_line_roots, power_line_routes
+    return assignments, power_line_roots, power_line_routes, missing_lines
+
+
+def _assign_threephase_inputs_to_outputs(solver, input_nodes, output_nodes):
+    if not input_nodes:
+        return {}, {}, {}, ()
+
+    input_node_ids = {}
+    for input_index, input_node in enumerate(input_nodes):
+        node_id = _node_id_for_position(solver, input_node.position)
+        if node_id is not None:
+            input_node_ids[input_index] = node_id
+
+    resolved_outputs = _resolve_power_output_nodes(
+        solver,
+        output_nodes,
+        output_description="threephase output",
+    )
+    bfs_cache = {}
+    candidates = []
+
+    for output_index, output_node in enumerate(resolved_outputs):
+        distances, parents = _bfs_from_node(solver, output_node.node_id)
+        bfs_cache[output_index] = (distances, parents)
+        output_position = Vector(output_node.position)
+
+        for input_index, input_node in enumerate(input_nodes):
+            destination = input_node_ids.get(input_index)
+            if destination is None or destination not in distances:
+                continue
+            euclidean_distance = (output_position - Vector(input_node.position)).length_squared
+            candidates.append((distances[destination], euclidean_distance, input_index, output_index))
+
+    assignments = {}
+    assigned_inputs = set()
+    used_outputs = set()
+
+    for _graph_distance, _euclidean_distance, input_index, output_index in sorted(candidates):
+        if input_index in assigned_inputs or output_index in used_outputs:
+            continue
+
+        output_node = resolved_outputs[output_index]
+        assignments[input_index] = PowerLineOutputAssignment(
+            line_id=input_index,
+            output_index=output_index,
+            output_node_id=output_node.node_id,
+            output_label=output_node.label,
+            output_position=output_node.position,
+            output_object_uid=output_node.object_uid,
+            output_link_uid=output_node.link_uid,
+        )
+        assigned_inputs.add(input_index)
+        used_outputs.add(output_index)
+
+    missing_inputs = tuple(input_index for input_index in range(len(input_nodes)) if input_index not in assignments)
+    threephase_roots, threephase_routes = _build_direct_power_line_routes(
+        solver,
+        input_node_ids,
+        assignments,
+        bfs_cache,
+    )
+    return assignments, threephase_roots, threephase_routes, missing_inputs
 
 
 def generate_power_solution(
@@ -676,16 +808,20 @@ def generate_power_solution(
     route_edges = _calculate_structure_edges(structure_vertices, edge_resolution)
 
     power_16a_outputs = list(_iter_power_16a_output_nodes())
+    threephase_outputs = list(_iter_threephase_output_nodes())
+    threephase_input_nodes = list(_iter_threephase_input_nodes())
     starting_position, starting_label = _find_starting_power_node(context)
     power_nodes = [PowerInputNode(starting_position, 0, starting_label)]
     input_power_nodes = list(_iter_power_input_nodes())
     power_nodes.extend(input_power_nodes)
 
-    if not input_power_nodes:
+    if not input_power_nodes and not threephase_input_nodes:
         warnings.append("No power input nodes were found; generated mesh may be empty.")
 
     graph_attachment_nodes = list(power_nodes)
     graph_attachment_nodes.extend(power_16a_outputs)
+    graph_attachment_nodes.extend(threephase_input_nodes)
+    graph_attachment_nodes.extend(threephase_outputs)
     route_edges.extend(_calculate_power_edges(structure_vertices, graph_attachment_nodes))
     route_edges = _deduplicate_route_edges(route_edges)
 
@@ -697,17 +833,40 @@ def generate_power_solution(
     solver.solve()
 
     required_line_ids = _required_power_line_ids(solver)
-    assignments, power_line_roots, power_line_routes = _assign_power_lines_to_outputs(
+    assignments, power_line_roots, power_line_routes, missing_line_ids = _assign_power_lines_to_outputs(
         solver,
         required_line_ids,
         power_16a_outputs,
     )
+    threephase_assignments, threephase_roots, threephase_routes, missing_threephase_inputs = _assign_threephase_inputs_to_outputs(
+        solver,
+        threephase_input_nodes,
+        threephase_outputs,
+    )
+
+    missing_16a_outputs = len(missing_line_ids)
+    missing_threephase_outputs = len(missing_threephase_inputs)
+    if missing_16a_outputs:
+        warnings.append(
+            f"Missing {missing_16a_outputs} 16A output plug(s); "
+            f"plugged {len(assignments)} of {len(required_line_ids)} monophase power line(s)."
+        )
+    if missing_threephase_outputs:
+        warnings.append(
+            f"Missing {missing_threephase_outputs} threephase output plug(s); "
+            f"plugged {len(threephase_assignments)} of {len(threephase_input_nodes)} threephase input(s)."
+        )
+
     generated_powerline_connections = _generated_powerline_connections(
         solver,
         required_line_ids,
         assignments,
         _power_input_link_uids_by_node(solver, input_power_nodes),
     )
+    generated_powerline_connections.update(_generated_direct_powerline_connections(
+        threephase_input_nodes,
+        threephase_assignments,
+    ))
 
     return PowerGenerationResult(
         solver=solver,
@@ -717,9 +876,16 @@ def generate_power_solution(
         starting_label=starting_label,
         required_power_lines=len(required_line_ids),
         available_16a_outputs=len(power_16a_outputs),
+        missing_16a_outputs=missing_16a_outputs,
         power_line_output_assignments=assignments,
         power_line_routes=power_line_routes,
         power_line_roots=power_line_roots,
+        required_threephase_lines=len(threephase_input_nodes),
+        available_threephase_outputs=len(threephase_outputs),
+        missing_threephase_outputs=missing_threephase_outputs,
+        threephase_output_assignments=threephase_assignments,
+        threephase_routes=threephase_routes,
+        threephase_roots=threephase_roots,
         generated_powerline_connections=generated_powerline_connections,
         cable_anchor_offsets=cable_anchor_offsets,
         warnings=warnings,

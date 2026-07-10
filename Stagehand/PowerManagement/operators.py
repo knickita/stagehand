@@ -1,7 +1,12 @@
 import bpy
 
 from .. import ProjectDatabase
-from .mesh import build_power_lines_mesh
+from .mesh import (
+    THREEPHASE_POWER_LINES_MATERIAL_NAME,
+    THREEPHASE_POWER_LINES_MESH_NAME,
+    THREEPHASE_POWER_LINES_OBJECT_NAME,
+    build_power_lines_mesh,
+)
 from .scene import collect_cable_anchor_points, generate_power_solution
 from .solver import PowerSolverError
 from ..RegistrationUtils import (
@@ -330,6 +335,23 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
                 result.power_line_routes,
                 result.power_line_roots,
             )
+            (
+                _threephase_obj,
+                threephase_link_count,
+                threephase_node_count,
+                threephase_vertex_count,
+                threephase_face_count,
+            ) = build_power_lines_mesh(
+                context,
+                result.solver,
+                result.cable_anchor_offsets,
+                result.threephase_routes,
+                result.threephase_roots,
+                object_name=THREEPHASE_POWER_LINES_OBJECT_NAME,
+                mesh_name=THREEPHASE_POWER_LINES_MESH_NAME,
+                material_name=THREEPHASE_POWER_LINES_MATERIAL_NAME,
+                cable_radius_scale=2.0,
+            )
             ProjectDatabase.set_generated_powerlines(result.generated_powerline_connections)
         except PowerSolverError as exc:
             self.report({'ERROR'}, str(exc))
@@ -339,14 +361,19 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
             return {'CANCELLED'}
 
         used_outputs = len(result.power_line_output_assignments)
+        used_threephase_outputs = len(result.threephase_output_assignments)
         message = (
-            f"Generated {result.required_power_lines} power lines from "
+            f"Generated {result.required_power_lines} monophase power lines from "
             f"{used_outputs} 16A outputs, {link_count} cable spans, "
-            f"{node_count} cable nodes, {vertex_count} vertices, {face_count} faces"
+            f"{node_count} cable nodes, {vertex_count} vertices, {face_count} faces; "
+            f"generated {used_threephase_outputs} of {result.required_threephase_lines} "
+            f"threephase cables, {threephase_link_count} cable spans, "
+            f"{threephase_node_count} cable nodes, {threephase_vertex_count} vertices, "
+            f"{threephase_face_count} faces"
         )
         if result.warnings:
             message += f" ({'; '.join(result.warnings)})"
-        self.report({'INFO'}, message)
+        self.report({'WARNING'} if result.warnings else {'INFO'}, message)
         return {'FINISHED'}
 
 
