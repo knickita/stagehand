@@ -8,6 +8,7 @@ CONNECTIONS_KEY = "stagehand_connections"
 LINK_PARENTS_KEY = "stagehand_link_parents"
 OBJECT_NAMES_KEY = "stagehand_object_names"
 DATABASE_SELECT_GUARD_INTERVAL = 0.5
+STAGEHAND_COLLECTION_NAME = "stagehand"
 
 
 def _data_objects():
@@ -16,6 +17,37 @@ def _data_objects():
 
 def _data_scenes():
     return getattr(bpy.data, "scenes", None)
+
+
+def _stagehand_collection():
+    collection = bpy.data.collections.get(STAGEHAND_COLLECTION_NAME)
+    if collection is None:
+        collection = bpy.data.collections.new(STAGEHAND_COLLECTION_NAME)
+
+    scene = getattr(bpy.context, "scene", None)
+    if scene is not None:
+        if all(child != collection for child in scene.collection.children):
+            scene.collection.children.link(collection)
+        return collection
+
+    scenes = _data_scenes()
+    if scenes is not None:
+        for candidate_scene in scenes:
+            if all(child != collection for child in candidate_scene.collection.children):
+                candidate_scene.collection.children.link(collection)
+                break
+
+    return collection
+
+
+def _move_to_stagehand_collection(obj):
+    collection = _stagehand_collection()
+    if all(existing != obj for existing in collection.objects):
+        collection.objects.link(obj)
+
+    for user_collection in list(obj.users_collection):
+        if user_collection != collection:
+            user_collection.objects.unlink(obj)
 
 
 def _coerce_string_dict(value):
@@ -65,24 +97,7 @@ def _lock_database_selection(obj):
 
 
 def _link_database_to_scene(obj):
-    scene = getattr(bpy.context, "scene", None)
-    if scene is not None:
-        try:
-            scene.collection.objects.link(obj)
-            return
-        except RuntimeError:
-            pass
-
-    scenes = _data_scenes()
-    if scenes is None:
-        return
-
-    for candidate_scene in scenes:
-        try:
-            candidate_scene.collection.objects.link(obj)
-            return
-        except RuntimeError:
-            continue
+    _move_to_stagehand_collection(obj)
 
 
 def get_database_object(create=False):
@@ -159,6 +174,7 @@ def set_object_names(object_names):
 def register():
     database_object = get_database_object(create=True)
     if database_object is not None:
+        _move_to_stagehand_collection(database_object)
         _lock_database_selection(database_object)
     if not bpy.app.timers.is_registered(database_selection_guard):
         bpy.app.timers.register(database_selection_guard, first_interval=DATABASE_SELECT_GUARD_INTERVAL)

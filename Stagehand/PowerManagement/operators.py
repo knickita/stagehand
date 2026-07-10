@@ -18,6 +18,7 @@ CABLE_OBSTACLE_NAME = "Cable Obstacle"
 CABLE_OBSTACLE_COLLECTION_NAME = "cable obstacles"
 CABLE_OBSTACLE_MATERIAL_NAME = "Stagehand Cable Obstacle Material"
 POWER_OBSTACLE_PROPERTY = "stagehand_power_obstacle"
+STAGEHAND_COLLECTION_NAME = "stagehand"
 
 _ANCHOR_POINTS_REFRESH_PENDING = False
 _ANCHOR_POINTS_REFRESHING = False
@@ -40,6 +41,28 @@ def _is_stagehand_object(obj):
 def _anchor_points_visible():
     obj = bpy.data.objects.get(CABLE_ANCHOR_POINTS_OBJECT_NAME)
     return obj is not None and not obj.hide_viewport and not obj.hide_get()
+
+
+def _stagehand_collection(context):
+    collection = bpy.data.collections.get(STAGEHAND_COLLECTION_NAME)
+    if collection is None:
+        collection = bpy.data.collections.new(STAGEHAND_COLLECTION_NAME)
+
+    scene = context.scene if context is not None else bpy.context.scene
+    if scene is not None and all(child != collection for child in scene.collection.children):
+        scene.collection.children.link(collection)
+
+    return collection
+
+
+def _move_to_stagehand_collection(obj, context):
+    collection = _stagehand_collection(context)
+    if all(existing != obj for existing in collection.objects):
+        collection.objects.link(obj)
+
+    for user_collection in list(obj.users_collection):
+        if user_collection != collection:
+            user_collection.objects.unlink(obj)
 
 
 def _cable_obstacle_collection(context):
@@ -174,7 +197,7 @@ def _build_cable_anchor_points_object(context):
     obj.hide_select = True
     obj.hide_render = True
     obj.data.materials.append(_cable_anchor_points_material())
-    context.collection.objects.link(obj)
+    _move_to_stagehand_collection(obj, context)
     return obj, len(anchor_points)
 
 
@@ -234,6 +257,7 @@ class STAGEHAND_OT_toggle_cable_anchor_points(bpy.types.Operator):
             if not should_hide:
                 try:
                     _refresh_cable_anchor_points_object(existing)
+                    _move_to_stagehand_collection(existing, context)
                 except PowerSolverError as exc:
                     self.report({'ERROR'}, str(exc))
                     return {'CANCELLED'}

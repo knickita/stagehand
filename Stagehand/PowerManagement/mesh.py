@@ -12,6 +12,7 @@ POWER_LINES_OBJECT_NAME = "Stagehand Power Lines"
 POWER_LINES_MESH_NAME = "Stagehand Power Lines Mesh"
 POWER_LINES_MATERIAL_NAME = "Stagehand Cable Material"
 POWER_LINES_COLOR_ATTRIBUTE = "PowerLineColor"
+STAGEHAND_COLLECTION_NAME = "stagehand"
 
 _CABLE_PROFILE_CACHE = {}
 _CABLE_CENTER_CACHE = {}
@@ -803,6 +804,28 @@ def _material(context=None):
     return material
 
 
+def _stagehand_collection(context):
+    collection = bpy.data.collections.get(STAGEHAND_COLLECTION_NAME)
+    if collection is None:
+        collection = bpy.data.collections.new(STAGEHAND_COLLECTION_NAME)
+
+    scene = context.scene if context is not None else bpy.context.scene
+    if scene is not None and all(child != collection for child in scene.collection.children):
+        scene.collection.children.link(collection)
+
+    return collection
+
+
+def _move_to_stagehand_collection(obj, context):
+    collection = _stagehand_collection(context)
+    if all(existing != obj for existing in collection.objects):
+        collection.objects.link(obj)
+
+    for user_collection in list(obj.users_collection):
+        if user_collection != collection:
+            user_collection.objects.unlink(obj)
+
+
 def _remove_existing_power_lines_object():
     existing = bpy.data.objects.get(POWER_LINES_OBJECT_NAME)
     if existing is None:
@@ -837,7 +860,8 @@ def build_power_lines_mesh(context, solver, cable_anchor_offsets=None):
 
     power_lines_object = bpy.data.objects.new(POWER_LINES_OBJECT_NAME, mesh)
     power_lines_object["stagehand_generated_power_lines"] = True
+    power_lines_object.hide_select = True
     power_lines_object.data.materials.append(_material(context))
-    context.collection.objects.link(power_lines_object)
+    _move_to_stagehand_collection(power_lines_object, context)
 
     return power_lines_object, len(render_links), len(render_nodes), len(vertices), len(faces)
