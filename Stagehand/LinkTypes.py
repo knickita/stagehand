@@ -35,6 +35,8 @@ class StagehandLinkType(IntEnum):
     SIXTEMA_LEG_SITE = 30
     SIXTEMA_LEG = 31
     PLANE = 32
+    POWER_IN_CEE32A_PENTA = 33
+    POWER_OUT_CEE32A_PENTA = 34
 
 
 LINK_COMPATIBILITY = {
@@ -53,6 +55,8 @@ LINK_COMPATIBILITY = {
     StagehandLinkType.POWER_OUT_POWERCONTRUE: (StagehandLinkType.POWER_IN_POWERCONTRUE,),
     StagehandLinkType.POWER_IN_CEE63A_PENTA: (StagehandLinkType.POWER_OUT_CEE63A_PENTA,),
     StagehandLinkType.POWER_OUT_CEE63A_PENTA: (StagehandLinkType.POWER_IN_CEE63A_PENTA,),
+    StagehandLinkType.POWER_IN_CEE32A_PENTA: (StagehandLinkType.POWER_OUT_CEE32A_PENTA,),
+    StagehandLinkType.POWER_OUT_CEE32A_PENTA: (StagehandLinkType.POWER_IN_CEE32A_PENTA,),
     StagehandLinkType.LAYHER_ROSETTA: (StagehandLinkType.LAYHER_HOOK,),
     StagehandLinkType.LAYHER_HOOK: (StagehandLinkType.LAYHER_ROSETTA,),
     StagehandLinkType.LAYHER_UP: (StagehandLinkType.LAYHER_DOWN,),
@@ -81,23 +85,44 @@ LINK_COMPATIBILITY = {
 }
 
 
-MONOPHASE_POWER_INPUT_LINK_TYPES = {
-    StagehandLinkType.POWER_IN_CEE16A_MONO,
-    StagehandLinkType.POWER_IN_POWERCON_BLUE,
-    StagehandLinkType.POWER_IN_POWERCON_WHITE,
-    StagehandLinkType.POWER_IN_POWERCONTRUE,
+# Power sockets follow the POWER_IN_/POWER_OUT_ naming convention.
+POWER_INPUT_LINK_TYPES = {
+    link_type
+    for link_type in StagehandLinkType
+    if link_type.name.startswith("POWER_IN_")
 }
+THREEPHASE_POWER_INPUT_LINK_TYPES = {
+    link_type
+    for link_type in POWER_INPUT_LINK_TYPES
+    if link_type.name.endswith("_PENTA")
+}
+MONOPHASE_POWER_INPUT_LINK_TYPES = POWER_INPUT_LINK_TYPES - THREEPHASE_POWER_INPUT_LINK_TYPES
+
+
+def _compatible_link_types_for(link_types):
+    return {
+        compatible_type
+        for link_type in link_types
+        for compatible_type in LINK_COMPATIBILITY.get(link_type, set())
+    }
+
+
+MONOPHASE_POWER_OUTPUT_LINK_TYPES = _compatible_link_types_for(
+    MONOPHASE_POWER_INPUT_LINK_TYPES
+)
+THREEPHASE_POWER_OUTPUT_LINK_TYPES = _compatible_link_types_for(
+    THREEPHASE_POWER_INPUT_LINK_TYPES
+)
 
 
 THREEPHASE_POWER_LINK_TYPES = {
-    StagehandLinkType.POWER_IN_CEE63A_PENTA,
-    StagehandLinkType.POWER_OUT_CEE63A_PENTA,
+    *THREEPHASE_POWER_INPUT_LINK_TYPES,
+    *THREEPHASE_POWER_OUTPUT_LINK_TYPES,
 }
 
 
-POWER_INPUT_LINK_TYPES = MONOPHASE_POWER_INPUT_LINK_TYPES | {
-    StagehandLinkType.POWER_IN_CEE63A_PENTA,
-}
+POWER_OUTPUT_LINK_TYPES = MONOPHASE_POWER_OUTPUT_LINK_TYPES | THREEPHASE_POWER_OUTPUT_LINK_TYPES
+POWER_LINK_TYPES = POWER_INPUT_LINK_TYPES | POWER_OUTPUT_LINK_TYPES
 
 
 QUARTER_TURN_ROTATION_LINK_TYPES = {

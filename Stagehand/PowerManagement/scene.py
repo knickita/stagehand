@@ -7,7 +7,14 @@ import bpy
 from mathutils import Quaternion, Vector
 
 from ..AddStagehandObject import ensure_stagehand_link_uid, ensure_stagehand_uid
-from ..LinkTypes import StagehandLinkType
+from ..LinkTypes import (
+    MONOPHASE_POWER_INPUT_LINK_TYPES,
+    MONOPHASE_POWER_OUTPUT_LINK_TYPES,
+    THREEPHASE_POWER_INPUT_LINK_TYPES,
+    THREEPHASE_POWER_OUTPUT_LINK_TYPES,
+    StagehandLinkType,
+    are_link_types_compatible,
+)
 from .solver import PowerInputNode, PowerSolver, PowerSolverError, position_key
 
 try:
@@ -22,23 +29,17 @@ DELTA_EXCESS = 10
 MAX_POWER_FOR_LINE = 3000
 
 
-POWER_INPUT_TYPES = {
-    int(StagehandLinkType.POWER_IN_CEE16A_MONO),
-    int(StagehandLinkType.POWER_IN_POWERCON_BLUE),
-    int(StagehandLinkType.POWER_IN_POWERCON_WHITE),
-    int(StagehandLinkType.POWER_IN_POWERCONTRUE),
-}
+POWER_INPUT_TYPES = {int(link_type) for link_type in MONOPHASE_POWER_INPUT_LINK_TYPES}
 
-POWER_OUTPUT_TYPES = {
-    int(StagehandLinkType.POWER_OUT_CEE16A_MONO),
-    int(StagehandLinkType.POWER_OUT_POWERCON_BLUE),
-    int(StagehandLinkType.POWER_OUT_POWERCON_WHITE),
-    int(StagehandLinkType.POWER_OUT_POWERCONTRUE),
-}
+POWER_OUTPUT_TYPES = {int(link_type) for link_type in MONOPHASE_POWER_OUTPUT_LINK_TYPES}
 
 POWER_16A_OUTPUT_TYPE = int(StagehandLinkType.POWER_OUT_CEE16A_MONO)
-THREEPHASE_POWER_INPUT_TYPE = int(StagehandLinkType.POWER_IN_CEE63A_PENTA)
-THREEPHASE_POWER_OUTPUT_TYPE = int(StagehandLinkType.POWER_OUT_CEE63A_PENTA)
+THREEPHASE_POWER_INPUT_TYPES = {
+    int(link_type) for link_type in THREEPHASE_POWER_INPUT_LINK_TYPES
+}
+THREEPHASE_POWER_OUTPUT_TYPES = {
+    int(link_type) for link_type in THREEPHASE_POWER_OUTPUT_LINK_TYPES
+}
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class PowerOutputNode:
     link_uid: str = ""
     object_name: str = ""
     link_index: int = -1
+    link_type: int = -1
     node_id: int = -1
 
 
@@ -369,6 +371,7 @@ def _iter_power_input_nodes():
                 link_uid=ensure_stagehand_link_uid(link),
                 object_name=obj.name_full,
                 link_index=link_index,
+                link_type=int(link.type),
             )
 
 
@@ -397,6 +400,7 @@ def _iter_power_16a_output_nodes():
                 link_uid=ensure_stagehand_link_uid(link),
                 object_name=obj.name_full,
                 link_index=link_index,
+                link_type=int(link.type),
             )
 
 
@@ -404,7 +408,7 @@ def _iter_threephase_input_nodes():
     for obj in _iter_stagehand_objects():
         object_uid = ensure_stagehand_uid(obj)
         for link_index, link in enumerate(obj.stagehand.links):
-            if int(link.type) != THREEPHASE_POWER_INPUT_TYPE:
+            if int(link.type) not in THREEPHASE_POWER_INPUT_TYPES:
                 continue
 
             position, _rotation = _link_world_transform(obj, link)
@@ -416,6 +420,7 @@ def _iter_threephase_input_nodes():
                 link_uid=ensure_stagehand_link_uid(link),
                 object_name=obj.name_full,
                 link_index=link_index,
+                link_type=int(link.type),
             )
 
 
@@ -423,7 +428,7 @@ def _iter_threephase_output_nodes():
     for obj in _iter_stagehand_objects():
         object_uid = ensure_stagehand_uid(obj)
         for link_index, link in enumerate(obj.stagehand.links):
-            if int(link.type) != THREEPHASE_POWER_OUTPUT_TYPE:
+            if int(link.type) not in THREEPHASE_POWER_OUTPUT_TYPES:
                 continue
             position, _rotation = _link_world_transform(obj, link)
             yield PowerOutputNode(
@@ -433,6 +438,7 @@ def _iter_threephase_output_nodes():
                 link_uid=ensure_stagehand_link_uid(link),
                 object_name=obj.name_full,
                 link_index=link_index,
+                link_type=int(link.type),
             )
 
 
@@ -543,6 +549,7 @@ def _resolve_power_output_nodes(solver, output_nodes, output_description="16A ou
             link_uid=output_node.link_uid,
             object_name=output_node.object_name,
             link_index=output_node.link_index,
+            link_type=output_node.link_type,
             node_id=node_id,
         ))
     return resolved_outputs
@@ -773,6 +780,12 @@ def _assign_power_lines_to_outputs(solver, required_line_ids, output_nodes):
     return assignments, power_line_roots, power_line_routes, missing_lines
 
 
+def _power_links_are_compatible(input_link_type, output_link_type):
+    try:
+        return are_link_types_compatible(input_link_type, output_link_type)
+    except (TypeError, ValueError):
+        return False
+
 def _assign_threephase_inputs_to_outputs(solver, input_nodes, output_nodes):
     if not input_nodes:
         return {}, {}, {}, ()
@@ -797,6 +810,8 @@ def _assign_threephase_inputs_to_outputs(solver, input_nodes, output_nodes):
         output_position = Vector(output_node.position)
 
         for input_index, input_node in enumerate(input_nodes):
+            if not _power_links_are_compatible(input_node.link_type, output_node.link_type):
+                continue
             destination = input_node_ids.get(input_index)
             if destination is None or destination not in distances:
                 continue

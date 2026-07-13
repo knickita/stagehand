@@ -32,6 +32,7 @@ UpdateAddon = _load_submodule("UpdateAddon")
 OptionsPanel = _load_submodule("OptionsPanel")
 PdfDrawings = _load_submodule("PdfDrawings")
 PowerManagement = _load_submodule("PowerManagement")
+PowerPdf = _load_submodule("PowerPdf")
 SnapLogics = _load_submodule("SnapLogics")
 
 classes = (    
@@ -44,6 +45,7 @@ classes = (
     MvrImport,
     PdfDrawings,
     PowerManagement,
+    PowerPdf,
     MenuConfiguration,
     Alerts,
     UpdateAddon,

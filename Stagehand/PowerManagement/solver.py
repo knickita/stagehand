@@ -13,6 +13,7 @@ class PowerInputNode:
     link_uid: str = ""
     object_name: str = ""
     link_index: int = -1
+    link_type: int = -1
 
 
 class PowerSolverError(RuntimeError):
