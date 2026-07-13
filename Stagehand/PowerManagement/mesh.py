@@ -1008,6 +1008,7 @@ def build_power_lines_mesh(
     mesh_name=POWER_LINES_MESH_NAME,
     material_name=POWER_LINES_MATERIAL_NAME,
     cable_radius_scale=1.0,
+    profiler=None,
 ):
     if power_line_routes is None:
         render_nodes, render_links = _build_render_graph(solver, cable_anchor_offsets, cable_radius_scale)
@@ -1019,6 +1020,14 @@ def build_power_lines_mesh(
             cable_anchor_offsets,
             cable_radius_scale,
         )
+    if profiler is not None:
+        profiler.step(
+            f"mesh {object_name} render graph",
+            render_nodes=len(render_nodes),
+            render_links=len(render_links),
+            route_sets=0 if power_line_routes is None else len(power_line_routes),
+        )
+
     vertices = []
     faces = []
     face_line_ids = []
@@ -1027,21 +1036,45 @@ def build_power_lines_mesh(
 
     for render_link in render_links:
         _append_cable_mesh(vertices, faces, face_line_ids, render_link, draw_internal_faces, cable_radius_scale)
+    if profiler is not None:
+        profiler.step(
+            f"mesh {object_name} cable geometry",
+            vertices=len(vertices),
+            faces=len(faces),
+        )
 
     for render_node in render_nodes:
         _append_node_intersection_mesh(vertices, faces, face_line_ids, render_node, cable_radius_scale)
+    if profiler is not None:
+        profiler.step(
+            f"mesh {object_name} intersections",
+            vertices=len(vertices),
+            faces=len(faces),
+        )
 
     _remove_existing_power_lines_object(object_name)
+    if profiler is not None:
+        profiler.step(f"mesh {object_name} remove old object")
 
     mesh = bpy.data.meshes.new(mesh_name)
     mesh.from_pydata(vertices, [], faces)
     mesh.update(calc_edges=True)
+    if profiler is not None:
+        profiler.step(
+            f"mesh {object_name} from_pydata",
+            vertices=len(vertices),
+            faces=len(faces),
+        )
     _apply_power_line_colors(mesh, face_line_ids, cable_color_mode)
+    if profiler is not None:
+        profiler.step(f"mesh {object_name} apply colors", face_colors=len(face_line_ids))
 
     power_lines_object = bpy.data.objects.new(object_name, mesh)
     power_lines_object["stagehand_generated_power_lines"] = True
     power_lines_object.hide_select = True
     power_lines_object.data.materials.append(_material(context, material_name))
     _move_to_stagehand_collection(power_lines_object, context)
+    if profiler is not None:
+        profiler.step(f"mesh {object_name} link object")
 
     return power_lines_object, len(render_links), len(render_nodes), len(vertices), len(faces)

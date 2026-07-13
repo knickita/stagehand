@@ -119,11 +119,21 @@ class PowerSolver:
             raise PowerSolverError("Starting power node is not present in graph.")
         self.start_node = node_index[start_key]
 
-    def solve(self):
+    def solve(self, profiler=None):
         if not self.nodes:
             return
 
+        if profiler is not None:
+            profiler.step(
+                "solver begin",
+                nodes=len(self.nodes),
+                edges=len(self.edges),
+                power_nodes=len(self.power_nodes),
+            )
+
         self.forward_distances = self._forward_distances()
+        if profiler is not None:
+            profiler.step("solver forward distances", distances=len(self.forward_distances))
         possible_routes_graph = [set() for _node in self.power_nodes]
 
         route_inputs = [
@@ -132,32 +142,56 @@ class PowerSolver:
             if self.forward_distances[power_node] != 0
         ]
         route_results = _run_parallel(self._backward_route, route_inputs)
+        if profiler is not None:
+            profiler.step("solver backward routes", route_inputs=len(route_inputs), route_results=len(route_results))
 
         used_node_counts = [0] * len(self.nodes)
         for route_index, used_nodes, possible_routes in route_results:
             possible_routes_graph[route_index] = possible_routes
             for node in used_nodes:
                 used_node_counts[node] += 1
+        if profiler is not None:
+            profiler.step("solver count used nodes", used_nodes=sum(1 for count in used_node_counts if count > 0))
 
         graph = set()
         for possible_routes in possible_routes_graph:
             graph.update(possible_routes)
+        if profiler is not None:
+            profiler.step("solver merge possible route graph", route_edges=len(graph))
 
         used_node_counts[self.start_node] += 1
         steiner_edge_sets = _run_parallel(
             lambda power_node: self._layout_cables(power_node, graph, used_node_counts),
             self.power_nodes,
         )
+        if profiler is not None:
+            profiler.step("solver layout cables", power_nodes=len(self.power_nodes), edge_sets=len(steiner_edge_sets))
 
         parallel_steiner_edges = set()
         for edge_set in steiner_edge_sets:
             parallel_steiner_edges.update(edge_set)
+        if profiler is not None:
+            profiler.step("solver merge steiner edges", steiner_edges=len(parallel_steiner_edges))
 
         self._compute_steiner_tree(parallel_steiner_edges)
+        if profiler is not None:
+            profiler.step(
+                "solver compute steiner tree",
+                steiner_nodes=len(self.steiner_nodes),
+                junctions=len(self.steiner_junctions),
+            )
         self._calculate_steiner_paths()
+        if profiler is not None:
+            profiler.step("solver calculate steiner paths", paths=len(self.steiner_paths))
         self._optimize_steiner_tree()
+        if profiler is not None:
+            profiler.step("solver optimize steiner tree", children=len(self.steiner_children))
         self._subdivide_power_lines()
+        if profiler is not None:
+            profiler.step("solver subdivide power lines", lines=len(self.power_lines_consumption))
         self._populate_power_lines_per_node()
+        if profiler is not None:
+            profiler.step("solver populate lines per node", nodes_with_lines=len(self.power_lines_per_node))
 
     def _forward_distances(self):
         distances = [0] * len(self.nodes)

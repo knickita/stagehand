@@ -826,16 +826,28 @@ def generate_power_solution(
     structure_resolution=STRUCTURE_RESOLUTION,
     delta_excess=DELTA_EXCESS,
     max_power_for_line=MAX_POWER_FOR_LINE,
+    profiler=None,
 ):
     warnings = []
+    if profiler is not None:
+        profiler.step("generate solution begin")
+
     structure_vertices, cable_anchor_offsets = _collect_structure_vertices(
         structure_resolution,
         collect_offsets=True,
     )
+    if profiler is not None:
+        profiler.step(
+            "collect structure vertices",
+            vertices=len(structure_vertices),
+            anchor_offsets=len(cable_anchor_offsets),
+        )
     if not structure_vertices:
         raise PowerSolverError("No cable anchor links were found. Add truss/pipe objects first.")
 
     route_edges = _calculate_structure_edges(structure_vertices, edge_resolution)
+    if profiler is not None:
+        profiler.step("calculate structure edges", edges=len(route_edges))
 
     power_16a_outputs = list(_iter_power_16a_output_nodes())
     threephase_outputs = list(_iter_threephase_output_nodes())
@@ -844,6 +856,15 @@ def generate_power_solution(
     power_nodes = [PowerInputNode(starting_position, 0, starting_label)]
     input_power_nodes = list(_iter_power_input_nodes())
     power_nodes.extend(input_power_nodes)
+    if profiler is not None:
+        profiler.step(
+            "collect power nodes",
+            monophase_inputs=len(input_power_nodes),
+            threephase_inputs=len(threephase_input_nodes),
+            outputs_16a=len(power_16a_outputs),
+            threephase_outputs=len(threephase_outputs),
+            start=starting_label,
+        )
 
     if not input_power_nodes and not threephase_input_nodes:
         warnings.append("No power input nodes were found; generated mesh may be empty.")
@@ -852,27 +873,60 @@ def generate_power_solution(
     graph_attachment_nodes.extend(power_16a_outputs)
     graph_attachment_nodes.extend(threephase_input_nodes)
     graph_attachment_nodes.extend(threephase_outputs)
-    route_edges.extend(_calculate_power_edges(structure_vertices, graph_attachment_nodes))
+    power_edges = _calculate_power_edges(structure_vertices, graph_attachment_nodes)
+    route_edges.extend(power_edges)
+    if profiler is not None:
+        profiler.step(
+            "attach power nodes to graph",
+            attachment_nodes=len(graph_attachment_nodes),
+            power_edges=len(power_edges),
+            route_edges=len(route_edges),
+        )
     route_edges = _deduplicate_route_edges(route_edges)
+    if profiler is not None:
+        profiler.step("deduplicate route edges", route_edges=len(route_edges))
 
     solver = PowerSolver(
         max_power_for_line=max_power_for_line,
         delta_excess=delta_excess,
     )
     solver.construct_indices(route_edges, power_nodes, starting_position)
-    solver.solve()
+    if profiler is not None:
+        profiler.step(
+            "construct solver graph",
+            solver_nodes=len(solver.nodes),
+            solver_edges=len(solver.edges),
+            solver_power_nodes=len(solver.power_nodes),
+        )
+    solver.solve(profiler=profiler)
 
     required_line_ids = _required_power_line_ids(solver)
+    if profiler is not None:
+        profiler.step("collect required monophase lines", required_lines=len(required_line_ids))
     assignments, power_line_roots, power_line_routes, missing_line_ids = _assign_power_lines_to_outputs(
         solver,
         required_line_ids,
         power_16a_outputs,
     )
+    if profiler is not None:
+        profiler.step(
+            "assign monophase outputs",
+            assigned=len(assignments),
+            missing=len(missing_line_ids),
+            routes=len(power_line_routes),
+        )
     threephase_assignments, threephase_roots, threephase_routes, missing_threephase_inputs = _assign_threephase_inputs_to_outputs(
         solver,
         threephase_input_nodes,
         threephase_outputs,
     )
+    if profiler is not None:
+        profiler.step(
+            "assign threephase outputs",
+            assigned=len(threephase_assignments),
+            missing=len(missing_threephase_inputs),
+            routes=len(threephase_routes),
+        )
 
     missing_16a_outputs = len(missing_line_ids)
     missing_threephase_outputs = len(missing_threephase_inputs)
@@ -897,6 +951,11 @@ def generate_power_solution(
         threephase_input_nodes,
         threephase_assignments,
     ))
+    if profiler is not None:
+        profiler.step(
+            "build generated connection map",
+            generated_connections=len(generated_powerline_connections),
+        )
 
     return PowerGenerationResult(
         solver=solver,

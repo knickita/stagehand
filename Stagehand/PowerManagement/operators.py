@@ -7,6 +7,7 @@ from .mesh import (
     THREEPHASE_POWER_LINES_OBJECT_NAME,
     build_power_lines_mesh,
 )
+from .profiling import PowerLineProfiler
 from .scene import collect_cable_anchor_points, generate_power_solution
 from .solver import PowerSolverError
 from ..RegistrationUtils import (
@@ -324,16 +325,20 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        profiler = PowerLineProfiler()
         try:
             _normalize_cable_obstacle_collections(context)
+            profiler.step("normalize cable obstacles")
             ProjectDatabase.clear_generated_powerlines()
-            result = generate_power_solution(context)
+            profiler.step("clear generated powerline map")
+            result = generate_power_solution(context, profiler=profiler)
             _obj, link_count, node_count, vertex_count, face_count = build_power_lines_mesh(
                 context,
                 result.solver,
                 result.cable_anchor_offsets,
                 result.power_line_routes,
                 result.power_line_roots,
+                profiler=profiler,
             )
             (
                 _threephase_obj,
@@ -351,12 +356,16 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
                 mesh_name=THREEPHASE_POWER_LINES_MESH_NAME,
                 material_name=THREEPHASE_POWER_LINES_MATERIAL_NAME,
                 cable_radius_scale=2.0,
+                profiler=profiler,
             )
             ProjectDatabase.set_generated_powerlines(result.generated_powerline_connections)
+            profiler.step("save generated powerline map", generated_connections=len(result.generated_powerline_connections))
         except PowerSolverError as exc:
+            profiler.step("operator failed", error=str(exc))
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
         except Exception as exc:
+            profiler.step("operator failed", error=str(exc))
             self.report({'ERROR'}, f"Unable to generate power lines: {exc}")
             return {'CANCELLED'}
 
@@ -373,6 +382,7 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
         )
         if result.warnings:
             message += f" ({'; '.join(result.warnings)})"
+        profiler.step("operator complete")
         self.report({'WARNING'} if result.warnings else {'INFO'}, message)
         return {'FINISHED'}
 
