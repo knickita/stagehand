@@ -97,16 +97,13 @@ def _import_asset(asset_data):
             f"Checked absolute path: {attempted_paths[0] if attempted_paths else 'no path generated'}"
         )
 
-    existing_objects = {obj.name_full for obj in bpy.data.objects}
+    existing_object_pointers = {obj.as_pointer() for obj in bpy.data.objects}
     bpy.ops.import_scene.gltf(filepath=str(mesh_path))
 
     imported_objects = [
-        obj for obj in bpy.context.selected_objects
-        if obj.name_full not in existing_objects
+        obj for obj in bpy.data.objects
+        if obj.as_pointer() not in existing_object_pointers
     ]
-
-    if not imported_objects:
-        imported_objects = [obj for obj in bpy.context.selected_objects]
 
     if not imported_objects:
         raise RuntimeError(f"No objects were imported from {mesh_path.name}")
