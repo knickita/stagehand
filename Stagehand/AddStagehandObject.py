@@ -43,6 +43,11 @@ class StagehandLinkItem(bpy.types.PropertyGroup):
         default=False,
     )
 
+    planeType: bpy.props.BoolProperty(
+        name="Plane Type",
+        default=False,
+    )
+
     displayRadius: bpy.props.FloatProperty(
         name="Display Radius",
         default=0.0,
@@ -50,6 +55,11 @@ class StagehandLinkItem(bpy.types.PropertyGroup):
 
     length: bpy.props.FloatProperty(
         name="Length",
+        default=0.0,
+    )
+
+    width: bpy.props.FloatProperty(
+        name="Width",
         default=0.0,
     )
 
@@ -134,12 +144,14 @@ def _normalize_link_rotation_mode(value):
     return value
 
 
-def _link_signature(type_value, cylindrical_type, display_radius, length, pos_dir):
+def _link_signature(type_value, cylindrical_type, plane_type, display_radius, length, width, pos_dir):
     return (
         int(type_value),
         bool(cylindrical_type),
+        bool(plane_type),
         _round_link_float(display_radius),
         _round_link_float(length),
+        _round_link_float(width),
         tuple(_round_link_float(value) for value in pos_dir),
     )
 
@@ -148,8 +160,10 @@ def _catalogue_link_signature(link_data):
     return _link_signature(
         link_data.get("type", 0),
         link_data.get("cylindricaltype", False),
+        link_data.get("planetype", link_data.get("planeType", False)),
         link_data.get("displayradius", 0.0),
         link_data.get("length", 0.0),
+        link_data.get("width", 0.0),
         link_data.get("posdir", ()),
     )
 
@@ -165,8 +179,10 @@ def _snapshot_stagehand_links(links):
                 "type": int(link.type),
                 "allowRotations": str(getattr(link, "allowRotations", "none")),
                 "cylindricalType": bool(link.cylindricalType),
+                "planeType": bool(link.planeType),
                 "displayRadius": float(link.displayRadius),
                 "length": float(link.length),
+                "width": float(link.width),
                 "anchorForCables": bool(link.anchorForCables),
                 "posDir": tuple(float(value) for value in link.posDir),
                 "connectedObjectUid": str(link.connectedObjectUid),
@@ -182,8 +198,10 @@ def _snapshot_link_signature(snapshot):
     return _link_signature(
         snapshot["type"],
         snapshot["cylindricalType"],
+        snapshot["planeType"],
         snapshot["displayRadius"],
         snapshot["length"],
+        snapshot["width"],
         snapshot["posDir"],
     )
 
@@ -230,16 +248,13 @@ def _apply_stagehand_link_data(link_item, link_data, preserved_state=None):
         link_data.get("allowrotations", default_link_allow_rotations(link_item.type))
     )
     link_item.cylindricalType = bool(link_data.get("cylindricaltype", False))
+    link_item.planeType = bool(link_data.get("planetype", link_data.get("planeType", False)))
     link_item.displayRadius = float(link_data.get("displayradius", 0.0))
     link_item.length = float(link_data.get("length", 0.0))
+    link_item.width = float(link_data.get("width", 0.0))
     link_item.anchorForCables = bool(
-        link_data.get(
-            "anchorforcables",
-            link_data.get(
-                "anchorForCables",
-                link_item.cylindricalType and link_item.length > 0.0,
-            ),
-        )
+        (link_item.cylindricalType and link_item.length > 0.0)
+        or link_item.planeType
     )
 
     pos_dir = tuple(float(value) for value in link_data.get("posdir", []))
@@ -402,8 +417,10 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
                 item_box.prop(link_item, "type")
                 item_box.prop(link_item, "allowRotations")
                 item_box.prop(link_item, "cylindricalType")
+                item_box.prop(link_item, "planeType")
                 item_box.prop(link_item, "displayRadius")
                 item_box.prop(link_item, "length")
+                item_box.prop(link_item, "width")
                 item_box.prop(link_item, "anchorForCables")
                 item_box.prop(link_item, "posDir")
                 connected_link_uid = Connections.get_connected_link_uid(link_item)

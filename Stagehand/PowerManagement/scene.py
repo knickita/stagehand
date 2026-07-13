@@ -132,29 +132,59 @@ def _link_world_transform(obj, link):
 
 
 def _link_anchor_for_cables(link):
-    if getattr(link, "anchorForCables", False):
-        return True
-    return bool(link.cylindricalType and link.length > 0.0)
+    return bool(getattr(link, "anchorForCables", False))
+
+
+def _dimension_offsets(dimension, resolution):
+    dimension = max(0.0, float(dimension))
+    if dimension <= 0.0:
+        return (0.0,)
+
+    offsets = [index * resolution for index in range(int(dimension / resolution) + 1)]
+    if not offsets or abs(offsets[-1] - dimension) > 0.000001:
+        offsets.append(dimension)
+    return tuple(offsets)
 
 
 def _link_local_structure_points(link, resolution):
     position = Vector(link.posDir[:3])
-    direction = _link_rotation(link) @ Vector((0.0, 1.0, 0.0))
+    rotation = _link_rotation(link)
+
+    if getattr(link, "planeType", False):
+        width_direction = rotation @ Vector((1.0, 0.0, 0.0))
+        length_direction = rotation @ Vector((0.0, 1.0, 0.0))
+        width_offsets = _dimension_offsets(getattr(link, "width", 0.0), resolution)
+        length_offsets = _dimension_offsets(getattr(link, "length", 0.0), resolution)
+        return [
+            position + (width_direction * width_offset) + (length_direction * length_offset)
+            for width_offset in width_offsets
+            for length_offset in length_offsets
+        ]
+
+    direction = rotation @ Vector((0.0, 1.0, 0.0))
     direction *= resolution
     point_count = int(link.length / resolution) + 1
     return [position + (direction * index) for index in range(point_count)]
 
 
 def _link_outward_direction(obj, link, local_point):
+    link_rotation = _link_rotation(link)
+    if getattr(link, "planeType", False):
+        outward = link_rotation @ Vector((0.0, 0.0, 1.0))
+        if outward.length_squared <= 0.0000000001:
+            outward = Vector((0.0, 0.0, 1.0))
+        outward.normalize()
+        return obj.matrix_world.to_quaternion() @ outward
+
     local_position = Vector(link.posDir[:3])
-    local_direction = _link_rotation(link) @ Vector((0.0, 1.0, 0.0))
+    local_direction = link_rotation @ Vector((0.0, 1.0, 0.0))
     if local_direction.length_squared > 0.0:
         local_direction.normalize()
 
     outward = Vector(local_point)
     outward -= local_direction * outward.dot(local_direction)
     if outward.length_squared <= 0.0000000001:
-        outward = _link_rotation(link) @ Vector((1.0, 0.0, 0.0))
+        outward = link_rotation @ Vector((1.0, 0.0, 0.0))
     if outward.length_squared <= 0.0000000001:
         outward = Vector(local_position)
     if outward.length_squared <= 0.0000000001:

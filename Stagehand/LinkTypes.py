@@ -34,6 +34,7 @@ class StagehandLinkType(IntEnum):
     SIXTEMA_JOINT = 29
     SIXTEMA_LEG_SITE = 30
     SIXTEMA_LEG = 31
+    PLANE = 32
 
 
 LINK_COMPATIBILITY = {
