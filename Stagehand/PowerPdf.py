@@ -137,7 +137,7 @@ def _line_type_label(link):
 def _destination_labels(destination_objects):
     counts = Counter(_object_label(obj) for obj in destination_objects)
     return [
-        f"{quantity} x {label}" if quantity > 1 else label
+        f"{quantity} x {label}"
         for label, quantity in sorted(counts.items(), key=lambda item: item[0].casefold())
     ]
 
@@ -597,6 +597,18 @@ def _power_page_streams(project_name, diagrams, warnings=()):
                 cursor_top = PAGE_CONTENT_TOP
             current_page.append((diagram, [], False, cursor_top))
             cursor_top -= block_height + DIAGRAM_GAP
+            continue
+
+        full_block_height = _diagram_block_height(diagram, lines)
+        full_page_height = PAGE_CONTENT_TOP - PAGE_CONTENT_BOTTOM
+        if full_block_height <= full_page_height:
+            remaining_height = cursor_top - PAGE_CONTENT_BOTTOM
+            if current_page and full_block_height > remaining_height:
+                pages.append(current_page)
+                current_page = []
+                cursor_top = PAGE_CONTENT_TOP
+            current_page.append((diagram, lines, False, cursor_top))
+            cursor_top -= full_block_height + DIAGRAM_GAP
             continue
 
         start = 0
