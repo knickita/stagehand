@@ -183,7 +183,16 @@ class PowerSolver:
         self._calculate_steiner_paths()
         if profiler is not None:
             profiler.step("solver calculate steiner paths", paths=len(self.steiner_paths))
-        self._optimize_steiner_tree()
+        steiner_snapshot = self._snapshot_steiner_state()
+        self._optimize_steiner_tree(profiler=profiler)
+        missing_power_nodes = self._missing_positive_power_nodes()
+        if missing_power_nodes:
+            if profiler is not None:
+                profiler.step(
+                    "solver optimize rollback",
+                    missing_positive_power_nodes=len(missing_power_nodes),
+                )
+            self._restore_steiner_state(steiner_snapshot)
         if profiler is not None:
             profiler.step("solver optimize steiner tree", children=len(self.steiner_children))
         self._subdivide_power_lines()
@@ -370,20 +379,78 @@ class PowerSolver:
 
             self.steiner_paths[temp_node].add(node)
 
-    def _optimize_steiner_tree(self):
+    def _snapshot_steiner_state(self):
+        return {
+            "parents": dict(self.steiner_parents),
+            "children": defaultdict(set, {node: set(children) for node, children in self.steiner_children.items()}),
+            "junctions": set(self.steiner_junctions),
+            "paths": defaultdict(set, {node: set(children) for node, children in self.steiner_paths.items()}),
+            "nodes": set(self.steiner_nodes),
+        }
+
+    def _restore_steiner_state(self, snapshot):
+        self.steiner_parents = dict(snapshot["parents"])
+        self.steiner_children = defaultdict(set, {node: set(children) for node, children in snapshot["children"].items()})
+        self.steiner_junctions = set(snapshot["junctions"])
+        self.steiner_paths = defaultdict(set, {node: set(children) for node, children in snapshot["paths"].items()})
+        self.steiner_nodes = set(snapshot["nodes"])
+
+    def _missing_positive_power_nodes(self):
+        reachable = set()
+        to_explore = deque([self.start_node])
+        while to_explore:
+            node = to_explore.popleft()
+            if node in reachable:
+                continue
+            reachable.add(node)
+            for child in self.steiner_paths.get(node, ()):
+                to_explore.append(child)
+
+        return tuple(
+            node
+            for node in self.power_nodes
+            if node != self.start_node
+            and self.power_node_consumptions.get(node, 0) > 0
+            and node not in reachable
+        )
+
+    def _optimize_steiner_tree(self, profiler=None):
         to_check = {
             (parent, child)
             for parent, children in self.steiner_paths.items()
             for child in children
         }
+        iteration = 0
+        applied_improvements = 0
+        if profiler is not None:
+            profiler.step(
+                "solver optimize steiner tree begin",
+                initial_to_check=len(to_check),
+                paths=len(self.steiner_paths),
+            )
 
         while True:
+            iteration += 1
             to_check_array = list(to_check)
             find_inputs = [
                 (index, parent, child)
                 for index, (parent, child) in enumerate(to_check_array)
             ]
+            if profiler is not None:
+                profiler.step(
+                    "solver optimize iteration begin",
+                    iteration=iteration,
+                    to_check=len(to_check_array),
+                    steiner_paths=len(self.steiner_paths),
+                )
+
             best_results = _run_parallel(self._find_best_path, find_inputs)
+            if profiler is not None:
+                profiler.step(
+                    "solver optimize find best paths",
+                    iteration=iteration,
+                    results=len(best_results),
+                )
 
             to_check.clear()
             best_length_improvement = 0
@@ -391,38 +458,127 @@ class PowerSolver:
             best_paths = [[] for _item in to_check_array]
             length_improvements = [0] * len(to_check_array)
 
-            for index, best_path, length_improvement in best_results:
+            guard_reasons = defaultdict(int)
+            for result in best_results:
+                if len(result) == 3:
+                    index, best_path, length_improvement = result
+                    guard_reason = ""
+                else:
+                    index, best_path, length_improvement, guard_reason = result
                 best_paths[index] = best_path
                 length_improvements[index] = length_improvement
+                if guard_reason:
+                    guard_reasons[guard_reason] += 1
                 if best_path:
                     to_check.add(to_check_array[index])
                     if length_improvement > best_length_improvement:
                         best_length_improvement = length_improvement
                         best_index = index
 
+            if profiler is not None:
+                profiler.step(
+                    "solver optimize scan results",
+                    iteration=iteration,
+                    candidates_with_improvement=len(to_check),
+                    best_improvement=best_length_improvement,
+                )
+                if guard_reasons:
+                    profiler.step(
+                        "solver optimize guarded candidates",
+                        iteration=iteration,
+                        guarded=sum(guard_reasons.values()),
+                        reasons=dict(guard_reasons),
+                    )
+
             if best_index == -1:
+                if profiler is not None:
+                    profiler.step(
+                        "solver optimize steiner tree end",
+                        iterations=iteration,
+                        applied_improvements=applied_improvements,
+                    )
                 break
 
             target_parent, target_child = to_check_array[best_index]
-            node = target_child
-            parent = self.steiner_parents[node]
-            while parent != target_parent:
-                self.steiner_nodes.discard(parent)
-                self._remove_steiner_link(parent, node, to_check)
-                node = parent
-                parent = self.steiner_parents[node]
-            self._remove_steiner_link(parent, node, to_check)
-
             best_path = best_paths[best_index]
+            if profiler is not None:
+                profiler.step(
+                    "solver optimize apply begin",
+                    iteration=iteration,
+                    target_parent=target_parent,
+                    target_child=target_child,
+                    best_path_length=len(best_path),
+                    best_improvement=best_length_improvement,
+                )
+
+            node = target_child
+            removed_links = 0
+            visited_chain = set()
+            parent_chain = []
+            invalid_chain = False
+            while True:
+                parent = self.steiner_parents.get(node)
+                if parent is None or node in visited_chain or parent in visited_chain:
+                    invalid_chain = True
+                    break
+                parent_chain.append((parent, node))
+                if parent == target_parent:
+                    break
+                visited_chain.add(node)
+                node = parent
+
+            if invalid_chain:
+                if profiler is not None:
+                    profiler.step(
+                        "solver optimize abort invalid parent chain",
+                        iteration=iteration,
+                        target_parent=target_parent,
+                        target_child=target_child,
+                        checked_links=len(parent_chain),
+                    )
+                break
+
+            for parent, node in parent_chain:
+                if parent != target_parent:
+                    self.steiner_nodes.discard(parent)
+                self._remove_steiner_link(parent, node, to_check)
+                removed_links += 1
+            if profiler is not None:
+                profiler.step(
+                    "solver optimize removed old path",
+                    iteration=iteration,
+                    removed_links=removed_links,
+                    to_check=len(to_check),
+                )
+
+            added_links = 0
             for index in range(len(best_path) - 1):
                 parent = best_path[index]
                 child = best_path[index + 1]
                 self._add_steiner_link(parent, child, to_check)
+                added_links += 1
+            if profiler is not None:
+                profiler.step(
+                    "solver optimize added new path",
+                    iteration=iteration,
+                    added_links=added_links,
+                    to_check=len(to_check),
+                )
 
             self.steiner_paths[target_parent].discard(target_child)
             if not self.steiner_paths[target_parent]:
                 del self.steiner_paths[target_parent]
             self.steiner_paths[best_path[0]].add(target_child)
+            applied_improvements += 1
+            if profiler is not None:
+                profiler.step(
+                    "solver optimize apply best path",
+                    iteration=iteration,
+                    best_path_length=len(best_path),
+                    removed_links=removed_links,
+                    added_links=added_links,
+                    next_to_check=len(to_check),
+                )
 
     def _remove_steiner_link(self, parent, child, to_check):
         if child in self.steiner_parents and self.steiner_parents[child] == parent:
@@ -437,16 +593,21 @@ class PowerSolver:
             self.steiner_junctions.discard(parent)
 
             pp = parent
+            visited_pp = set()
             while pp not in self.steiner_junctions:
-                if pp not in self.steiner_parents:
+                if pp in visited_pp or pp not in self.steiner_parents:
                     break
+                visited_pp.add(pp)
                 pp = self.steiner_parents[pp]
 
             cc = parent
+            visited_cc = set()
             while cc not in self.steiner_junctions:
-                if cc not in self.steiner_children:
+                children = self.steiner_children.get(cc)
+                if cc in visited_cc or not children:
                     break
-                cc = next(iter(self.steiner_children[cc]))
+                visited_cc.add(cc)
+                cc = next(iter(children))
 
             self.steiner_paths[pp].discard(parent)
             if not self.steiner_paths[pp]:
@@ -468,17 +629,22 @@ class PowerSolver:
 
         if parent not in self.steiner_junctions and len(self.steiner_children[parent]) > 1:
             pp = parent
+            visited_pp = set()
             while pp not in self.steiner_junctions:
-                if pp not in self.steiner_parents:
+                if pp in visited_pp or pp not in self.steiner_parents:
                     break
+                visited_pp.add(pp)
                 pp = self.steiner_parents[pp]
 
             cc = parent
+            visited_cc = set()
             while cc not in self.steiner_junctions:
-                if cc not in self.steiner_children:
+                children = self.steiner_children.get(cc)
+                if cc in visited_cc or not children:
                     break
+                visited_cc.add(cc)
                 next_child = None
-                for candidate in self.steiner_children[cc]:
+                for candidate in children:
                     if candidate != child:
                         next_child = candidate
                         break
@@ -501,25 +667,32 @@ class PowerSolver:
         write_index, parent_node, starting_node = find_input
         actual_node = starting_node
         actual_distance = 0
+        visited_actual = set()
         while actual_node in self.steiner_parents:
+            if actual_node in visited_actual:
+                return write_index, [], 0, "cycle_parent_chain"
+            visited_actual.add(actual_node)
             actual_distance += 1
             if self.steiner_parents[actual_node] == parent_node:
                 break
             actual_node = self.steiner_parents[actual_node]
 
         valid = set()
+        visited_valid = {parent_node}
         to_be_explored = deque([parent_node])
         while to_be_explored:
             node = to_be_explored.popleft()
             for child in self.steiner_children.get(node, ()):
-                if child == actual_node:
+                if child == actual_node or child in visited_valid:
                     continue
+                visited_valid.add(child)
                 valid.add(child)
                 to_be_explored.append(child)
 
         parent = {}
         distance = {starting_node: 0}
         explored = set()
+        guard_reason = ""
         to_be_explored.append(starting_node)
 
         while to_be_explored:
@@ -545,7 +718,13 @@ class PowerSolver:
 
                 remaining_distance = actual_distance - distance[child] + self.delta_excess
                 temp = child
+                visited_temp = set()
                 while temp != parent_node:
+                    if temp in visited_temp or temp not in self.steiner_parents:
+                        guard_reason = "invalid_remaining_chain"
+                        remaining_distance = -1
+                        break
+                    visited_temp.add(temp)
                     temp = self.steiner_parents[temp]
                     remaining_distance -= 1
                     if remaining_distance < 0:
@@ -559,11 +738,11 @@ class PowerSolver:
                     best_path.append(temp)
                     temp = parent[temp]
                 best_path.append(starting_node)
-                return write_index, best_path, actual_distance - distance[child]
+                return write_index, best_path, actual_distance - distance[child], ""
 
             explored.add(actual_node)
 
-        return write_index, [], 0
+        return write_index, [], 0, guard_reason
 
     def _subdivide_power_lines(self):
         self.power_lines_consumption = {}

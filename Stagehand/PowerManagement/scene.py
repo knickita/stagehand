@@ -612,6 +612,15 @@ def _generated_direct_powerline_connections(input_nodes, assignments):
     return generated_connections
 
 
+def _format_power_node_labels(power_nodes, limit=5):
+    labels = []
+    for power_node in tuple(power_nodes)[:limit]:
+        labels.append(power_node.label or power_node.object_name or power_node.link_uid or "unknown input")
+    remaining = len(power_nodes) - len(labels)
+    if remaining > 0:
+        labels.append(f"and {remaining} more")
+    return ", ".join(labels)
+
 def _line_destination_nodes(solver, line_id):
     return tuple(sorted(
         node
@@ -951,10 +960,54 @@ def generate_power_solution(
         threephase_input_nodes,
         threephase_assignments,
     ))
+    positive_monophase_inputs = tuple(
+        power_node
+        for power_node in input_power_nodes
+        if power_node.link_uid and int(power_node.consumption) > 0
+    )
+    zero_watt_monophase_inputs = tuple(
+        power_node
+        for power_node in input_power_nodes
+        if power_node.link_uid and int(power_node.consumption) <= 0
+    )
+    connected_monophase_inputs = tuple(
+        power_node
+        for power_node in input_power_nodes
+        if power_node.link_uid and power_node.link_uid in generated_powerline_connections
+    )
+    missing_positive_monophase_inputs = tuple(
+        power_node
+        for power_node in positive_monophase_inputs
+        if power_node.link_uid not in generated_powerline_connections
+    )
+    missing_zero_watt_monophase_inputs = tuple(
+        power_node
+        for power_node in zero_watt_monophase_inputs
+        if power_node.link_uid not in generated_powerline_connections
+    )
     if profiler is not None:
         profiler.step(
             "build generated connection map",
             generated_connections=len(generated_powerline_connections),
+        )
+        profiler.step(
+            "monophase generated connection coverage",
+            inputs=len(input_power_nodes),
+            positive_inputs=len(positive_monophase_inputs),
+            zero_watt_inputs=len(zero_watt_monophase_inputs),
+            connected_inputs=len(connected_monophase_inputs),
+            missing_positive_inputs=len(missing_positive_monophase_inputs),
+            missing_zero_watt_inputs=len(missing_zero_watt_monophase_inputs),
+        )
+    if missing_positive_monophase_inputs:
+        warnings.append(
+            f"{len(missing_positive_monophase_inputs)} consuming monophase input(s) were not connected by generated power lines: "
+            f"{_format_power_node_labels(missing_positive_monophase_inputs)}."
+        )
+    if missing_zero_watt_monophase_inputs:
+        warnings.append(
+            f"Skipped {len(missing_zero_watt_monophase_inputs)} monophase input(s) with watt 0: "
+            f"{_format_power_node_labels(missing_zero_watt_monophase_inputs)}."
         )
 
     return PowerGenerationResult(
