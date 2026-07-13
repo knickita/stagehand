@@ -61,6 +61,7 @@ class PowerLineOutputAssignment:
     output_position: tuple
     output_object_uid: str = ""
     output_link_uid: str = ""
+    destination_node_ids: tuple = ()
 
 
 @dataclass
@@ -594,7 +595,8 @@ def _generated_powerline_connections(solver, required_line_ids, assignments, inp
         assignment = assignments.get(line_id)
         if assignment is None or not assignment.output_link_uid:
             continue
-        for destination in _line_destination_nodes(solver, line_id):
+        destination_nodes = assignment.destination_node_ids or _line_destination_nodes(solver, line_id)
+        for destination in destination_nodes:
             input_link_uid = input_link_uids_by_node.get(destination)
             if input_link_uid:
                 generated_connections[input_link_uid] = assignment.output_link_uid
@@ -675,7 +677,8 @@ def _build_power_line_routes(solver, required_line_ids, assignments, bfs_cache):
         route_edges = set()
         power_line_roots[line_id] = root_node
 
-        for destination in _line_destination_nodes(solver, line_id):
+        destination_nodes = assignment.destination_node_ids or _line_destination_nodes(solver, line_id)
+        for destination in destination_nodes:
             route_edges.update(_route_edges_from_parent_tree(
                 destination,
                 root_node,
@@ -730,17 +733,18 @@ def _assign_power_lines_to_outputs(solver, required_line_ids, output_nodes):
 
         for line_id in required_line_ids:
             destinations = _line_destination_nodes(solver, line_id)
-            if not destinations or any(destination not in distances for destination in destinations):
+            reachable_destinations = tuple(destination for destination in destinations if destination in distances)
+            if not reachable_destinations:
                 continue
-            graph_distance = sum(distances[destination] for destination in destinations)
+            graph_distance = sum(distances[destination] for destination in reachable_destinations)
             euclidean_distance = (output_position - representatives[line_id]).length_squared
-            candidates.append((graph_distance, euclidean_distance, line_id, output_index))
+            candidates.append((-len(reachable_destinations), graph_distance, euclidean_distance, line_id, output_index, reachable_destinations))
 
     assignments = {}
     assigned_lines = set()
     used_outputs = set()
 
-    for _graph_distance, _euclidean_distance, line_id, output_index in sorted(candidates):
+    for _reachable_count, _graph_distance, _euclidean_distance, line_id, output_index, reachable_destinations in sorted(candidates):
         if line_id in assigned_lines or output_index in used_outputs:
             continue
 
@@ -753,6 +757,7 @@ def _assign_power_lines_to_outputs(solver, required_line_ids, output_nodes):
             output_position=output_node.position,
             output_object_uid=output_node.object_uid,
             output_link_uid=output_node.link_uid,
+            destination_node_ids=reachable_destinations,
         )
         assigned_lines.add(line_id)
         used_outputs.add(output_index)
