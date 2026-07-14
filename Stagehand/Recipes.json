@@ -124,12 +124,19 @@
                     "default": 100,
                     "min": 70,
                     "max": 120
+                },
+                "addRailings": {
+                    "type": "BOOL",
+                    "label": "Railings",
+                    "description": "Add railings to the left, right, and back sides of the stage",
+                    "default": false
                 }
             },
             "settings": {
                 "cellWidth": 0.5,
                 "cellHeight": 0.5,
                 "dimensionMode": "EXACT",
+                "verticalRemainderPosition": "BOTTOM",
                 "maxItems": 1000,
                 "maxCells": 4000,
                 "columnVector": [
@@ -160,7 +167,20 @@
                         0.0,
                         1.0
                     ]
-                }
+                },
+                "boundaryAccessories": [
+                    {
+                        "parameter": "addRailings",
+                        "assetId": 52,
+                        "linkIndex": 0,
+                        "sides": [
+                            "left",
+                            "right",
+                            "top"
+                        ],
+                        "label": "railings"
+                    }
+                ]
             },
             "modules": [
                 {
@@ -207,12 +227,12 @@
                         0.0
                     ],
                     "links": {
-                        "left": [4],
-                        "right": [3],
-                        "bottom": [2, 5],
+                        "left": [],
+                        "right": [],
+                        "bottom": [2, 3],
                         "top": [0, 1]
                     },
-                    "supports": [7, 8, 9, 10]
+                    "supports": [5, 6, 7, 8]
                 },
                 {
                     "assetId": 43,
@@ -224,12 +244,12 @@
                         0.0
                     ],
                     "links": {
-                        "left": [2],
-                        "right": [1],
-                        "bottom": [3],
+                        "left": [],
+                        "right": [],
+                        "bottom": [1],
                         "top": [0]
                     },
-                    "supports": [5, 6, 7, 8]
+                    "supports": [3, 4, 5, 6]
                 },
                 {
                     "assetId": 40,
@@ -263,11 +283,11 @@
                     ],
                     "links": {
                         "left": [0, 1],
-                        "right": [2, 5],
-                        "bottom": [4],
-                        "top": [3]
+                        "right": [2, 3],
+                        "bottom": [],
+                        "top": []
                     },
-                    "supports": [7, 8, 9, 10]
+                    "supports": [5, 6, 7, 8]
                 },
                 {
                     "assetId": 43,
@@ -282,11 +302,11 @@
                     ],
                     "links": {
                         "left": [0],
-                        "right": [3],
-                        "bottom": [2],
-                        "top": [1]
+                        "right": [1],
+                        "bottom": [],
+                        "top": []
                     },
-                    "supports": [5, 6, 7, 8]
+                    "supports": [3, 4, 5, 6]
                 }
             ]
         }

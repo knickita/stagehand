@@ -144,7 +144,7 @@ def _normalized_grid_modules(definition, cell_width, cell_height):
         link_count = len(asset_data.get("links", ()))
         for side in GRID_SIDES:
             raw_indices = raw_links.get(side)
-            if not isinstance(raw_indices, list) or not raw_indices:
+            if not isinstance(raw_indices, list):
                 raise ValueError(
                     f"Grid module '{module_name}' requires link indices for '{side}'"
                 )
@@ -274,13 +274,22 @@ def _apply_vertical_remainder_position(
     parameters,
 ):
     parameter_name = settings.get("verticalRemainderParameter")
-    if not parameter_name:
+    configured_position = settings.get("verticalRemainderPosition")
+    if not parameter_name and configured_position is None:
         return
 
-    position = str(parameters.get(parameter_name, "TOP")).strip().upper()
+    if parameter_name:
+        position = parameters.get(
+            parameter_name,
+            configured_position if configured_position is not None else "TOP",
+        )
+    else:
+        position = configured_position
+    position = str(position).strip().upper()
     if position not in {"BOTTOM", "TOP"}:
+        setting_name = parameter_name or "verticalRemainderPosition"
         raise ValueError(
-            f"Grid parameter '{parameter_name}' must be BOTTOM or TOP"
+            f"Grid parameter '{setting_name}' must be BOTTOM or TOP"
         )
     if position == "BOTTOM":
         for placement in placements:
@@ -352,6 +361,11 @@ def _side_connection_candidates(placement_a, side_a, placement_b, side_b):
 def _connect_grid_sides(placement_a, side_a, placement_b, side_b):
     obj_a = placement_a["object"]
     obj_b = placement_b["object"]
+    if (
+        not placement_a["module"]["links"][side_a]
+        or not placement_b["module"]["links"][side_b]
+    ):
+        return 0
     connected_count = 0
 
     for _distance, _angle, index_a, index_b in _side_connection_candidates(
@@ -607,6 +621,154 @@ def _add_grid_supports(
     return support_count, connection_count
 
 
+def _enabled_grid_boundary_accessories(settings, parameters):
+    raw_accessories = settings.get("boundaryAccessories", [])
+    if not isinstance(raw_accessories, list):
+        raise ValueError("Recipe setting 'boundaryAccessories' must be a list")
+
+    accessories = []
+    for raw_accessory in raw_accessories:
+        if not isinstance(raw_accessory, dict):
+            raise ValueError("Every boundary accessory must be an object")
+
+        parameter_name = str(raw_accessory.get("parameter", "")).strip()
+        if parameter_name and not bool(parameters.get(parameter_name, False)):
+            continue
+
+        try:
+            asset_id = int(raw_accessory["assetId"])
+            link_index = int(raw_accessory.get("linkIndex", 0))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "Boundary accessories require assetId and a valid linkIndex"
+            ) from exc
+
+        asset_data = LoadCatalogue.CATALOGUE_BY_ID.get(asset_id)
+        if asset_data is None:
+            raise ValueError(
+                f"Catalogue boundary asset ID {asset_id} was not found"
+            )
+        if link_index < 0 or link_index >= len(asset_data.get("links", ())):
+            raise ValueError(
+                "Boundary accessory linkIndex is outside its asset links"
+            )
+
+        raw_sides = raw_accessory.get("sides", [])
+        if not isinstance(raw_sides, list) or not raw_sides:
+            raise ValueError(
+                "Boundary accessories require a non-empty sides list"
+            )
+        sides = tuple(str(side).strip().lower() for side in raw_sides)
+        if any(side not in GRID_SIDES for side in sides):
+            raise ValueError("Boundary accessory sides must be grid sides")
+
+        accessories.append({
+            "assetId": asset_id,
+            "assetData": asset_data,
+            "linkIndex": link_index,
+            "sides": sides,
+            "label": str(raw_accessory.get("label", "boundary items")),
+        })
+
+    return accessories
+
+
+def _placement_touches_grid_side(placement, side, columns, rows):
+    module = placement["module"]
+    if side == "left":
+        return placement["column"] == 0
+    if side == "right":
+        return placement["column"] + module["columns"] == columns
+    if side == "bottom":
+        return placement["row"] == 0
+    return placement["row"] + module["rows"] == rows
+
+
+def _grid_boundary_accessory_sites(placements, columns, rows, accessory):
+    accessory_link = accessory["assetData"]["links"][accessory["linkIndex"]]
+    accessory_type = accessory_link["type"]
+    seen = set()
+
+    for placement in placements:
+        module = placement["module"]
+        module_asset = LoadCatalogue.CATALOGUE_BY_ID[module["assetId"]]
+        for side in accessory["sides"]:
+            if not _placement_touches_grid_side(
+                placement,
+                side,
+                columns,
+                rows,
+            ):
+                continue
+            for deck_link_index in module["links"][side]:
+                site_key = (id(placement), deck_link_index)
+                if site_key in seen:
+                    continue
+                seen.add(site_key)
+                deck_type = module_asset["links"][deck_link_index]["type"]
+                if are_link_types_compatible(accessory_type, deck_type):
+                    yield placement, deck_link_index
+
+
+def _add_grid_boundary_accessories(
+    placements,
+    columns,
+    rows,
+    accessories,
+    imported_objects,
+):
+    total_count = 0
+    connection_count = 0
+    label_counts = {}
+
+    for accessory in accessories:
+        for placement, deck_link_index in _grid_boundary_accessory_sites(
+            placements,
+            columns,
+            rows,
+            accessory,
+        ):
+            deck_obj = placement["object"]
+            deck_link = Connections.get_link(deck_obj, deck_link_index)
+            if deck_link is None:
+                raise RuntimeError("Unable to find a boundary deck link")
+            if Connections.is_link_connected(deck_link):
+                continue
+
+            asset_id = accessory["assetId"]
+            imported = LoadCatalogue.import_catalogue_asset(asset_id)
+            imported_objects.extend(imported)
+            accessory_obj = _single_stagehand_object(imported, asset_id)
+            accessory_link_index = accessory["linkIndex"]
+            accessory_link = Connections.get_link(
+                accessory_obj,
+                accessory_link_index,
+            )
+            if accessory_link is None:
+                raise RuntimeError("Unable to find a boundary accessory link")
+            if not Connections.align_object_link_to_target(
+                accessory_obj,
+                accessory_link_index,
+                deck_obj,
+                deck_link_index,
+            ):
+                raise RuntimeError("Unable to align a boundary accessory")
+            if not Connections.connect_links(
+                accessory_obj,
+                accessory_link_index,
+                deck_obj,
+                deck_link_index,
+            ):
+                raise RuntimeError("Unable to connect a boundary accessory")
+
+            total_count += 1
+            connection_count += 1
+            label = accessory["label"]
+            label_counts[label] = label_counts.get(label, 0) + 1
+
+    return total_count, connection_count, label_counts
+
+
 def _remove_imported_objects(objects):
     for obj in reversed(objects):
         if obj.name in bpy.data.objects:
@@ -669,7 +831,26 @@ def build_grid(context, definition, parameters):
         len(placement["module"]["supports"])
         for placement in placements
     )
-    if len(placements) + configured_support_count > max_items:
+    boundary_accessories = _enabled_grid_boundary_accessories(
+        settings,
+        parameters,
+    )
+    configured_accessory_count = sum(
+        1
+        for accessory in boundary_accessories
+        for _site in _grid_boundary_accessory_sites(
+            placements,
+            columns,
+            rows,
+            accessory,
+        )
+    )
+    if (
+        len(placements)
+        + configured_support_count
+        + configured_accessory_count
+        > max_items
+    ):
         raise ValueError(
             f"This build exceeds the recipe limit of {max_items} total items"
         )
@@ -710,6 +891,16 @@ def build_grid(context, definition, parameters):
             imported_objects,
         )
         connection_count += support_connections
+        _accessory_count, accessory_connections, accessory_labels = (
+            _add_grid_boundary_accessories(
+                placements,
+                columns,
+                rows,
+                boundary_accessories,
+                imported_objects,
+            )
+        )
+        connection_count += accessory_connections
 
     except Exception:
         _remove_imported_objects(imported_objects)
@@ -728,10 +919,14 @@ def build_grid(context, definition, parameters):
         if support_count
         else ""
     )
+    accessory_message = "".join(
+        f" and {count} {label}"
+        for label, count in accessory_labels.items()
+    )
 
     return (
         imported_objects,
-        f"Added {len(placements)} modules{support_message} "
+        f"Added {len(placements)} modules{support_message}{accessory_message} "
         f"({actual_width:g}m x {actual_height:g}m, "
         f"{connection_count} connections)",
     )
