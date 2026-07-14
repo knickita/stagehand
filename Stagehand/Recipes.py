@@ -2407,7 +2407,8 @@ def _build_operator(definition):
 
         values = {name: getattr(self, name) for name in parameters}
         try:
-            _objects, message = builder(context, definition, values)
+            with Connections.database_transaction():
+                _objects, message = builder(context, definition, values)
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}

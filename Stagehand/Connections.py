@@ -1,6 +1,7 @@
 import uuid
 import time
 from collections import defaultdict, namedtuple
+from contextlib import contextmanager
 from math import floor, pi, radians
 
 import bpy
@@ -65,6 +66,71 @@ _MEMBERSHIP_TRACKING_INITIALIZED = False
 _DIRTY_CONNECTION_REFRESH_DEADLINE = 0.0
 _LAST_STAGEHAND_OBJECT_NAMES = set()
 addon_keymaps = []
+_ACTIVE_DATABASE_TRANSACTION = None
+
+
+class DatabaseTransaction:
+    """Batch persistent connection-index changes into a single commit."""
+
+    def __init__(self):
+        self.connections = ProjectDatabase.get_connections(create=False)
+        self.link_parents = ProjectDatabase.get_link_parents(create=False)
+        self.object_names = ProjectDatabase.get_object_names(create=False)
+        self.dirty_mappings = set()
+        self.write_requests = {
+            "connections": 0,
+            "link_parents": 0,
+            "object_names": 0,
+        }
+        self.persisted_writes = 0
+        self.commit_elapsed = 0.0
+        self.committed = False
+        self.rolled_back = False
+
+    def update_mapping(self, mapping_name, values):
+        current_values = getattr(self, mapping_name)
+        if values is not current_values:
+            current_values.clear()
+            current_values.update(values)
+        self.dirty_mappings.add(mapping_name)
+        self.write_requests[mapping_name] += 1
+
+    def commit(self):
+        started_at = time.perf_counter()
+        if "object_names" in self.dirty_mappings:
+            ProjectDatabase.set_object_names(self.object_names)
+            self.persisted_writes += 1
+        if "link_parents" in self.dirty_mappings:
+            ProjectDatabase.set_link_parents(self.link_parents)
+            self.persisted_writes += 1
+        if "connections" in self.dirty_mappings:
+            ProjectDatabase.set_connections(self.connections)
+            self.persisted_writes += 1
+        self.commit_elapsed = time.perf_counter() - started_at
+        self.committed = True
+
+
+@contextmanager
+def database_transaction():
+    """Use in-memory connection indexes and persist them once on success."""
+    global _ACTIVE_DATABASE_TRANSACTION
+
+    if _ACTIVE_DATABASE_TRANSACTION is not None:
+        yield _ACTIVE_DATABASE_TRANSACTION
+        return
+
+    transaction = DatabaseTransaction()
+    _ACTIVE_DATABASE_TRANSACTION = transaction
+    try:
+        yield transaction
+    except BaseException:
+        transaction.rolled_back = True
+        raise
+    else:
+        _ACTIVE_DATABASE_TRANSACTION = None
+        transaction.commit()
+    finally:
+        _ACTIVE_DATABASE_TRANSACTION = None
 
 
 def _report_connection_profile(message):
@@ -120,26 +186,41 @@ def _clear_legacy_link_connection(link):
 
 
 def _get_database_connections(create=False):
+    if _ACTIVE_DATABASE_TRANSACTION is not None:
+        return _ACTIVE_DATABASE_TRANSACTION.connections
     return ProjectDatabase.get_connections(create=create)
 
 
 def _set_database_connections(connections):
+    if _ACTIVE_DATABASE_TRANSACTION is not None:
+        _ACTIVE_DATABASE_TRANSACTION.update_mapping("connections", connections)
+        return
     ProjectDatabase.set_connections(connections)
 
 
 def _get_database_link_parents(create=False):
+    if _ACTIVE_DATABASE_TRANSACTION is not None:
+        return _ACTIVE_DATABASE_TRANSACTION.link_parents
     return ProjectDatabase.get_link_parents(create=create)
 
 
 def _set_database_link_parents(link_parents):
+    if _ACTIVE_DATABASE_TRANSACTION is not None:
+        _ACTIVE_DATABASE_TRANSACTION.update_mapping("link_parents", link_parents)
+        return
     ProjectDatabase.set_link_parents(link_parents)
 
 
 def _get_database_object_names(create=False):
+    if _ACTIVE_DATABASE_TRANSACTION is not None:
+        return _ACTIVE_DATABASE_TRANSACTION.object_names
     return ProjectDatabase.get_object_names(create=create)
 
 
 def _set_database_object_names(object_names):
+    if _ACTIVE_DATABASE_TRANSACTION is not None:
+        _ACTIVE_DATABASE_TRANSACTION.update_mapping("object_names", object_names)
+        return
     ProjectDatabase.set_object_names(object_names)
 
 
@@ -161,7 +242,7 @@ def _remove_database_connection(link_uid):
         return
 
     connections = _get_database_connections(create=False)
-    if not connections:
+    if link_uid not in connections:
         return
 
     other_link_uid = connections.pop(link_uid, "")
