@@ -9,6 +9,7 @@ Keeping executable code out of JSON makes recipe files safe and easy to edit.
 import json
 from math import ceil, radians
 from pathlib import Path
+from time import perf_counter
 
 import bpy
 from mathutils import Matrix, Vector
@@ -1824,8 +1825,89 @@ def _connect_layher_pair(obj_a, link_index_a, obj_b, link_index_b):
         raise RuntimeError("Unable to connect the Layher structure")
 
 
-def _import_layher_object(asset_id, imported_objects):
-    imported = LoadCatalogue.import_catalogue_asset(asset_id)
+class _LayherConsoleProfiler:
+    def __init__(self, width_count, height_count, depth_count):
+        self.started_at = perf_counter()
+        self.width_count = width_count
+        self.height_count = height_count
+        self.depth_count = depth_count
+        self.current_phase = None
+        self.current_phase_started_at = None
+        self.phases = []
+        self.imports = {}
+
+    def start_phase(self, name):
+        self._finish_current_phase()
+        self.current_phase = name
+        self.current_phase_started_at = perf_counter()
+
+    def _finish_current_phase(self):
+        if self.current_phase is None:
+            return
+        elapsed = perf_counter() - self.current_phase_started_at
+        self.phases.append((self.current_phase, elapsed))
+        self.current_phase = None
+        self.current_phase_started_at = None
+
+    def record_import(self, asset_id, elapsed):
+        entry = self.imports.setdefault(asset_id, {"calls": 0, "elapsed": 0.0})
+        entry["calls"] += 1
+        entry["elapsed"] += elapsed
+
+    def print_report(self, status, total_items):
+        self._finish_current_phase()
+        total_elapsed = perf_counter() - self.started_at
+        import_elapsed = sum(item["elapsed"] for item in self.imports.values())
+        other_elapsed = max(0.0, total_elapsed - import_elapsed)
+
+        print("\n[Stagehand][Layher profiler]")
+        print(f"Stato: {status}")
+        print(
+            "Moduli: "
+            f"larghezza={self.width_count}, altezza={self.height_count}, "
+            f"profondita={self.depth_count} | elementi={total_items}"
+        )
+        print(f"Tempo totale: {total_elapsed:.3f} s")
+        print("Fasi:")
+        for name, elapsed in self.phases:
+            percentage = elapsed / total_elapsed * 100.0 if total_elapsed else 0.0
+            print(f"  {name:<16} {elapsed:8.3f} s  ({percentage:5.1f}%)")
+
+        import_percentage = (
+            import_elapsed / total_elapsed * 100.0 if total_elapsed else 0.0
+        )
+        print(
+            f"Cache/istanze:    {import_elapsed:8.3f} s  "
+            f"({import_percentage:5.1f}%)"
+        )
+        print("Dettaglio cache/istanze:")
+        for asset_id, item in sorted(
+            self.imports.items(),
+            key=lambda pair: pair[1]["elapsed"],
+            reverse=True,
+        ):
+            asset = LoadCatalogue.CATALOGUE_BY_ID.get(asset_id, {})
+            asset_name = asset.get("name", "asset sconosciuto")
+            average = item["elapsed"] / item["calls"]
+            print(
+                f"  #{asset_id:<3} {asset_name:<28} "
+                f"{item['calls']:4d} chiamate  "
+                f"totale {item['elapsed']:8.3f} s  media {average:.4f} s"
+            )
+        print(
+            "Altro (posizionamento, connessioni e aggiornamenti scena): "
+            f"{other_elapsed:.3f} s"
+        )
+        print("[Stagehand][Layher profiler fine]\n")
+
+
+def _import_layher_object(asset_id, imported_objects, profiler=None):
+    started_at = perf_counter()
+    try:
+        imported = LoadCatalogue.import_catalogue_asset(asset_id)
+    finally:
+        if profiler is not None:
+            profiler.record_import(asset_id, perf_counter() - started_at)
     imported_objects.extend(imported)
     return _single_stagehand_object(imported, asset_id)
 
@@ -1838,10 +1920,12 @@ def _add_layher_horizontal(
     end_link_index,
     settings,
     imported_objects,
+    profiler=None,
 ):
     horizontal = _import_layher_object(
         module["assetId"],
         imported_objects,
+        profiler,
     )
     start_link = settings["horizontalStartLink"]
     end_link = settings["horizontalEndLink"]
@@ -1875,10 +1959,12 @@ def _add_layher_diagonal(
     upper_link_index,
     settings,
     imported_objects,
+    profiler=None,
 ):
     diagonal = _import_layher_object(
         module["diagonalAssetId"],
         imported_objects,
+        profiler,
     )
     lower_link = settings["diagonalLowerLink"]
     upper_link = settings["diagonalUpperLink"]
@@ -1960,13 +2046,20 @@ def build_layher_grid(context, definition, parameters):
     verticals = {}
     connection_count = 0
     structure_matrix = None
+    profiler = _LayherConsoleProfiler(
+        width_count,
+        height_count,
+        depth_count,
+    )
 
+    profiler.start_phase("Basette")
     try:
         for y_index in range(depth_count + 1):
             for x_index in range(width_count + 1):
                 base = _import_layher_object(
                     settings["baseAssetId"],
                     imported_objects,
+                    profiler,
                 )
                 if structure_matrix is None:
                     structure_matrix = base.matrix_world.copy()
@@ -1979,6 +2072,7 @@ def build_layher_grid(context, definition, parameters):
                 )
                 bases[(x_index, y_index)] = base
 
+        profiler.start_phase("Montanti")
         for y_index in range(depth_count + 1):
             for x_index in range(width_count + 1):
                 current_obj = bases[(x_index, y_index)]
@@ -1987,6 +2081,7 @@ def build_layher_grid(context, definition, parameters):
                     vertical = _import_layher_object(
                         settings["verticalAssetId"],
                         imported_objects,
+                        profiler,
                     )
                     bottom_link = settings["verticalBottomLink"]
                     if not Connections.align_object_link_to_target(
@@ -2028,6 +2123,8 @@ def build_layher_grid(context, definition, parameters):
                 verticals[(x_index, y_index, level - 1)],
                 settings["verticalTopDiagonalLinks"][direction],
             )
+
+        profiler.start_phase("Correnti")
         for level in range(height_count + 1):
             for y_index in range(depth_count + 1):
                 for x_index in range(width_count):
@@ -2051,6 +2148,7 @@ def build_layher_grid(context, definition, parameters):
                         end_link,
                         settings,
                         imported_objects,
+                        profiler,
                     )
                     connection_count += 2
 
@@ -2076,8 +2174,11 @@ def build_layher_grid(context, definition, parameters):
                         end_link,
                         settings,
                         imported_objects,
+                        profiler,
                     )
                     connection_count += 2
+
+        profiler.start_phase("Diagonali")
         diagonal_orientation_cycle = (
             (True, True),
             (True, False),
@@ -2120,6 +2221,7 @@ def build_layher_grid(context, definition, parameters):
                         upper_link,
                         settings,
                         imported_objects,
+                        profiler,
                     )
                     connection_count += 2
 
@@ -2154,17 +2256,24 @@ def build_layher_grid(context, definition, parameters):
                         upper_link,
                         settings,
                         imported_objects,
+                        profiler,
                     )
                     connection_count += 2
-    except Exception:
+    except Exception as exc:
+        profiler.print_report(
+            f"errore: {type(exc).__name__}: {exc}",
+            total_items,
+        )
         _remove_imported_objects(imported_objects)
         raise
 
+    profiler.start_phase("Selezione")
     for selected in context.selected_objects:
         selected.select_set(False)
     for obj in imported_objects:
         obj.select_set(True)
     context.view_layer.objects.active = bases[(0, 0)]
+    profiler.print_report("completato", total_items)
 
     width = width_count * width_step
     depth = depth_count * depth_step

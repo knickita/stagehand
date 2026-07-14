@@ -568,7 +568,8 @@
                     "negativePositive": 31,
                     "positiveNegative": 32,
                     "negativeNegative": 33
-                },                "horizontalModules": {
+                },
+                "horizontalModules": {
                     "M207": {
                         "assetId": 15,
                         "diagonalAssetId": 17,

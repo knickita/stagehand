@@ -8,6 +8,7 @@ CONNECTIONS_KEY = "stagehand_connections"
 LINK_PARENTS_KEY = "stagehand_link_parents"
 OBJECT_NAMES_KEY = "stagehand_object_names"
 GENERATED_POWERLINES_KEY = "stagehand_generated_powerlines"
+ASSET_CACHE_KEY = "stagehand_asset_cache"
 DATABASE_SELECT_GUARD_INTERVAL = 0.5
 STAGEHAND_COLLECTION_NAME = "stagehand"
 
@@ -62,6 +63,25 @@ def _coerce_string_dict(value):
     return {str(key): str(item) for key, item in items()}
 
 
+def _coerce_object_dict(value):
+    if value is None:
+        return {}
+
+    items = getattr(value, "items", None)
+    if items is None:
+        return {}
+
+    result = {}
+    for key, item in items():
+        try:
+            asset_id = int(key)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(item, bpy.types.Object):
+            result[asset_id] = item
+    return result
+
+
 def _set_mapping_value(obj, key, mapping):
     normalized = {
         str(map_key): str(map_value)
@@ -73,7 +93,7 @@ def _set_mapping_value(obj, key, mapping):
 
 def _ensure_database_shape(obj):
     obj[DATABASE_MARKER_KEY] = True
-    obj[DATABASE_VERSION_KEY] = 1
+    obj[DATABASE_VERSION_KEY] = 2
     obj.hide_select = True
     obj.hide_viewport = True
     obj.hide_render = True
@@ -84,6 +104,16 @@ def _ensure_database_shape(obj):
         current_value = _coerce_string_dict(obj.get(key))
         if key not in obj or dict(current_value) != current_value:
             _set_mapping_value(obj, key, current_value)
+
+    raw_asset_cache = obj.get(ASSET_CACHE_KEY)
+    asset_cache = _coerce_object_dict(raw_asset_cache)
+    raw_cache_items = getattr(raw_asset_cache, "items", None)
+    raw_cache_count = len(list(raw_cache_items())) if raw_cache_items else -1
+    if ASSET_CACHE_KEY not in obj or len(asset_cache) != raw_cache_count:
+        obj[ASSET_CACHE_KEY] = {
+            str(asset_id): template
+            for asset_id, template in asset_cache.items()
+        }
 
 
 def _lock_database_selection(obj):
@@ -184,6 +214,54 @@ def set_generated_powerlines(generated_powerlines):
     if database_object is None:
         return
     _set_mapping_value(database_object, GENERATED_POWERLINES_KEY, generated_powerlines)
+
+
+def get_asset_cache(create=False):
+    """Return the persistent catalogue cache as asset_id -> template Object."""
+    database_object = get_database_object(create=create)
+    if database_object is None:
+        return {}
+    return _coerce_object_dict(database_object.get(ASSET_CACHE_KEY))
+
+
+def get_cached_asset_template(asset_id):
+    try:
+        normalized_asset_id = int(asset_id)
+    except (TypeError, ValueError):
+        return None
+    return get_asset_cache(create=False).get(normalized_asset_id)
+
+
+def set_cached_asset_template(asset_id, template):
+    if not isinstance(template, bpy.types.Object):
+        raise TypeError("A Stagehand asset cache value must be a Blender Object")
+
+    normalized_asset_id = int(asset_id)
+    database_object = get_database_object(create=True)
+    if database_object is None:
+        raise RuntimeError("Unable to create the Stagehand database object")
+
+    asset_cache = get_asset_cache(create=False)
+    asset_cache[normalized_asset_id] = template
+    database_object[ASSET_CACHE_KEY] = {
+        str(cached_asset_id): cached_template
+        for cached_asset_id, cached_template in asset_cache.items()
+    }
+
+
+def remove_cached_asset_template(asset_id):
+    normalized_asset_id = int(asset_id)
+    database_object = get_database_object(create=False)
+    if database_object is None:
+        return None
+
+    asset_cache = get_asset_cache(create=False)
+    removed = asset_cache.pop(normalized_asset_id, None)
+    database_object[ASSET_CACHE_KEY] = {
+        str(cached_asset_id): cached_template
+        for cached_asset_id, cached_template in asset_cache.items()
+    }
+    return removed
 
 
 def clear_generated_powerlines():
