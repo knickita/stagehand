@@ -269,7 +269,7 @@
             ]
         },        {
             "id": "sixtema_stage",
-            "name": "Sixtema Stage",
+            "name": "Palco Sixtema",
             "description": "Build a rectangular stage using compatible Sixtema deck modules",
             "builder": "grid",
             "parameters": {
@@ -484,6 +484,91 @@
             ]
         },
         {
+            "id": "layher_structure",
+            "name": "Struttura Layher",
+            "description": "Crea una struttura Layher tridimensionale con basette, montanti da 2m e correnti orizzontali",
+            "builder": "layher_grid",
+            "parameters": {
+                "widthModule": {
+                    "type": "ENUM",
+                    "label": "Modulo in larghezza",
+                    "description": "Lunghezza del modulo Layher lungo la larghezza",
+                    "default": "M207",
+                    "items": [
+                        { "value": "M207", "label": "2.07 m" },
+                        { "value": "M257", "label": "2.57 m" }
+                    ]
+                },
+                "depthModule": {
+                    "type": "ENUM",
+                    "label": "Modulo in profondità",
+                    "description": "Lunghezza del modulo Layher lungo la profondità",
+                    "default": "M207",
+                    "items": [
+                        { "value": "M207", "label": "2.07 m" },
+                        { "value": "M257", "label": "2.57 m" }
+                    ]
+                },
+                "widthCount": {
+                    "type": "INT",
+                    "label": "Moduli in larghezza",
+                    "description": "Numero di campate Layher lungo la larghezza",
+                    "default": 2,
+                    "min": 1,
+                    "max": 20
+                },
+                "heightCount": {
+                    "type": "INT",
+                    "label": "Moduli in altezza",
+                    "description": "Numero di montanti Layher da 2m impilati in altezza",
+                    "default": 2,
+                    "min": 1,
+                    "max": 20
+                },
+                "depthCount": {
+                    "type": "INT",
+                    "label": "Moduli in profondità",
+                    "description": "Numero di campate Layher lungo la profondità",
+                    "default": 1,
+                    "min": 1,
+                    "max": 20
+                }
+            },
+            "settings": {
+                "baseAssetId": 47,
+                "verticalAssetId": 14,
+                "verticalModuleHeight": 2.0,
+                "baseVerticalLink": 0,
+                "verticalBottomLink": 0,
+                "verticalTopLink": 1,
+                "horizontalStartLink": 0,
+                "horizontalEndLink": 1,
+                "baseRosetteLinks": {
+                    "xPositive": 1,
+                    "xNegative": 2,
+                    "yPositive": 3,
+                    "yNegative": 4
+                },
+                "verticalTopRosetteLinks": {
+                    "xPositive": 26,
+                    "xNegative": 27,
+                    "yPositive": 28,
+                    "yNegative": 29
+                },
+                "horizontalModules": {
+                    "M207": {
+                        "assetId": 15,
+                        "length": 2.07
+                    },
+                    "M257": {
+                        "assetId": 16,
+                        "length": 2.57
+                    }
+                },
+                "maxModuleCount": 20,
+                "maxItems": 1000
+            }
+        },        {
             "id": "americana_structure",
             "name": "Struttura Americana",
             "description": "Crea un portale o un ring rettangolare con americane e cubi Litec",

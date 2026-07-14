@@ -54,7 +54,7 @@ def _single_stagehand_object(imported_objects, asset_id):
     ]
     if len(objects) != 1:
         raise RuntimeError(
-            f"Grid asset {asset_id} must import exactly one Stagehand object; "
+            f"Catalogue asset {asset_id} must import exactly one Stagehand object; "
             f"found {len(objects)}"
         )
     return objects[0]
@@ -1645,6 +1645,359 @@ def build_litec_structure(context, definition, parameters):
 
 register_builder("litec_structure", build_litec_structure)
 
+
+def _layher_asset_link(asset_id, link_index, label):
+    asset = LoadCatalogue.CATALOGUE_BY_ID.get(asset_id)
+    if asset is None:
+        raise ValueError(f"Catalogue asset ID {asset_id} was not found")
+    try:
+        asset["links"][link_index]
+    except (IndexError, TypeError) as exc:
+        raise ValueError(
+            f"Layher {label} link {link_index} is invalid for asset {asset_id}"
+        ) from exc
+
+
+def _normalized_layher_settings(definition, parameters):
+    settings = definition.get("settings", {})
+    try:
+        base_asset_id = int(settings["baseAssetId"])
+        vertical_asset_id = int(settings["verticalAssetId"])
+        vertical_height = float(settings["verticalModuleHeight"])
+        base_vertical_link = int(settings["baseVerticalLink"])
+        vertical_bottom_link = int(settings["verticalBottomLink"])
+        vertical_top_link = int(settings["verticalTopLink"])
+        horizontal_start_link = int(settings["horizontalStartLink"])
+        horizontal_end_link = int(settings["horizontalEndLink"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("The Layher recipe settings are incomplete") from exc
+
+    if vertical_height <= 0.0:
+        raise ValueError("Layher verticalModuleHeight must be positive")
+
+    raw_base_links = settings.get("baseRosetteLinks")
+    raw_vertical_links = settings.get("verticalTopRosetteLinks")
+    required_directions = (
+        "xNegative",
+        "xPositive",
+        "yNegative",
+        "yPositive",
+    )
+    if not isinstance(raw_base_links, dict) or not isinstance(raw_vertical_links, dict):
+        raise ValueError("The Layher recipe requires rosette link mappings")
+
+    base_links = {}
+    vertical_links = {}
+    for direction in required_directions:
+        try:
+            base_links[direction] = int(raw_base_links[direction])
+            vertical_links[direction] = int(raw_vertical_links[direction])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"The Layher rosette link '{direction}' is invalid"
+            ) from exc
+
+    raw_horizontal_modules = settings.get("horizontalModules")
+    if not isinstance(raw_horizontal_modules, dict) or not raw_horizontal_modules:
+        raise ValueError("The Layher recipe requires horizontalModules")
+
+    def horizontal_module(parameter_name):
+        module_key = str(parameters.get(parameter_name, ""))
+        raw_module = raw_horizontal_modules.get(module_key)
+        if not isinstance(raw_module, dict):
+            raise ValueError(f"Unknown Layher module '{module_key}'")
+        try:
+            asset_id = int(raw_module["assetId"])
+            length = float(raw_module["length"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Layher module '{module_key}' is invalid") from exc
+        if length <= 0.0:
+            raise ValueError(f"Layher module '{module_key}' length must be positive")
+        _layher_asset_link(asset_id, horizontal_start_link, "horizontal start")
+        _layher_asset_link(asset_id, horizontal_end_link, "horizontal end")
+        return {
+            "key": module_key,
+            "assetId": asset_id,
+            "length": length,
+        }
+
+    _layher_asset_link(base_asset_id, base_vertical_link, "base vertical")
+    _layher_asset_link(vertical_asset_id, vertical_bottom_link, "vertical bottom")
+    _layher_asset_link(vertical_asset_id, vertical_top_link, "vertical top")
+    for direction in required_directions:
+        _layher_asset_link(
+            base_asset_id,
+            base_links[direction],
+            f"base {direction}",
+        )
+        _layher_asset_link(
+            vertical_asset_id,
+            vertical_links[direction],
+            f"vertical {direction}",
+        )
+
+    return {
+        "baseAssetId": base_asset_id,
+        "verticalAssetId": vertical_asset_id,
+        "verticalModuleHeight": vertical_height,
+        "baseVerticalLink": base_vertical_link,
+        "verticalBottomLink": vertical_bottom_link,
+        "verticalTopLink": vertical_top_link,
+        "horizontalStartLink": horizontal_start_link,
+        "horizontalEndLink": horizontal_end_link,
+        "baseRosetteLinks": base_links,
+        "verticalTopRosetteLinks": vertical_links,
+        "widthModule": horizontal_module("widthModule"),
+        "depthModule": horizontal_module("depthModule"),
+        "maxItems": int(settings.get("maxItems", 1000)),
+        "maxModuleCount": int(settings.get("maxModuleCount", 50)),
+    }
+
+
+def _connect_layher_pair(obj_a, link_index_a, obj_b, link_index_b):
+    link_a = Connections.get_link(obj_a, link_index_a)
+    link_b = Connections.get_link(obj_b, link_index_b)
+    if link_a is None or link_b is None:
+        raise RuntimeError("Unable to find a Layher connection link")
+    if not are_link_types_compatible(link_a.type, link_b.type):
+        raise RuntimeError("The selected Layher components are not compatible")
+    if not Connections.links_are_aligned(
+        obj_a,
+        link_index_a,
+        obj_b,
+        link_index_b,
+    ):
+        raise RuntimeError("Unable to align the Layher structure exactly")
+    if not Connections.connect_links(
+        obj_a,
+        link_index_a,
+        obj_b,
+        link_index_b,
+    ):
+        raise RuntimeError("Unable to connect the Layher structure")
+
+
+def _import_layher_object(asset_id, imported_objects):
+    imported = LoadCatalogue.import_catalogue_asset(asset_id)
+    imported_objects.extend(imported)
+    return _single_stagehand_object(imported, asset_id)
+
+
+def _add_layher_horizontal(
+    module,
+    start_obj,
+    start_link_index,
+    end_obj,
+    end_link_index,
+    settings,
+    imported_objects,
+):
+    horizontal = _import_layher_object(
+        module["assetId"],
+        imported_objects,
+    )
+    start_link = settings["horizontalStartLink"]
+    end_link = settings["horizontalEndLink"]
+    if not Connections.align_object_link_to_target(
+        horizontal,
+        start_link,
+        start_obj,
+        start_link_index,
+    ):
+        raise RuntimeError("Unable to position a Layher horizontal")
+    _connect_layher_pair(
+        horizontal,
+        start_link,
+        start_obj,
+        start_link_index,
+    )
+    _connect_layher_pair(
+        horizontal,
+        end_link,
+        end_obj,
+        end_link_index,
+    )
+    return horizontal
+
+
+def build_layher_grid(context, definition, parameters):
+    """Build a three-dimensional Layher frame from bases, standards, and ledgers."""
+    settings = _normalized_layher_settings(definition, parameters)
+    try:
+        width_count = int(parameters["widthCount"])
+        height_count = int(parameters["heightCount"])
+        depth_count = int(parameters["depthCount"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Layher module counts must be integers") from exc
+
+    counts = {
+        "width": width_count,
+        "height": height_count,
+        "depth": depth_count,
+    }
+    for dimension_name, count in counts.items():
+        if count <= 0:
+            raise ValueError(f"Layher {dimension_name} module count must be positive")
+        if count > settings["maxModuleCount"]:
+            raise ValueError(
+                f"Layher {dimension_name} module count exceeds the recipe limit "
+                f"of {settings['maxModuleCount']}"
+            )
+
+    node_count = (width_count + 1) * (depth_count + 1)
+    base_count = node_count
+    vertical_count = node_count * height_count
+    width_horizontal_count = (
+        width_count * (depth_count + 1) * (height_count + 1)
+    )
+    depth_horizontal_count = (
+        depth_count * (width_count + 1) * (height_count + 1)
+    )
+    horizontal_count = width_horizontal_count + depth_horizontal_count
+    total_items = base_count + vertical_count + horizontal_count
+    if total_items > settings["maxItems"]:
+        raise ValueError(
+            f"This Layher structure needs {total_items} items; "
+            f"the recipe limit is {settings['maxItems']}"
+        )
+
+    width_step = settings["widthModule"]["length"]
+    depth_step = settings["depthModule"]["length"]
+    imported_objects = []
+    bases = {}
+    verticals = {}
+    connection_count = 0
+    structure_matrix = None
+
+    try:
+        for y_index in range(depth_count + 1):
+            for x_index in range(width_count + 1):
+                base = _import_layher_object(
+                    settings["baseAssetId"],
+                    imported_objects,
+                )
+                if structure_matrix is None:
+                    structure_matrix = base.matrix_world.copy()
+                    structure_matrix.translation = context.scene.cursor.location
+                base.matrix_world = structure_matrix.copy()
+                base.matrix_world.translation = (
+                    structure_matrix.translation
+                    + structure_matrix.to_quaternion()
+                    @ Vector((x_index * width_step, y_index * depth_step, 0.0))
+                )
+                bases[(x_index, y_index)] = base
+
+        for y_index in range(depth_count + 1):
+            for x_index in range(width_count + 1):
+                current_obj = bases[(x_index, y_index)]
+                current_link = settings["baseVerticalLink"]
+                for level in range(height_count):
+                    vertical = _import_layher_object(
+                        settings["verticalAssetId"],
+                        imported_objects,
+                    )
+                    bottom_link = settings["verticalBottomLink"]
+                    if not Connections.align_object_link_to_target(
+                        vertical,
+                        bottom_link,
+                        current_obj,
+                        current_link,
+                    ):
+                        raise RuntimeError("Unable to position a Layher vertical")
+                    _connect_layher_pair(
+                        vertical,
+                        bottom_link,
+                        current_obj,
+                        current_link,
+                    )
+                    connection_count += 1
+                    verticals[(x_index, y_index, level)] = vertical
+                    current_obj = vertical
+                    current_link = settings["verticalTopLink"]
+
+        def rosette_site(x_index, y_index, level, direction):
+            if level == 0:
+                return (
+                    bases[(x_index, y_index)],
+                    settings["baseRosetteLinks"][direction],
+                )
+            return (
+                verticals[(x_index, y_index, level - 1)],
+                settings["verticalTopRosetteLinks"][direction],
+            )
+
+        for level in range(height_count + 1):
+            for y_index in range(depth_count + 1):
+                for x_index in range(width_count):
+                    start_obj, start_link = rosette_site(
+                        x_index,
+                        y_index,
+                        level,
+                        "xPositive",
+                    )
+                    end_obj, end_link = rosette_site(
+                        x_index + 1,
+                        y_index,
+                        level,
+                        "xNegative",
+                    )
+                    _add_layher_horizontal(
+                        settings["widthModule"],
+                        start_obj,
+                        start_link,
+                        end_obj,
+                        end_link,
+                        settings,
+                        imported_objects,
+                    )
+                    connection_count += 2
+
+            for x_index in range(width_count + 1):
+                for y_index in range(depth_count):
+                    start_obj, start_link = rosette_site(
+                        x_index,
+                        y_index,
+                        level,
+                        "yPositive",
+                    )
+                    end_obj, end_link = rosette_site(
+                        x_index,
+                        y_index + 1,
+                        level,
+                        "yNegative",
+                    )
+                    _add_layher_horizontal(
+                        settings["depthModule"],
+                        start_obj,
+                        start_link,
+                        end_obj,
+                        end_link,
+                        settings,
+                        imported_objects,
+                    )
+                    connection_count += 2
+    except Exception:
+        _remove_imported_objects(imported_objects)
+        raise
+
+    for selected in context.selected_objects:
+        selected.select_set(False)
+    for obj in imported_objects:
+        obj.select_set(True)
+    context.view_layer.objects.active = bases[(0, 0)]
+
+    width = width_count * width_step
+    depth = depth_count * depth_step
+    module_height = height_count * settings["verticalModuleHeight"]
+    return (
+        imported_objects,
+        f"Aggiunta struttura Layher {width_count}x{height_count}x{depth_count} "
+        f"moduli ({width:g}m x {depth:g}m x {module_height:g}m più basette, "
+        f"{total_items} elementi, {connection_count} connessioni)",
+    )
+
+
+register_builder("layher_grid", build_layher_grid)
 
 register_builder("grid", build_grid)
 
