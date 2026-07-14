@@ -172,6 +172,11 @@ def default_link_allow_rotations(link_type):
     return "none"
 
 
+def visualize_in_editor(link):
+    link_type = getattr(link, "type", link)
+    return coerce_link_type(link_type) != StagehandLinkType.PLANE
+
+
 def link_type_label(link_type):
     link_type = coerce_link_type(link_type)
     return link_type.name.replace("_", " ").title()

@@ -446,6 +446,11 @@ def _align_object_link_to_target(obj, link_index, target_obj, target_link_index)
     obj.matrix_world.translation += target_center - corrected_center
     return True
 
+def align_object_link_to_target(obj, link_index, target_obj, target_link_index):
+    """Align one object link to another without creating the connection."""
+    return _align_object_link_to_target(obj, link_index, target_obj, target_link_index)
+
+
 
 def _link_alignment_metrics(obj, link_index, other_obj, other_link_index):
     link = get_link(obj, link_index)

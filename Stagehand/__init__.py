@@ -25,6 +25,7 @@ Connections = _load_submodule("Connections")
 FirstPersonLook = _load_submodule("FirstPersonLook")
 LinkMode = _load_submodule("LinkMode")
 LoadCatalogue = _load_submodule("LoadCatalogue")
+Recipes = _load_submodule("Recipes")
 MenuConfiguration = _load_submodule("MenuConfiguration")
 MvrImport = _load_submodule("MvrImport")
 Alerts = _load_submodule("Alerts")
@@ -42,6 +43,7 @@ classes = (
     FirstPersonLook,
     LinkMode,
     LoadCatalogue,
+    Recipes,
     MvrImport,
     PdfDrawings,
     PowerManagement,

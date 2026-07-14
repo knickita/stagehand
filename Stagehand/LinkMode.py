@@ -9,7 +9,7 @@ from mathutils import Matrix
 from mathutils import Quaternion, Vector
 
 from . import Connections
-from .LinkTypes import are_link_types_compatible
+from .LinkTypes import are_link_types_compatible, visualize_in_editor
 from . import LoadCatalogue
 from .RegistrationUtils import (
     safe_define_property,
@@ -248,6 +248,8 @@ def _build_link_segments(obj):
     for link in obj.stagehand.links:
         if Connections.is_link_connected(link):
             continue
+        if not visualize_in_editor(link):
+            continue
 
         radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
         center, rotation = _link_transform(obj, link)
@@ -268,6 +270,9 @@ def _build_link_segments_for_items(link_items, color):
     filled_triangles = []
 
     for link, center, rotation, radius in link_items:
+        if not visualize_in_editor(link):
+            continue
+
         if link.cylindricalType:
             length = link.length if link.length > 0.0 else radius
             line_segments.extend(_cylinder_segments(center, rotation, radius, length))
@@ -284,6 +289,8 @@ def _iter_clickable_links(obj):
     for index, link in enumerate(obj.stagehand.links):
         if Connections.is_link_connected(link):
             continue
+        if not visualize_in_editor(link):
+            continue
 
         if link.cylindricalType:
             continue
@@ -299,6 +306,8 @@ def _iter_compatible_links(obj, target_link_type):
     context = bpy.context
     for index, link in enumerate(obj.stagehand.links):
         if Connections.is_link_connected(link):
+            continue
+        if not visualize_in_editor(link):
             continue
         if not are_link_types_compatible(link.type, target_link_type):
             continue

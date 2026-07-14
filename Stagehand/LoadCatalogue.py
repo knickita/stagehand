@@ -117,6 +117,20 @@ def _import_asset(asset_data):
     return imported_objects
 
 
+def import_catalogue_asset(asset_id):
+    """Import one catalogue asset by ID for other Stagehand modules."""
+    try:
+        asset_id = int(asset_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid catalogue asset ID: {asset_id}") from exc
+
+    asset_data = CATALOGUE_BY_ID.get(asset_id)
+    if asset_data is None:
+        raise KeyError(f"Catalogue asset ID {asset_id} was not found")
+
+    return _import_asset(asset_data)
+
+
 def _build_operator(asset_data):
     asset_id = asset_data["uniqueId"]
     operator_suffix = _normalize_asset_name(asset_data["name"])
@@ -156,6 +170,9 @@ class STAGEHAND_OT_reload_catalogue(bpy.types.Operator):
     def execute(self, context):
         try:
             reload_catalogue_operators()
+            from . import Recipes
+
+            Recipes.reload_recipe_operators()
             refreshed_count, skipped_count = refresh_scene_objects_from_catalogue()
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -177,7 +194,7 @@ class STAGEHAND_OT_reload_catalogue(bpy.types.Operator):
 
 
 class STAGEHAND_MT_catalogue_menu(bpy.types.Menu):
-    bl_label = "Import From Catalogue"
+    bl_label = "Add Item"
     bl_idname = "STAGEHAND_MT_catalogue_menu"
 
     def draw(self, context):

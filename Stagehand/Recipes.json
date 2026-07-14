@@ -1,0 +1,292 @@
+{
+    "schemaVersion": 2,
+    "items": [
+        {
+            "id": "infiled_ledwall",
+            "name": "Ledwall Infiled",
+            "description": "Build a rectangular ledwall using compatible 50x50cm and 50x100cm panels",
+            "builder": "grid",
+            "parameters": {
+                "width": {
+                    "type": "FLOAT",
+                    "label": "Width",
+                    "description": "Exact ledwall width; unsupported dimensions are rejected",
+                    "default": 4.0,
+                    "min": 0.5,
+                    "unit": "LENGTH"
+                },
+                "height": {
+                    "type": "FLOAT",
+                    "label": "Height",
+                    "description": "Exact ledwall height; unsupported dimensions are rejected",
+                    "default": 2.5,
+                    "min": 0.5,
+                    "unit": "LENGTH"
+                },
+                "smallPanelsPosition": {
+                    "type": "ENUM",
+                    "label": "Small Panels",
+                    "description": "Choose whether 50x50cm panels are placed on the bottom or top row",
+                    "default": "BOTTOM",
+                    "items": [
+                        {
+                            "value": "BOTTOM",
+                            "label": "Bottom",
+                            "description": "Place the smaller panels on the bottom row"
+                        },
+                        {
+                            "value": "TOP",
+                            "label": "Top",
+                            "description": "Place the smaller panels on the top row"
+                        }
+                    ]
+                }
+            },
+            "settings": {
+                "cellWidth": 0.5,
+                "cellHeight": 0.5,
+                "dimensionMode": "EXACT",
+                "maxItems": 1000,
+                "verticalRemainderParameter": "smallPanelsPosition",
+                "maxCells": 4000,
+                "columnVector": [
+                    1.0,
+                    0.0,
+                    0.0
+                ],
+                "rowVector": [
+                    0.0,
+                    0.0,
+                    1.0
+                ]
+            },
+            "modules": [
+                {
+                    "assetId": 24,
+                    "width": 0.5,
+                    "height": 1.0,
+                    "originOffset": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [0, 1],
+                        "right": [3, 4],
+                        "bottom": [5],
+                        "top": [2]
+                    }
+                },
+                {
+                    "assetId": 23,
+                    "width": 0.5,
+                    "height": 0.5,
+                    "originOffset": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [0],
+                        "right": [2],
+                        "bottom": [3],
+                        "top": [1]
+                    }
+                }
+            ]
+        },
+        {
+            "id": "sixtema_stage",
+            "name": "Sixtema Stage",
+            "description": "Build a rectangular stage using compatible Sixtema deck modules",
+            "builder": "grid",
+            "parameters": {
+                "width": {
+                    "type": "FLOAT",
+                    "label": "Width",
+                    "description": "Exact stage width; unsupported dimensions are rejected",
+                    "default": 4.0,
+                    "min": 1.0,
+                    "unit": "LENGTH"
+                },
+                "height": {
+                    "type": "FLOAT",
+                    "label": "Depth",
+                    "description": "Exact stage depth; unsupported dimensions are rejected",
+                    "default": 2.0,
+                    "min": 0.5,
+                    "unit": "LENGTH"
+                },
+                "stageHeightCm": {
+                    "type": "INT",
+                    "label": "Height (cm)",
+                    "description": "Adjustable Sixtema leg length in centimetres",
+                    "default": 100,
+                    "min": 70,
+                    "max": 120
+                }
+            },
+            "settings": {
+                "cellWidth": 0.5,
+                "cellHeight": 0.5,
+                "dimensionMode": "EXACT",
+                "maxItems": 1000,
+                "maxCells": 4000,
+                "columnVector": [
+                    1.0,
+                    0.0,
+                    0.0
+                ],
+                "rowVector": [
+                    0.0,
+                    1.0,
+                    0.0
+                ],
+                "supports": {
+                    "assetId": 44,
+                    "heightParameter": "stageHeightCm",
+                    "parameterScale": 0.01,
+                    "baseLength": 1.0,
+                    "scaleAxis": "Z",
+                    "linkIndex": 0
+                },
+                "elevation": {
+                    "heightParameter": "stageHeightCm",
+                    "parameterScale": 0.01,
+                    "vector": [
+                        0.0,
+                        0.0,
+                        1.0
+                    ]
+                }
+            },
+            "modules": [
+                {
+                    "assetId": 40,
+                    "width": 2.0,
+                    "height": 1.0,
+                    "originOffset": [
+                        1.0,
+                        0.5,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [4],
+                        "right": [3],
+                        "bottom": [2, 5],
+                        "top": [0, 1]
+                    },
+                    "supports": [6, 7, 8, 9]
+                },
+                {
+                    "assetId": 41,
+                    "width": 1.0,
+                    "height": 1.0,
+                    "originOffset": [
+                        0.5,
+                        0.5,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [2],
+                        "right": [1],
+                        "bottom": [3],
+                        "top": [0]
+                    },
+                    "supports": [5, 6, 7, 8]
+                },
+                {
+                    "assetId": 42,
+                    "width": 2.0,
+                    "height": 0.5,
+                    "originOffset": [
+                        1.0,
+                        0.25,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [4],
+                        "right": [3],
+                        "bottom": [2, 5],
+                        "top": [0, 1]
+                    },
+                    "supports": [7, 8, 9, 10]
+                },
+                {
+                    "assetId": 43,
+                    "width": 1.0,
+                    "height": 0.5,
+                    "originOffset": [
+                        0.5,
+                        0.25,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [2],
+                        "right": [1],
+                        "bottom": [3],
+                        "top": [0]
+                    },
+                    "supports": [5, 6, 7, 8]
+                },
+                {
+                    "assetId": 40,
+                    "name": "Sixtema 2x1 (rotated)",
+                    "width": 1.0,
+                    "height": 2.0,
+                    "rotationDegrees": 90.0,
+                    "originOffset": [
+                        0.5,
+                        1.0,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [0, 1],
+                        "right": [2, 5],
+                        "bottom": [4],
+                        "top": [3]
+                    },
+                    "supports": [6, 7, 8, 9]
+                },
+                {
+                    "assetId": 42,
+                    "name": "Sixtema 2x0.5 (rotated)",
+                    "width": 0.5,
+                    "height": 2.0,
+                    "rotationDegrees": 90.0,
+                    "originOffset": [
+                        0.25,
+                        1.0,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [0, 1],
+                        "right": [2, 5],
+                        "bottom": [4],
+                        "top": [3]
+                    },
+                    "supports": [7, 8, 9, 10]
+                },
+                {
+                    "assetId": 43,
+                    "name": "Sixtema 1x0.5 (rotated)",
+                    "width": 0.5,
+                    "height": 1.0,
+                    "rotationDegrees": 90.0,
+                    "originOffset": [
+                        0.25,
+                        0.5,
+                        0.0
+                    ],
+                    "links": {
+                        "left": [0],
+                        "right": [3],
+                        "bottom": [2],
+                        "top": [1]
+                    },
+                    "supports": [5, 6, 7, 8]
+                }
+            ]
+        }
+    ]
+}
