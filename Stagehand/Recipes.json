@@ -1,5 +1,60 @@
 {
     "schemaVersion": 2,
+    "resources": {
+        "litecFamilies": {
+            "LITEC30": {
+                "label": "Litec QX30",
+                "cubeAssetId": 9,
+                "cubeSize": 0.29,
+                "segmentStartLink": 0,
+                "segmentEndLink": 1,
+                "cubeLinks": {
+                    "bottom": 0,
+                    "xNegative": 2,
+                    "xPositive": 3,
+                    "yNegative": 4,
+                    "yPositive": 5
+                },
+                "segments": [
+                    { "assetId": 45, "length": 3.5 },
+                    { "assetId": 8, "length": 3.0 },
+                    { "assetId": 7, "length": 2.5 },
+                    { "assetId": 6, "length": 2.0 },
+                    { "assetId": 5, "length": 1.5 },
+                    { "assetId": 4, "length": 1.0 },
+                    { "assetId": 3, "length": 0.5 },
+                    { "assetId": 2, "length": 0.29 },
+                    { "assetId": 39, "length": 0.25 },
+                    { "assetId": 36, "length": 0.21 },
+                    { "assetId": 19, "length": 0.105 }
+                ]
+            },
+            "LITEC40": {
+                "label": "Litec QX40",
+                "cubeAssetId": 34,
+                "cubeSize": 0.4,
+                "segmentStartLink": 0,
+                "segmentEndLink": 1,
+                "cubeLinks": {
+                    "bottom": 0,
+                    "xNegative": 2,
+                    "xPositive": 3,
+                    "yNegative": 4,
+                    "yPositive": 5
+                },
+                "segments": [
+                    { "assetId": 46, "length": 3.5 },
+                    { "assetId": 33, "length": 3.0 },
+                    { "assetId": 32, "length": 2.5 },
+                    { "assetId": 31, "length": 2.0 },
+                    { "assetId": 30, "length": 1.5 },
+                    { "assetId": 29, "length": 1.0 },
+                    { "assetId": 28, "length": 0.5 },
+                    { "assetId": 27, "length": 0.29 }
+                ]
+            }
+        }
+    },
     "items": [
         {
             "id": "infiled_ledwall",
@@ -223,7 +278,7 @@
                     "label": "Width",
                     "description": "Exact stage width; unsupported dimensions are rejected",
                     "default": 4.0,
-                    "min": 1.0,
+                    "min": 0.5,
                     "unit": "LENGTH"
                 },
                 "height": {
@@ -244,14 +299,15 @@
                 },
                 "addRailings": {
                     "type": "BOOL",
-                    "label": "Railings",
-                    "description": "Add railings to the left, right, and back sides of the stage",
+                    "label": "Mancorrenti",
+                    "description": "Aggiunge i mancorrenti ai lati sinistro, destro e posteriore del palco",
                     "default": false
                 }
             },
             "settings": {
                 "cellWidth": 0.5,
                 "cellHeight": 0.5,
+                "rowDimensionName": "depth",
                 "dimensionMode": "EXACT",
                 "verticalRemainderPosition": "BOTTOM",
                 "maxItems": 1000,
@@ -295,7 +351,7 @@
                             "right",
                             "top"
                         ],
-                        "label": "railings"
+                        "label": "mancorrenti"
                     }
                 ]
             },
@@ -426,6 +482,96 @@
                     "supports": [3, 4, 5, 6]
                 }
             ]
+        },
+        {
+            "id": "americana_structure",
+            "name": "Struttura Americana",
+            "description": "Crea un portale o un ring rettangolare con americane e cubi Litec",
+            "builder": "litec_structure",
+            "parameters": {
+                "structureType": {
+                    "type": "ENUM",
+                    "label": "Struttura",
+                    "description": "Tipo di struttura americana da creare",
+                    "default": "PORTAL",
+                    "items": [
+                        {
+                            "value": "PORTAL",
+                            "label": "Portale",
+                            "description": "Struttura a U rovesciata"
+                        },
+                        {
+                            "value": "RING",
+                            "label": "Ring",
+                            "description": "Rettangolo superiore con quattro zampe"
+                        }
+                    ]
+                },
+                "width": {
+                    "type": "FLOAT",
+                    "label": "Larghezza",
+                    "description": "Larghezza esatta della struttura",
+                    "default": 4.0,
+                    "min": 0.1,
+                    "max": 50.0,
+                    "unit": "LENGTH"
+                },
+                "height": {
+                    "type": "FLOAT",
+                    "label": "Altezza",
+                    "description": "Altezza esatta della struttura",
+                    "default": 3.0,
+                    "min": 0.1,
+                    "max": 50.0,
+                    "unit": "LENGTH"
+                },
+                "depth": {
+                    "type": "FLOAT",
+                    "label": "Profondità",
+                    "description": "Profondità esatta del ring",
+                    "default": 3.0,
+                    "min": 0.1,
+                    "max": 50.0,
+                    "unit": "LENGTH",
+                    "visibleWhen": {
+                        "structureType": "RING"
+                    }
+                },
+                "family": {
+                    "type": "ENUM",
+                    "label": "Americana",
+                    "description": "Famiglia di americana Litec da utilizzare",
+                    "default": "LITEC30",
+                    "items": [
+                        { "value": "LITEC30", "label": "Litec QX30" },
+                        { "value": "LITEC40", "label": "Litec QX40" }
+                    ]
+                },
+                "measurementMode": {
+                    "type": "ENUM",
+                    "label": "Misure",
+                    "description": "Scegli se le dimensioni indicano la luce libera o l'ingombro totale",
+                    "default": "INTERNAL",
+                    "items": [
+                        {
+                            "value": "INTERNAL",
+                            "label": "Interne (luce libera)",
+                            "description": "Le misure escludono lo spessore dei cubi"
+                        },
+                        {
+                            "value": "EXTERNAL",
+                            "label": "Esterne (ingombro totale)",
+                            "description": "Le misure includono lo spessore dei cubi"
+                        }
+                    ]
+                }
+            },
+            "settings": {
+                "structureTypeParameter": "structureType",
+                "familyResource": "litecFamilies",
+                "maxRun": 50.0,
+                "maxItems": 500
+            }
         }
     ]
 }

@@ -19,6 +19,7 @@ from .RegistrationUtils import safe_register_class, safe_unregister_class
 
 
 RECIPES_BY_ID = {}
+RECIPE_RESOURCES = {}
 BUILDER_FUNCTIONS = {}
 REGISTERED_CLASSES = []
 SUPPORTED_SCHEMA_VERSION = 2
@@ -62,6 +63,10 @@ def _single_stagehand_object(imported_objects, asset_id):
 GRID_SIDES = ("left", "right", "bottom", "top")
 
 
+class GridPackingError(ValueError):
+    """The configured modules cannot tile the requested grid."""
+
+
 def _positive_setting(settings, name):
     value = float(settings.get(name, 0.0))
     if value <= 0.0:
@@ -100,12 +105,35 @@ def _requested_grid_unit_count(value, unit, dimension_name, mode):
 
     units = int(round(value / unit))
     if units <= 0 or abs(value - (units * unit)) > 0.000001:
+        unit_value = value / unit
+        lower_units = int(unit_value + 1e-9)
+        upper_units = ceil(unit_value - 1e-9)
+        alternatives = []
+        if lower_units > 0:
+            alternatives.append(f"{lower_units * unit:g}m (più piccola)")
+        if upper_units > 0:
+            alternatives.append(f"{upper_units * unit:g}m (più grande)")
+
+        dimension_label = {
+            "width": "La larghezza",
+            "height": "L'altezza",
+            "depth": "La profondità",
+        }.get(dimension_name, dimension_name)
+        if len(alternatives) == 2:
+            suggestion = (
+                "Le misure realizzabili più vicine sono "
+                f"{alternatives[0]} oppure {alternatives[1]}."
+            )
+        elif alternatives:
+            suggestion = f"La misura realizzabile più vicina è {alternatives[0]}."
+        else:
+            suggestion = "Non ci sono misure alternative positive."
+
         raise ValueError(
-            f"The requested grid {dimension_name} of {value:g}m cannot be built "
-            f"exactly; it must be a multiple of {unit:g}m"
+            f"{dimension_label} richiesta di {value:g}m non è realizzabile "
+            f"esattamente. {suggestion}"
         )
     return units
-
 
 def _normalized_grid_modules(definition, cell_width, cell_height):
     raw_modules = definition.get("modules")
@@ -240,7 +268,7 @@ def _pack_grid(columns, rows, modules, max_items):
                 None,
             )
             if module is None:
-                raise ValueError(
+                raise GridPackingError(
                     f"The configured modules cannot fill the grid at "
                     f"{column}, {row}"
                 )
@@ -266,6 +294,138 @@ def _pack_grid(columns, rows, modules, max_items):
 
     return placements
 
+
+def _grid_can_pack(columns, rows, modules, max_items, max_cells):
+    if columns <= 0 or rows <= 0 or columns * rows > max_cells:
+        return False
+    try:
+        _pack_grid(columns, rows, modules, max_items)
+    except ValueError:
+        return False
+    return True
+
+
+def _nearest_packable_grid_dimensions(
+    columns,
+    rows,
+    modules,
+    max_items,
+    max_cells,
+    cell_width,
+    cell_height,
+    row_dimension_name,
+):
+    lower_candidates = []
+    upper_candidates = []
+
+    for candidate_columns in range(columns - 1, 0, -1):
+        if _grid_can_pack(
+            candidate_columns,
+            rows,
+            modules,
+            max_items,
+            max_cells,
+        ):
+            lower_candidates.append(
+                (
+                    (columns - candidate_columns) * cell_width,
+                    0,
+                    candidate_columns,
+                    rows,
+                    "larghezza",
+                )
+            )
+            break
+
+    maximum_columns = max_cells // rows
+    for candidate_columns in range(columns + 1, maximum_columns + 1):
+        if _grid_can_pack(
+            candidate_columns,
+            rows,
+            modules,
+            max_items,
+            max_cells,
+        ):
+            upper_candidates.append(
+                (
+                    (candidate_columns - columns) * cell_width,
+                    0,
+                    candidate_columns,
+                    rows,
+                    "larghezza",
+                )
+            )
+            break
+
+    for candidate_rows in range(rows - 1, 0, -1):
+        if _grid_can_pack(
+            columns,
+            candidate_rows,
+            modules,
+            max_items,
+            max_cells,
+        ):
+            lower_candidates.append(
+                (
+                    (rows - candidate_rows) * cell_height,
+                    1,
+                    columns,
+                    candidate_rows,
+                    row_dimension_name,
+                )
+            )
+            break
+
+    maximum_rows = max_cells // columns
+    for candidate_rows in range(rows + 1, maximum_rows + 1):
+        if _grid_can_pack(
+            columns,
+            candidate_rows,
+            modules,
+            max_items,
+            max_cells,
+        ):
+            upper_candidates.append(
+                (
+                    (candidate_rows - rows) * cell_height,
+                    1,
+                    columns,
+                    candidate_rows,
+                    row_dimension_name,
+                )
+            )
+            break
+
+    labels = {
+        "width": "larghezza",
+        "height": "altezza",
+        "depth": "profondità",
+    }
+
+    def describe(candidate, direction):
+        _distance, _priority, candidate_columns, candidate_rows, dimension = candidate
+        dimension_label = labels.get(dimension, dimension)
+        width = candidate_columns * cell_width
+        height = candidate_rows * cell_height
+        return (
+            f"{width:g}m x {height:g}m "
+            f"({dimension_label} più {direction})"
+        )
+
+    alternatives = []
+    if lower_candidates:
+        alternatives.append(describe(min(lower_candidates), "piccola"))
+    if upper_candidates:
+        alternatives.append(describe(min(upper_candidates), "grande"))
+
+    if len(alternatives) == 2:
+        return (
+            "Le dimensioni realizzabili più vicine sono "
+            f"{alternatives[0]} oppure {alternatives[1]}."
+        )
+    if alternatives:
+        return f"La dimensione realizzabile più vicina è {alternatives[0]}."
+    return "Non ci sono dimensioni alternative entro i limiti della ricetta."
 
 def _apply_vertical_remainder_position(
     placements,
@@ -795,10 +955,11 @@ def build_grid(context, definition, parameters):
         "width",
         dimension_mode,
     )
+    row_dimension_name = str(settings.get("rowDimensionName", "height"))
     rows = _requested_grid_unit_count(
         requested_height,
         cell_height,
-        "depth",
+        row_dimension_name,
         dimension_mode,
     )
     cell_count = columns * rows
@@ -815,12 +976,29 @@ def build_grid(context, definition, parameters):
         cell_width,
         cell_height,
     )
-    placements = _pack_grid(
-        columns,
-        rows,
-        modules,
-        max_items,
-    )
+    try:
+        placements = _pack_grid(
+            columns,
+            rows,
+            modules,
+            max_items,
+        )
+    except GridPackingError as exc:
+        suggestion = _nearest_packable_grid_dimensions(
+            columns,
+            rows,
+            modules,
+            max_items,
+            max_cells,
+            cell_width,
+            cell_height,
+            row_dimension_name,
+        )
+        raise ValueError(
+            f"Le dimensioni richieste di {requested_width:g}m x "
+            f"{requested_height:g}m non sono realizzabili esattamente. "
+            f"{suggestion}"
+        ) from exc
     _apply_vertical_remainder_position(
         placements,
         rows,
@@ -932,6 +1110,542 @@ def build_grid(context, definition, parameters):
     )
 
 
+def _normalized_litec_family(definition, parameters):
+    settings = definition.get("settings", {})
+    resource_name = str(settings.get("familyResource", "")).strip()
+    if not resource_name:
+        raise ValueError("The Litec structure builder requires a familyResource")
+
+    families = RECIPE_RESOURCES.get(resource_name)
+    if not isinstance(families, dict) or not families:
+        raise ValueError(f"Recipe resource '{resource_name}' was not found")
+
+    family_key = str(parameters.get("family", "")).strip().upper()
+    raw_family = families.get(family_key)
+    if not isinstance(raw_family, dict):
+        raise ValueError(f"Unknown Litec family '{family_key}'")
+
+    try:
+        cube_asset_id = int(raw_family["cubeAssetId"])
+        cube_size = float(raw_family["cubeSize"])
+        segment_start_link = int(raw_family.get("segmentStartLink", 0))
+        segment_end_link = int(raw_family.get("segmentEndLink", 1))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Litec family '{family_key}' has invalid cube or segment settings"
+        ) from exc
+
+    cube_asset = LoadCatalogue.CATALOGUE_BY_ID.get(cube_asset_id)
+    if cube_asset is None:
+        raise ValueError(f"Catalogue asset ID {cube_asset_id} was not found")
+    if cube_size <= 0.0:
+        raise ValueError(f"Litec family '{family_key}' cubeSize must be positive")
+
+    raw_cube_links = raw_family.get("cubeLinks")
+    required_cube_links = (
+        "bottom",
+        "xNegative",
+        "xPositive",
+        "yNegative",
+        "yPositive",
+    )
+    if not isinstance(raw_cube_links, dict):
+        raise ValueError(f"Litec family '{family_key}' requires cubeLinks")
+
+    cube_links = {}
+    for link_name in required_cube_links:
+        try:
+            link_index = int(raw_cube_links[link_name])
+            cube_asset["links"][link_index]
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Litec family '{family_key}' cube link '{link_name}' is invalid"
+            ) from exc
+        cube_links[link_name] = link_index
+
+    raw_segments = raw_family.get("segments")
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise ValueError(f"Litec family '{family_key}' requires straight segments")
+
+    segments = []
+    seen_lengths = set()
+    for raw_segment in raw_segments:
+        try:
+            asset_id = int(raw_segment["assetId"])
+            length = float(raw_segment["length"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Litec family '{family_key}' contains an invalid segment"
+            ) from exc
+
+        millimeters = int(round(length * 1000.0))
+        if millimeters <= 0 or abs(length - (millimeters / 1000.0)) > 0.000001:
+            raise ValueError(
+                f"Litec segment asset {asset_id} length must use whole millimetres"
+            )
+        if millimeters in seen_lengths:
+            raise ValueError(
+                f"Litec family '{family_key}' repeats segment length {length:g}m"
+            )
+
+        asset = LoadCatalogue.CATALOGUE_BY_ID.get(asset_id)
+        if asset is None:
+            raise ValueError(f"Catalogue asset ID {asset_id} was not found")
+        try:
+            asset["links"][segment_start_link]
+            asset["links"][segment_end_link]
+        except (IndexError, TypeError) as exc:
+            raise ValueError(
+                f"Litec segment asset {asset_id} has invalid connection links"
+            ) from exc
+
+        seen_lengths.add(millimeters)
+        segments.append(
+            {
+                "assetId": asset_id,
+                "length": length,
+                "millimeters": millimeters,
+            }
+        )
+
+    segments.sort(key=lambda segment: segment["millimeters"], reverse=True)
+    return {
+        "key": family_key,
+        "label": str(raw_family.get("label", family_key)),
+        "cubeAssetId": cube_asset_id,
+        "cubeSize": cube_size,
+        "cubeLinks": cube_links,
+        "segmentStartLink": segment_start_link,
+        "segmentEndLink": segment_end_link,
+        "segments": segments,
+    }
+
+
+def _litec_straight_length(
+    requested,
+    cube_size,
+    cube_count,
+    measurement_mode,
+    dimension_name,
+):
+    if requested <= 0.0:
+        raise ValueError(f"Structure {dimension_name} must be greater than zero")
+
+    if measurement_mode == "INTERNAL":
+        return requested
+    if measurement_mode != "EXTERNAL":
+        raise ValueError("Measurements must be either INTERNAL or EXTERNAL")
+
+    cube_thickness = cube_size * cube_count
+    straight_length = requested - cube_thickness
+    if straight_length <= 0.0:
+        raise ValueError(
+            f"External {dimension_name} must be greater than the total "
+            f"cube thickness of {cube_thickness:g}m"
+        )
+    return straight_length
+
+
+def _litec_segment_plan(
+    straight_length,
+    family,
+    dimension_name,
+    requested,
+    measurement_mode,
+    max_run,
+):
+    if straight_length > max_run + 0.000001:
+        raise ValueError(
+            f"Structure {dimension_name} exceeds the recipe limit of {max_run:g}m"
+        )
+
+    target_millimeters = straight_length * 1000.0
+    target = int(round(target_millimeters))
+    minimum_segment = min(
+        segment["millimeters"] for segment in family["segments"]
+    )
+    search_limit = min(
+        int(round(max_run * 1000.0)),
+        ceil(target_millimeters) + minimum_segment,
+    )
+
+    if target <= 0:
+        plan = None
+        best = [None]
+    else:
+        best = [None] * (search_limit + 1)
+        best[0] = ()
+        for total in range(1, search_limit + 1):
+            winner = None
+            winner_lengths = None
+            for segment in family["segments"]:
+                length = segment["millimeters"]
+                if length > total or best[total - length] is None:
+                    continue
+                candidate = tuple(
+                    sorted(
+                        best[total - length] + (segment,),
+                        key=lambda item: item["millimeters"],
+                        reverse=True,
+                    )
+                )
+                candidate_lengths = tuple(
+                    item["millimeters"] for item in candidate
+                )
+                if (
+                    winner is None
+                    or len(candidate) < len(winner)
+                    or (
+                        len(candidate) == len(winner)
+                        and candidate_lengths > winner_lengths
+                    )
+                ):
+                    winner = candidate
+                    winner_lengths = candidate_lengths
+            best[total] = winner
+
+        is_whole_millimeter = (
+            abs(straight_length - (target / 1000.0)) <= 0.000001
+        )
+        plan = best[target] if is_whole_millimeter else None
+
+    if plan is None:
+        lower_start = min(int(target_millimeters), len(best) - 1)
+        lower = next(
+            (total for total in range(lower_start, 0, -1) if best[total]),
+            None,
+        )
+        upper_start = max(1, ceil(target_millimeters))
+        upper = next(
+            (
+                total
+                for total in range(upper_start, len(best))
+                if best[total]
+            ),
+            None,
+        )
+
+        measurement_offset = requested - straight_length
+        alternatives = []
+        if lower is not None:
+            value = round((lower / 1000.0) + measurement_offset, 6)
+            alternatives.append(f"{value:g}m (più piccola)")
+        if upper is not None:
+            value = round((upper / 1000.0) + measurement_offset, 6)
+            alternatives.append(f"{value:g}m (più grande)")
+
+        dimension_label = {
+            "width": "La larghezza",
+            "height": "L'altezza",
+            "depth": "La profondità",
+        }.get(dimension_name, dimension_name)
+        mode_label = "interna" if measurement_mode == "INTERNAL" else "esterna"
+        if len(alternatives) == 2:
+            suggestion = (
+                "Le misure realizzabili più vicine sono "
+                f"{alternatives[0]} oppure {alternatives[1]}."
+            )
+        elif alternatives:
+            suggestion = f"La misura realizzabile più vicina è {alternatives[0]}."
+        else:
+            suggestion = "Non ci sono misure alternative entro i limiti della ricetta."
+
+        raise ValueError(
+            f"{dimension_label} {mode_label} richiesta di {requested:g}m "
+            f"non è realizzabile esattamente con {family['label']}. "
+            f"{suggestion}"
+        )
+    return plan
+
+def _place_litec_cubes(context, family, offsets, imported_objects):
+    cubes = []
+    structure_matrix = None
+    for offset in offsets:
+        asset_id = family["cubeAssetId"]
+        imported = LoadCatalogue.import_catalogue_asset(asset_id)
+        imported_objects.extend(imported)
+        cube = _single_stagehand_object(imported, asset_id)
+
+        if structure_matrix is None:
+            structure_matrix = cube.matrix_world.copy()
+            structure_matrix.translation = context.scene.cursor.location
+
+        cube.matrix_world = structure_matrix.copy()
+        cube.matrix_world.translation = (
+            structure_matrix.translation
+            + structure_matrix.to_quaternion() @ Vector(offset)
+        )
+        cubes.append(cube)
+    return cubes
+
+
+def _connect_litec_pair(obj_a, link_index_a, obj_b, link_index_b):
+    link_a = Connections.get_link(obj_a, link_index_a)
+    link_b = Connections.get_link(obj_b, link_index_b)
+    if link_a is None or link_b is None:
+        raise RuntimeError("Unable to find a Litec connection link")
+    if not are_link_types_compatible(link_a.type, link_b.type):
+        raise RuntimeError("The selected Litec components are not compatible")
+    if not Connections.links_are_aligned(
+        obj_a,
+        link_index_a,
+        obj_b,
+        link_index_b,
+    ):
+        raise RuntimeError("Unable to align the Litec structure exactly")
+    if not Connections.connect_links(
+        obj_a,
+        link_index_a,
+        obj_b,
+        link_index_b,
+    ):
+        raise RuntimeError("Unable to connect the Litec structure")
+
+
+def _add_litec_run(
+    start_obj,
+    start_link_index,
+    plan,
+    family,
+    imported_objects,
+    target_obj=None,
+    target_link_index=None,
+):
+    current_obj = start_obj
+    current_link_index = start_link_index
+    connection_count = 0
+
+    for segment in plan:
+        asset_id = segment["assetId"]
+        imported = LoadCatalogue.import_catalogue_asset(asset_id)
+        imported_objects.extend(imported)
+        segment_obj = _single_stagehand_object(imported, asset_id)
+        segment_start_link = family["segmentStartLink"]
+
+        if not Connections.align_object_link_to_target(
+            segment_obj,
+            segment_start_link,
+            current_obj,
+            current_link_index,
+        ):
+            raise RuntimeError("Unable to position a Litec straight segment")
+        _connect_litec_pair(
+            segment_obj,
+            segment_start_link,
+            current_obj,
+            current_link_index,
+        )
+        connection_count += 1
+        current_obj = segment_obj
+        current_link_index = family["segmentEndLink"]
+
+    if target_obj is not None:
+        if target_link_index is None:
+            raise RuntimeError("A target Litec link index is required")
+        _connect_litec_pair(
+            current_obj,
+            current_link_index,
+            target_obj,
+            target_link_index,
+        )
+        connection_count += 1
+
+    return connection_count
+
+
+def build_litec_structure(context, definition, parameters):
+    """Build a Litec portal or four-legged rectangular ring."""
+    settings = definition.get("settings", {})
+    structure_type_parameter = str(
+        settings.get("structureTypeParameter", "")
+    ).strip()
+    if structure_type_parameter:
+        structure_type = str(
+            parameters.get(structure_type_parameter, "")
+        ).strip().upper()
+    else:
+        structure_type = str(settings.get("structureType", "")).strip().upper()
+    if structure_type not in {"PORTAL", "RING"}:
+        raise ValueError("Litec structure type must be PORTAL or RING")
+
+    family = _normalized_litec_family(definition, parameters)
+    measurement_mode = str(parameters.get("measurementMode", "INTERNAL")).upper()
+    max_run = float(settings.get("maxRun", 50.0))
+    max_items = int(settings.get("maxItems", 500))
+    if max_run <= 0.0 or max_items <= 0:
+        raise ValueError("Litec structure recipe limits must be positive")
+
+    requested_width = float(parameters["width"])
+    requested_height = float(parameters["height"])
+    straight_width = _litec_straight_length(
+        requested_width,
+        family["cubeSize"],
+        2,
+        measurement_mode,
+        "width",
+    )
+    straight_height = _litec_straight_length(
+        requested_height,
+        family["cubeSize"],
+        1,
+        measurement_mode,
+        "height",
+    )
+    width_plan = _litec_segment_plan(
+        straight_width,
+        family,
+        "width",
+        requested_width,
+        measurement_mode,
+        max_run,
+    )
+    height_plan = _litec_segment_plan(
+        straight_height,
+        family,
+        "height",
+        requested_height,
+        measurement_mode,
+        max_run,
+    )
+
+    cube_size = family["cubeSize"]
+    cube_links = family["cubeLinks"]
+    center_width = straight_width + cube_size
+    requested_depth = None
+    straight_depth = None
+    depth_plan = None
+
+    if structure_type == "PORTAL":
+        cube_offsets = (
+            (0.0, 0.0, straight_height),
+            (center_width, 0.0, straight_height),
+        )
+        total_items = 2 + len(width_plan) + (2 * len(height_plan))
+    else:
+        requested_depth = float(parameters["depth"])
+        straight_depth = _litec_straight_length(
+            requested_depth,
+            cube_size,
+            2,
+            measurement_mode,
+            "depth",
+        )
+        depth_plan = _litec_segment_plan(
+            straight_depth,
+            family,
+            "depth",
+            requested_depth,
+            measurement_mode,
+            max_run,
+        )
+        center_depth = straight_depth + cube_size
+        cube_offsets = (
+            (0.0, 0.0, straight_height),
+            (center_width, 0.0, straight_height),
+            (center_width, center_depth, straight_height),
+            (0.0, center_depth, straight_height),
+        )
+        total_items = (
+            4
+            + (2 * len(width_plan))
+            + (2 * len(depth_plan))
+            + (4 * len(height_plan))
+        )
+
+    if total_items > max_items:
+        raise ValueError(
+            f"This structure needs {total_items} items; "
+            f"the recipe limit is {max_items}"
+        )
+
+    imported_objects = []
+    connection_count = 0
+    try:
+        cubes = _place_litec_cubes(
+            context,
+            family,
+            cube_offsets,
+            imported_objects,
+        )
+
+        if structure_type == "PORTAL":
+            connection_count += _add_litec_run(
+                cubes[0],
+                cube_links["xPositive"],
+                width_plan,
+                family,
+                imported_objects,
+                cubes[1],
+                cube_links["xNegative"],
+            )
+            for cube in cubes:
+                connection_count += _add_litec_run(
+                    cube,
+                    cube_links["bottom"],
+                    height_plan,
+                    family,
+                    imported_objects,
+                )
+        else:
+            for first, second in ((0, 1), (3, 2)):
+                connection_count += _add_litec_run(
+                    cubes[first],
+                    cube_links["xPositive"],
+                    width_plan,
+                    family,
+                    imported_objects,
+                    cubes[second],
+                    cube_links["xNegative"],
+                )
+            for first, second in ((0, 3), (1, 2)):
+                connection_count += _add_litec_run(
+                    cubes[first],
+                    cube_links["yPositive"],
+                    depth_plan,
+                    family,
+                    imported_objects,
+                    cubes[second],
+                    cube_links["yNegative"],
+                )
+            for cube in cubes:
+                connection_count += _add_litec_run(
+                    cube,
+                    cube_links["bottom"],
+                    height_plan,
+                    family,
+                    imported_objects,
+                )
+    except Exception:
+        _remove_imported_objects(imported_objects)
+        raise
+
+    for selected in context.selected_objects:
+        selected.select_set(False)
+    for obj in imported_objects:
+        obj.select_set(True)
+    context.view_layer.objects.active = cubes[0]
+
+    mode_label = "internal" if measurement_mode == "INTERNAL" else "external"
+    if structure_type == "PORTAL":
+        dimensions = f"{requested_width:g}m x {requested_height:g}m"
+        structure_label = "portal"
+    else:
+        dimensions = (
+            f"{requested_width:g}m x {requested_depth:g}m x "
+            f"{requested_height:g}m"
+        )
+        structure_label = "ring"
+
+    return (
+        imported_objects,
+        f"Added {family['label']} {structure_label} ({dimensions} {mode_label}, "
+        f"{total_items} items, {connection_count} connections)",
+    )
+
+
+register_builder("litec_structure", build_litec_structure)
+
+
 register_builder("grid", build_grid)
 
 
@@ -1023,7 +1737,17 @@ def _build_operator(definition):
 
     def draw(self, context):
         del context
-        for parameter_name in parameters:
+        for parameter_name, parameter in parameters.items():
+            conditions = parameter.get("visibleWhen", {})
+            if not isinstance(conditions, dict):
+                raise TypeError(
+                    f"Recipe parameter '{parameter_name}' visibleWhen must be an object"
+                )
+            if any(
+                getattr(self, dependency_name, None) != expected_value
+                for dependency_name, expected_value in conditions.items()
+            ):
+                continue
             self.layout.prop(self, parameter_name)
 
     def invoke(self, context, event):
@@ -1090,6 +1814,8 @@ BASE_CLASSES = (STAGEHAND_MT_recipe_menu,)
 
 
 def _load_recipes():
+    global RECIPE_RESOURCES
+
     path = _recipes_path()
     if not path.exists():
         return {}
@@ -1103,6 +1829,10 @@ def _load_recipes():
             f"Unsupported Recipes schema version {version}; "
             f"expected {SUPPORTED_SCHEMA_VERSION}"
         )
+
+    resources = data.get("resources", {})
+    if not isinstance(resources, dict):
+        raise TypeError("Recipe resources must be an object")
 
     definitions = {}
     normalized_ids = set()
@@ -1135,6 +1865,7 @@ def _load_recipes():
         definitions[recipe_id] = definition
         normalized_ids.add(normalized_id)
 
+    RECIPE_RESOURCES = resources
     return definitions
 
 
