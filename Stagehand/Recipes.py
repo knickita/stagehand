@@ -1669,33 +1669,54 @@ def _normalized_layher_settings(definition, parameters):
         vertical_top_link = int(settings["verticalTopLink"])
         horizontal_start_link = int(settings["horizontalStartLink"])
         horizontal_end_link = int(settings["horizontalEndLink"])
+        diagonal_lower_link = int(settings["diagonalLowerLink"])
+        diagonal_upper_link = int(settings["diagonalUpperLink"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("The Layher recipe settings are incomplete") from exc
 
     if vertical_height <= 0.0:
         raise ValueError("Layher verticalModuleHeight must be positive")
 
-    raw_base_links = settings.get("baseRosetteLinks")
-    raw_vertical_links = settings.get("verticalTopRosetteLinks")
-    required_directions = (
+    cardinal_directions = (
         "xNegative",
         "xPositive",
         "yNegative",
         "yPositive",
     )
-    if not isinstance(raw_base_links, dict) or not isinstance(raw_vertical_links, dict):
-        raise ValueError("The Layher recipe requires rosette link mappings")
+    diagonal_directions = (
+        "positivePositive",
+        "negativePositive",
+        "positiveNegative",
+        "negativeNegative",
+    )
 
-    base_links = {}
-    vertical_links = {}
-    for direction in required_directions:
-        try:
-            base_links[direction] = int(raw_base_links[direction])
-            vertical_links[direction] = int(raw_vertical_links[direction])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(
-                f"The Layher rosette link '{direction}' is invalid"
-            ) from exc
+    def link_mapping(setting_name, required_keys):
+        raw_mapping = settings.get(setting_name)
+        if not isinstance(raw_mapping, dict):
+            raise ValueError(f"The Layher recipe requires {setting_name}")
+        mapping = {}
+        for key in required_keys:
+            try:
+                mapping[key] = int(raw_mapping[key])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"The Layher link '{setting_name}.{key}' is invalid"
+                ) from exc
+        return mapping
+
+    base_links = link_mapping("baseRosetteLinks", cardinal_directions)
+    vertical_links = link_mapping(
+        "verticalTopRosetteLinks",
+        cardinal_directions,
+    )
+    base_diagonal_links = link_mapping(
+        "baseDiagonalLinks",
+        diagonal_directions,
+    )
+    vertical_diagonal_links = link_mapping(
+        "verticalTopDiagonalLinks",
+        diagonal_directions,
+    )
 
     raw_horizontal_modules = settings.get("horizontalModules")
     if not isinstance(raw_horizontal_modules, dict) or not raw_horizontal_modules:
@@ -1708,6 +1729,7 @@ def _normalized_layher_settings(definition, parameters):
             raise ValueError(f"Unknown Layher module '{module_key}'")
         try:
             asset_id = int(raw_module["assetId"])
+            diagonal_asset_id = int(raw_module["diagonalAssetId"])
             length = float(raw_module["length"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Layher module '{module_key}' is invalid") from exc
@@ -1715,16 +1737,27 @@ def _normalized_layher_settings(definition, parameters):
             raise ValueError(f"Layher module '{module_key}' length must be positive")
         _layher_asset_link(asset_id, horizontal_start_link, "horizontal start")
         _layher_asset_link(asset_id, horizontal_end_link, "horizontal end")
+        _layher_asset_link(
+            diagonal_asset_id,
+            diagonal_lower_link,
+            "diagonal lower",
+        )
+        _layher_asset_link(
+            diagonal_asset_id,
+            diagonal_upper_link,
+            "diagonal upper",
+        )
         return {
             "key": module_key,
             "assetId": asset_id,
+            "diagonalAssetId": diagonal_asset_id,
             "length": length,
         }
 
     _layher_asset_link(base_asset_id, base_vertical_link, "base vertical")
     _layher_asset_link(vertical_asset_id, vertical_bottom_link, "vertical bottom")
     _layher_asset_link(vertical_asset_id, vertical_top_link, "vertical top")
-    for direction in required_directions:
+    for direction in cardinal_directions:
         _layher_asset_link(
             base_asset_id,
             base_links[direction],
@@ -1734,6 +1767,17 @@ def _normalized_layher_settings(definition, parameters):
             vertical_asset_id,
             vertical_links[direction],
             f"vertical {direction}",
+        )
+    for direction in diagonal_directions:
+        _layher_asset_link(
+            base_asset_id,
+            base_diagonal_links[direction],
+            f"base diagonal {direction}",
+        )
+        _layher_asset_link(
+            vertical_asset_id,
+            vertical_diagonal_links[direction],
+            f"vertical diagonal {direction}",
         )
 
     return {
@@ -1745,14 +1789,17 @@ def _normalized_layher_settings(definition, parameters):
         "verticalTopLink": vertical_top_link,
         "horizontalStartLink": horizontal_start_link,
         "horizontalEndLink": horizontal_end_link,
+        "diagonalLowerLink": diagonal_lower_link,
+        "diagonalUpperLink": diagonal_upper_link,
         "baseRosetteLinks": base_links,
         "verticalTopRosetteLinks": vertical_links,
+        "baseDiagonalLinks": base_diagonal_links,
+        "verticalTopDiagonalLinks": vertical_diagonal_links,
         "widthModule": horizontal_module("widthModule"),
         "depthModule": horizontal_module("depthModule"),
         "maxItems": int(settings.get("maxItems", 1000)),
         "maxModuleCount": int(settings.get("maxModuleCount", 50)),
     }
-
 
 def _connect_layher_pair(obj_a, link_index_a, obj_b, link_index_b):
     link_a = Connections.get_link(obj_a, link_index_a)
@@ -1820,6 +1867,42 @@ def _add_layher_horizontal(
     return horizontal
 
 
+def _add_layher_diagonal(
+    module,
+    lower_obj,
+    lower_link_index,
+    upper_obj,
+    upper_link_index,
+    settings,
+    imported_objects,
+):
+    diagonal = _import_layher_object(
+        module["diagonalAssetId"],
+        imported_objects,
+    )
+    lower_link = settings["diagonalLowerLink"]
+    upper_link = settings["diagonalUpperLink"]
+    if not Connections.align_object_link_to_target(
+        diagonal,
+        lower_link,
+        lower_obj,
+        lower_link_index,
+    ):
+        raise RuntimeError("Unable to position a Layher diagonal")
+    _connect_layher_pair(
+        diagonal,
+        lower_link,
+        lower_obj,
+        lower_link_index,
+    )
+    _connect_layher_pair(
+        diagonal,
+        upper_link,
+        upper_obj,
+        upper_link_index,
+    )
+    return diagonal
+
 def build_layher_grid(context, definition, parameters):
     """Build a three-dimensional Layher frame from bases, standards, and ledgers."""
     settings = _normalized_layher_settings(definition, parameters)
@@ -1854,7 +1937,16 @@ def build_layher_grid(context, definition, parameters):
         depth_count * (width_count + 1) * (height_count + 1)
     )
     horizontal_count = width_horizontal_count + depth_horizontal_count
-    total_items = base_count + vertical_count + horizontal_count
+    width_diagonal_count = (
+        width_count * (depth_count + 1) * height_count
+    )
+    depth_diagonal_count = (
+        depth_count * (width_count + 1) * height_count
+    )
+    diagonal_count = width_diagonal_count + depth_diagonal_count
+    total_items = (
+        base_count + vertical_count + horizontal_count + diagonal_count
+    )
     if total_items > settings["maxItems"]:
         raise ValueError(
             f"This Layher structure needs {total_items} items; "
@@ -1926,6 +2018,16 @@ def build_layher_grid(context, definition, parameters):
                 settings["verticalTopRosetteLinks"][direction],
             )
 
+        def diagonal_site(x_index, y_index, level, direction):
+            if level == 0:
+                return (
+                    bases[(x_index, y_index)],
+                    settings["baseDiagonalLinks"][direction],
+                )
+            return (
+                verticals[(x_index, y_index, level - 1)],
+                settings["verticalTopDiagonalLinks"][direction],
+            )
         for level in range(height_count + 1):
             for y_index in range(depth_count + 1):
                 for x_index in range(width_count):
@@ -1976,6 +2078,84 @@ def build_layher_grid(context, definition, parameters):
                         imported_objects,
                     )
                     connection_count += 2
+        diagonal_orientation_cycle = (
+            (True, True),
+            (True, False),
+            (False, False),
+            (False, True),
+        )
+        for level in range(height_count):
+            x_positive, y_positive = diagonal_orientation_cycle[
+                level % len(diagonal_orientation_cycle)
+            ]
+
+            for y_index in range(depth_count + 1):
+                for x_index in range(width_count):
+                    if x_positive:
+                        lower_coordinates = (x_index, y_index)
+                        upper_coordinates = (x_index + 1, y_index)
+                        lower_direction = "positivePositive"
+                        upper_direction = "negativePositive"
+                    else:
+                        lower_coordinates = (x_index + 1, y_index)
+                        upper_coordinates = (x_index, y_index)
+                        lower_direction = "negativeNegative"
+                        upper_direction = "positiveNegative"
+
+                    lower_obj, lower_link = diagonal_site(
+                        *lower_coordinates,
+                        level,
+                        lower_direction,
+                    )
+                    upper_obj, upper_link = diagonal_site(
+                        *upper_coordinates,
+                        level + 1,
+                        upper_direction,
+                    )
+                    _add_layher_diagonal(
+                        settings["widthModule"],
+                        lower_obj,
+                        lower_link,
+                        upper_obj,
+                        upper_link,
+                        settings,
+                        imported_objects,
+                    )
+                    connection_count += 2
+
+            for x_index in range(width_count + 1):
+                for y_index in range(depth_count):
+                    if y_positive:
+                        lower_coordinates = (x_index, y_index)
+                        upper_coordinates = (x_index, y_index + 1)
+                        lower_direction = "negativePositive"
+                        upper_direction = "negativeNegative"
+                    else:
+                        lower_coordinates = (x_index, y_index + 1)
+                        upper_coordinates = (x_index, y_index)
+                        lower_direction = "positiveNegative"
+                        upper_direction = "positivePositive"
+
+                    lower_obj, lower_link = diagonal_site(
+                        *lower_coordinates,
+                        level,
+                        lower_direction,
+                    )
+                    upper_obj, upper_link = diagonal_site(
+                        *upper_coordinates,
+                        level + 1,
+                        upper_direction,
+                    )
+                    _add_layher_diagonal(
+                        settings["depthModule"],
+                        lower_obj,
+                        lower_link,
+                        upper_obj,
+                        upper_link,
+                        settings,
+                        imported_objects,
+                    )
+                    connection_count += 2
     except Exception:
         _remove_imported_objects(imported_objects)
         raise
@@ -1993,7 +2173,8 @@ def build_layher_grid(context, definition, parameters):
         imported_objects,
         f"Aggiunta struttura Layher {width_count}x{height_count}x{depth_count} "
         f"moduli ({width:g}m x {depth:g}m x {module_height:g}m più basette, "
-        f"{total_items} elementi, {connection_count} connessioni)",
+        f"{total_items} elementi, {diagonal_count} diagonali, "
+        f"{connection_count} connessioni)",
     )
 
 

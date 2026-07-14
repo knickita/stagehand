@@ -486,7 +486,7 @@
         {
             "id": "layher_structure",
             "name": "Struttura Layher",
-            "description": "Crea una struttura Layher tridimensionale con basette, montanti da 2m e correnti orizzontali",
+            "description": "Crea una struttura Layher tridimensionale con basette, montanti, correnti e una diagonale per ogni faccia verticale unica",
             "builder": "layher_grid",
             "parameters": {
                 "widthModule": {
@@ -543,6 +543,8 @@
                 "verticalTopLink": 1,
                 "horizontalStartLink": 0,
                 "horizontalEndLink": 1,
+                "diagonalLowerLink": 1,
+                "diagonalUpperLink": 0,
                 "baseRosetteLinks": {
                     "xPositive": 1,
                     "xNegative": 2,
@@ -555,20 +557,34 @@
                     "yPositive": 28,
                     "yNegative": 29
                 },
-                "horizontalModules": {
+                "baseDiagonalLinks": {
+                    "positivePositive": 5,
+                    "negativePositive": 6,
+                    "positiveNegative": 7,
+                    "negativeNegative": 8
+                },
+                "verticalTopDiagonalLinks": {
+                    "positivePositive": 30,
+                    "negativePositive": 31,
+                    "positiveNegative": 32,
+                    "negativeNegative": 33
+                },                "horizontalModules": {
                     "M207": {
                         "assetId": 15,
+                        "diagonalAssetId": 17,
                         "length": 2.07
                     },
                     "M257": {
                         "assetId": 16,
+                        "diagonalAssetId": 18,
                         "length": 2.57
                     }
                 },
                 "maxModuleCount": 20,
                 "maxItems": 1000
             }
-        },        {
+        },
+        {
             "id": "americana_structure",
             "name": "Struttura Americana",
             "description": "Crea un portale o un ring rettangolare con americane e cubi Litec",
