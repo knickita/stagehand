@@ -120,7 +120,7 @@
                 "stageHeightCm": {
                     "type": "INT",
                     "label": "Height (cm)",
-                    "description": "Adjustable Sixtema leg length in centimetres",
+                    "description": "Overall Sixtema stage height in centimetres, including the 8.5cm deck",
                     "default": 100,
                     "min": 70,
                     "max": 120
@@ -146,6 +146,7 @@
                     "assetId": 44,
                     "heightParameter": "stageHeightCm",
                     "parameterScale": 0.01,
+                    "lengthOffset": -0.085,
                     "baseLength": 1.0,
                     "scaleAxis": "Z",
                     "linkIndex": 0
@@ -153,6 +154,7 @@
                 "elevation": {
                     "heightParameter": "stageHeightCm",
                     "parameterScale": 0.01,
+                    "heightOffset": -0.085,
                     "vector": [
                         0.0,
                         0.0,

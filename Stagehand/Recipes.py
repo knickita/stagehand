@@ -472,6 +472,7 @@ def _grid_elevation_offset(settings, parameters):
     try:
         height_parameter = str(elevation_settings["heightParameter"])
         parameter_scale = float(elevation_settings.get("parameterScale", 1.0))
+        height_offset = float(elevation_settings.get("heightOffset", 0.0))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             "Elevation settings require heightParameter"
@@ -484,8 +485,25 @@ def _grid_elevation_offset(settings, parameters):
         raise ValueError("Elevation parameterScale must be positive")
 
     direction = _vector_from_data(elevation_settings, "vector")
-    height = float(parameters[height_parameter]) * parameter_scale
+    height = (
+        float(parameters[height_parameter]) * parameter_scale
+        + height_offset
+    )
+    if height <= 0.0:
+        raise ValueError("Grid elevation height must be greater than zero")
     return direction * height
+
+
+def _scale_object_world_axis_around_pivot(obj, axis, factor, pivot):
+    factors = [1.0, 1.0, 1.0, 1.0]
+    factors[{"x": 0, "y": 1, "z": 2}[axis]] = factor
+    pivot = Vector(pivot)
+    obj.matrix_world = (
+        Matrix.Translation(pivot)
+        @ Matrix.Diagonal(factors)
+        @ Matrix.Translation(-pivot)
+        @ obj.matrix_world
+    )
 
 
 def _add_grid_supports(
@@ -505,6 +523,7 @@ def _add_grid_supports(
         height_parameter = str(support_settings["heightParameter"])
         parameter_scale = float(support_settings.get("parameterScale", 1.0))
         base_length = float(support_settings.get("baseLength", 1.0))
+        length_offset = float(support_settings.get("lengthOffset", 0.0))
         support_link_index = int(support_settings.get("linkIndex", 0))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
@@ -526,7 +545,10 @@ def _add_grid_supports(
     if parameter_scale <= 0.0 or base_length <= 0.0:
         raise ValueError("Support parameterScale and baseLength must be positive")
 
-    target_length = float(parameters[height_parameter]) * parameter_scale
+    target_length = (
+        float(parameters[height_parameter]) * parameter_scale
+        + length_offset
+    )
     if target_length <= 0.0:
         raise ValueError("Support height must be greater than zero")
     scale_factor = target_length / base_length
@@ -559,9 +581,17 @@ def _add_grid_supports(
                 deck_link_index,
             ):
                 raise RuntimeError("Unable to align a grid support")
-            scale = support_obj.scale.copy()
-            scale[{"x": 0, "y": 1, "z": 2}[scale_axis]] = scale_factor
-            support_obj.scale = scale
+            deck_link_position = Vector(deck_link.posDir[:3])
+            pivot = (
+                deck_obj.matrix_world.to_translation()
+                + deck_obj.matrix_world.to_quaternion() @ deck_link_position
+            )
+            _scale_object_world_axis_around_pivot(
+                support_obj,
+                scale_axis,
+                scale_factor,
+                pivot,
+            )
 
             if not Connections.connect_links(
                 support_obj,
