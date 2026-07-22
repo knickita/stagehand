@@ -26,7 +26,8 @@ CABLE_ANCHOR_POINTS_OBJECT_NAME = "Stagehand Cable Anchor Points"
 CABLE_ANCHOR_POINTS_MESH_NAME = "Stagehand Cable Anchor Points Mesh"
 CABLE_ANCHOR_POINTS_MATERIAL_NAME = "Stagehand Cable Anchor Point Material"
 CABLE_OBSTACLE_NAME = "Cable Obstacle"
-CABLE_OBSTACLE_COLLECTION_NAME = "cable obstacles"
+CABLE_MODIFIER_COLLECTION_NAME = "cable modifiers"
+LEGACY_CABLE_OBSTACLE_COLLECTION_NAME = "cable obstacles"
 CABLE_OBSTACLE_MATERIAL_NAME = "Stagehand Cable Obstacle Material"
 POWER_OBSTACLE_PROPERTY = "stagehand_power_obstacle"
 CABLE_ANCHOR_PLANE_NAME = "Cable Anchor Plane"
@@ -82,10 +83,14 @@ def _move_to_stagehand_collection(obj, context):
             user_collection.objects.unlink(obj)
 
 
-def _cable_obstacle_collection(context):
-    collection = bpy.data.collections.get(CABLE_OBSTACLE_COLLECTION_NAME)
+def _cable_modifier_collection(context):
+    collection = bpy.data.collections.get(CABLE_MODIFIER_COLLECTION_NAME)
+    legacy_collection = bpy.data.collections.get(LEGACY_CABLE_OBSTACLE_COLLECTION_NAME)
+    if collection is None and legacy_collection is not None:
+        legacy_collection.name = CABLE_MODIFIER_COLLECTION_NAME
+        collection = legacy_collection
     if collection is None:
-        collection = bpy.data.collections.new(CABLE_OBSTACLE_COLLECTION_NAME)
+        collection = bpy.data.collections.new(CABLE_MODIFIER_COLLECTION_NAME)
 
     scene = context.scene if context is not None else None
     if scene is not None and all(child != collection for child in scene.collection.children):
@@ -94,8 +99,8 @@ def _cable_obstacle_collection(context):
     return collection
 
 
-def _move_to_cable_obstacle_collection(obj, context):
-    target_collection = _cable_obstacle_collection(context)
+def _move_to_cable_modifier_collection(obj, context):
+    target_collection = _cable_modifier_collection(context)
     if all(existing != obj for existing in target_collection.objects):
         target_collection.objects.link(obj)
 
@@ -104,10 +109,10 @@ def _move_to_cable_obstacle_collection(obj, context):
             collection.objects.unlink(obj)
 
 
-def _normalize_cable_obstacle_collections(context):
+def _normalize_cable_modifier_collections(context):
     for obj in bpy.data.objects:
-        if _is_cable_obstacle(obj):
-            _move_to_cable_obstacle_collection(obj, context)
+        if _is_cable_obstacle(obj) or _is_cable_anchor_plane(obj):
+            _move_to_cable_modifier_collection(obj, context)
 
 
 def _cable_obstacle_material():
@@ -333,8 +338,8 @@ class STAGEHAND_OT_add_cable_obstacle(bpy.types.Operator):
         obj.show_in_front = True
         obj.hide_render = True
         obj.data.materials.append(_cable_obstacle_material())
-        _move_to_cable_obstacle_collection(obj, context)
-        _normalize_cable_obstacle_collections(context)
+        _move_to_cable_modifier_collection(obj, context)
+        _normalize_cable_modifier_collections(context)
 
         self.report({'INFO'}, "Cable obstacle created")
         return {'FINISHED'}
@@ -361,6 +366,8 @@ class STAGEHAND_OT_add_cable_anchor_plane(bpy.types.Operator):
         obj.show_in_front = True
         obj.hide_render = True
         obj.data.materials.append(_cable_anchor_plane_material())
+        _move_to_cable_modifier_collection(obj, context)
+        _normalize_cable_modifier_collections(context)
 
         self.report({'INFO'}, "Cable anchor plane created")
         return {'FINISHED'}
@@ -375,8 +382,8 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
     def execute(self, context):
         profiler = PowerLineProfiler()
         try:
-            _normalize_cable_obstacle_collections(context)
-            profiler.step("normalize cable obstacles")
+            _normalize_cable_modifier_collections(context)
+            profiler.step("normalize cable modifiers")
             ProjectDatabase.clear_generated_powerlines()
             profiler.step("clear generated powerline map")
             result = generate_power_solution(context, profiler=profiler)
