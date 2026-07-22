@@ -8,7 +8,11 @@ from .mesh import (
     build_power_lines_mesh,
 )
 from .profiling import PowerLineProfiler
-from .scene import collect_cable_anchor_points, generate_power_solution
+from .scene import (
+    CABLE_ANCHOR_PLANE_PROPERTY,
+    collect_cable_anchor_points,
+    generate_power_solution,
+)
 from .solver import PowerSolverError
 from ..RegistrationUtils import (
     safe_add_handler,
@@ -25,6 +29,8 @@ CABLE_OBSTACLE_NAME = "Cable Obstacle"
 CABLE_OBSTACLE_COLLECTION_NAME = "cable obstacles"
 CABLE_OBSTACLE_MATERIAL_NAME = "Stagehand Cable Obstacle Material"
 POWER_OBSTACLE_PROPERTY = "stagehand_power_obstacle"
+CABLE_ANCHOR_PLANE_NAME = "Cable Anchor Plane"
+CABLE_ANCHOR_PLANE_MATERIAL_NAME = "Stagehand Cable Anchor Plane Material"
 STAGEHAND_COLLECTION_NAME = "stagehand"
 
 _ANCHOR_POINTS_REFRESH_PENDING = False
@@ -38,6 +44,10 @@ def _is_cable_obstacle(obj):
         or name.startswith("cable obstacle")
         or name.startswith("power obstacle")
     )
+
+
+def _is_cable_anchor_plane(obj):
+    return bool(obj.get(CABLE_ANCHOR_PLANE_PROPERTY))
 
 
 def _is_stagehand_object(obj):
@@ -123,6 +133,14 @@ def _cable_obstacle_material():
     if alpha_input is not None:
         alpha_input.default_value = material.diffuse_color[3]
 
+    return material
+
+
+def _cable_anchor_plane_material():
+    material = bpy.data.materials.get(CABLE_ANCHOR_PLANE_MATERIAL_NAME)
+    if material is None:
+        material = bpy.data.materials.new(CABLE_ANCHOR_PLANE_MATERIAL_NAME)
+    material.diffuse_color = (0.05, 0.65, 1.0, 0.3)
     return material
 
 
@@ -246,7 +264,11 @@ def cable_anchor_points_depsgraph_update_post(_scene, depsgraph):
             continue
         if updated_id.name == CABLE_ANCHOR_POINTS_OBJECT_NAME:
             continue
-        if _is_stagehand_object(updated_id) or _is_cable_obstacle(updated_id):
+        if (
+            _is_stagehand_object(updated_id)
+            or _is_cable_obstacle(updated_id)
+            or _is_cable_anchor_plane(updated_id)
+        ):
             _schedule_cable_anchor_points_refresh()
             return
 
@@ -315,6 +337,32 @@ class STAGEHAND_OT_add_cable_obstacle(bpy.types.Operator):
         _normalize_cable_obstacle_collections(context)
 
         self.report({'INFO'}, "Cable obstacle created")
+        return {'FINISHED'}
+
+
+class STAGEHAND_OT_add_cable_anchor_plane(bpy.types.Operator):
+    bl_idname = "stagehand.add_cable_anchor_plane"
+    bl_label = "Add Cable Anchor Plane"
+    bl_description = "Create a movable/scalable/rotatable surface for cable anchor points"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        location = context.scene.cursor.location if context.scene is not None else (0.0, 0.0, 0.0)
+        bpy.ops.mesh.primitive_plane_add(size=1.0, location=location)
+        obj = context.object
+        if obj is None:
+            self.report({'ERROR'}, "Unable to create cable anchor plane")
+            return {'CANCELLED'}
+
+        obj.name = CABLE_ANCHOR_PLANE_NAME
+        obj.data.name = f"{CABLE_ANCHOR_PLANE_NAME} Mesh"
+        obj[CABLE_ANCHOR_PLANE_PROPERTY] = True
+        obj.display_type = 'WIRE'
+        obj.show_in_front = True
+        obj.hide_render = True
+        obj.data.materials.append(_cable_anchor_plane_material())
+
+        self.report({'INFO'}, "Cable anchor plane created")
         return {'FINISHED'}
 
 
@@ -390,6 +438,7 @@ class STAGEHAND_OT_generate_power_lines(bpy.types.Operator):
 classes = (
     STAGEHAND_OT_toggle_cable_anchor_points,
     STAGEHAND_OT_add_cable_obstacle,
+    STAGEHAND_OT_add_cable_anchor_plane,
     STAGEHAND_OT_generate_power_lines,
 )
 

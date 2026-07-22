@@ -27,6 +27,7 @@ STRUCTURE_RESOLUTION = 0.25
 EDGE_RESOLUTION = 0.3
 DELTA_EXCESS = 10
 MAX_POWER_FOR_LINE = 3000
+CABLE_ANCHOR_PLANE_PROPERTY = "stagehand_cable_anchor_plane"
 
 
 POWER_INPUT_TYPES = {int(link_type) for link_type in MONOPHASE_POWER_INPUT_LINK_TYPES}
@@ -108,6 +109,12 @@ def _is_visible_scene_object(obj):
 def _iter_stagehand_objects():
     for obj in bpy.data.objects:
         if _is_stagehand_object(obj) and _is_visible_scene_object(obj):
+            yield obj
+
+
+def _iter_cable_anchor_planes():
+    for obj in bpy.data.objects:
+        if _is_visible_scene_object(obj) and obj.get(CABLE_ANCHOR_PLANE_PROPERTY):
             yield obj
 
 
@@ -208,6 +215,41 @@ def _record_cable_anchor_offset(offsets_by_key, key, outward_direction, display_
         offsets_by_key[key] = offset_data
 
 
+def _anchor_plane_structure_points(obj, resolution):
+    matrix = obj.matrix_world
+    bounds = tuple(Vector(corner) for corner in obj.bound_box)
+    min_x = min(point.x for point in bounds)
+    max_x = max(point.x for point in bounds)
+    min_y = min(point.y for point in bounds)
+    max_y = max(point.y for point in bounds)
+    plane_z = sum(point.z for point in bounds) / len(bounds)
+
+    x_axis = matrix.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    y_axis = matrix.to_3x3() @ Vector((0.0, 1.0, 0.0))
+    width = (max_x - min_x) * x_axis.length
+    length = (max_y - min_y) * y_axis.length
+
+    if width <= 0.0000000001 or length <= 0.0000000001:
+        return (), Vector((0.0, 0.0, 1.0))
+
+    width_direction = x_axis.normalized()
+    length_direction = y_axis.normalized()
+    outward_direction = width_direction.cross(length_direction)
+    if outward_direction.length_squared <= 0.0000000001:
+        outward_direction = matrix.to_quaternion() @ Vector((0.0, 0.0, 1.0))
+    outward_direction.normalize()
+
+    corner = matrix @ Vector((min_x, min_y, plane_z))
+    width_offsets = _dimension_offsets(width, resolution)
+    length_offsets = _dimension_offsets(length, resolution)
+    points = [
+        corner + (width_direction * width_offset) + (length_direction * length_offset)
+        for width_offset in width_offsets
+        for length_offset in length_offsets
+    ]
+    return points, outward_direction
+
+
 def _iter_power_obstacles():
     for obj in bpy.data.objects:
         if not _is_visible_scene_object(obj):
@@ -255,6 +297,19 @@ def _collect_structure_vertices(resolution, collect_offsets=False):
                         _link_outward_direction(obj, link, local_point),
                         getattr(link, "displayRadius", 0.0),
                     )
+
+    for obj in _iter_cable_anchor_planes():
+        points, outward_direction = _anchor_plane_structure_points(obj, resolution)
+        for world_point in points:
+            key = position_key(world_point)
+            vertices_by_key[key] = tuple(world_point)
+            if collect_offsets:
+                _record_cable_anchor_offset(
+                    offsets_by_key,
+                    key,
+                    outward_direction,
+                    0.0,
+                )
 
     obstacles = list(_iter_power_obstacles())
     if obstacles:
