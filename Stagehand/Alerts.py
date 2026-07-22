@@ -471,6 +471,14 @@ def _publish_results_timer():
     return PUBLISH_POLL_INTERVAL
 
 
+def _ensure_publish_results_timer():
+    if not bpy.app.timers.is_registered(_publish_results_timer):
+        bpy.app.timers.register(
+            _publish_results_timer,
+            first_interval=PUBLISH_POLL_INTERVAL,
+            persistent=True,
+        )
+
 def scan_now():
     global _LAST_SCAN_MESSAGE, _LAST_SCAN_ERROR
 
@@ -479,6 +487,7 @@ def scan_now():
 
     _LAST_SCAN_MESSAGE = "Scan requested"
     _LAST_SCAN_ERROR = ""
+    _ensure_publish_results_timer()
     _start_worker()
     _SCAN_EVENT.set()
     _tag_alert_ui_redraw()
@@ -559,6 +568,7 @@ def _auto_scan_update(self, _context):
     with _STATE_LOCK:
         _AUTO_SCAN_ENABLED = bool(getattr(self, "stagehand_alert_auto_scan", False))
     if _AUTO_SCAN_ENABLED:
+        _ensure_publish_results_timer()
         _start_worker()
         _SCAN_EVENT.set()
     else:
@@ -767,8 +777,7 @@ def register():
     _REGISTERED = True
     if _AUTO_SCAN_ENABLED:
         _start_worker()
-    if not bpy.app.timers.is_registered(_publish_results_timer):
-        bpy.app.timers.register(_publish_results_timer, first_interval=PUBLISH_POLL_INTERVAL)
+    _ensure_publish_results_timer()
 
 
 def unregister():
