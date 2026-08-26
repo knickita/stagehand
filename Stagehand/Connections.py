@@ -367,12 +367,16 @@ def _link_forward(rotation):
     return forward.normalized()
 
 
-def _is_hook_pipe_pair(link, other_link):
+def _is_pipe_attachment_pair(link, other_link):
     link_type = StagehandLinkType(int(link.type))
     other_link_type = StagehandLinkType(int(other_link.type))
+    pipe_attachment_types = {
+        StagehandLinkType.HOOK,
+        StagehandLinkType.LITEC_CARRELLO_SECTION_INNER,
+    }
     return (
-        (link_type == StagehandLinkType.HOOK and other_link_type == StagehandLinkType.PIPE)
-        or (link_type == StagehandLinkType.PIPE and other_link_type == StagehandLinkType.HOOK)
+        (link_type in pipe_attachment_types and other_link_type == StagehandLinkType.PIPE)
+        or (link_type == StagehandLinkType.PIPE and other_link_type in pipe_attachment_types)
     )
 
 
@@ -398,7 +402,7 @@ def _closest_point_on_cylindrical_link(point, cylindrical_link, cylindrical_cent
 
 
 def link_snap_target_point(link, center, rotation, other_link, other_center, other_rotation):
-    if _is_hook_pipe_pair(link, other_link):
+    if _is_pipe_attachment_pair(link, other_link):
         if other_link.cylindricalType:
             closest_point, _projected_distance, _outside_distance = _closest_point_on_cylindrical_link(
                 center,
@@ -413,7 +417,7 @@ def link_snap_target_point(link, center, rotation, other_link, other_center, oth
 
 
 def _link_position_distance(link, center, rotation, other_link, other_center, other_rotation):
-    if _is_hook_pipe_pair(link, other_link):
+    if _is_pipe_attachment_pair(link, other_link):
         if other_link.cylindricalType:
             closest_point, _projected_distance, outside_distance = _closest_point_on_cylindrical_link(
                 center,
@@ -487,7 +491,7 @@ def link_alignment_rotation_delta(link_rotation, target_rotation):
 
 
 def _link_alignment_angle(link, rotation, other_link, other_rotation):
-    if _is_hook_pipe_pair(link, other_link) and (link.cylindricalType or other_link.cylindricalType):
+    if _is_pipe_attachment_pair(link, other_link) and (link.cylindricalType or other_link.cylindricalType):
         return 0.0
     if link.cylindricalType or other_link.cylindricalType:
         return _link_forward(rotation).angle(-_link_forward(other_rotation), 0.0)
@@ -1263,8 +1267,11 @@ def _is_pipe_item(item):
     return item.link.cylindricalType and int(item.link.type) == int(StagehandLinkType.PIPE)
 
 
-def _is_hook_item(item):
-    return int(item.link.type) == int(StagehandLinkType.HOOK)
+def _is_pipe_attachment_item(item):
+    return int(item.link.type) in {
+        int(StagehandLinkType.HOOK),
+        int(StagehandLinkType.LITEC_CARRELLO_SECTION_INNER),
+    }
 
 
 def _pipe_item_bucket_keys(item):
@@ -1284,20 +1291,20 @@ def _pipe_item_bucket_keys(item):
     yield from _iter_cylindrical_search_bucket_range(min_point, max_point)
 
 
-def _append_hook_pipe_candidates(candidates, hook_items, pipe_items, seen_pair_keys):
+def _append_pipe_attachment_candidates(candidates, attachment_items, pipe_items, seen_pair_keys):
     pipe_buckets = defaultdict(list)
     for pipe_item in pipe_items:
         for bucket_key in _pipe_item_bucket_keys(pipe_item):
             pipe_buckets[bucket_key].append(pipe_item)
 
-    for hook_item in hook_items:
-        bucket_key = _cylindrical_search_bucket_key(hook_item.center)
+    for attachment_item in attachment_items:
+        bucket_key = _cylindrical_search_bucket_key(attachment_item.center)
         for pipe_item in pipe_buckets.get(bucket_key, ()):
-            pair_key = tuple(sorted((hook_item.link_uid, pipe_item.link_uid)))
+            pair_key = tuple(sorted((attachment_item.link_uid, pipe_item.link_uid)))
             if pair_key in seen_pair_keys:
                 continue
             seen_pair_keys.add(pair_key)
-            candidate = _connection_candidate(hook_item, pipe_item)
+            candidate = _connection_candidate(attachment_item, pipe_item)
             if candidate is not None:
                 candidates.append(candidate)
 
@@ -1349,9 +1356,9 @@ def _connect_free_links_inside_group(objects, context=None):
         tuple(sorted((candidate[6].link_uid, candidate[7].link_uid)))
         for candidate in candidates
     }
-    _append_hook_pipe_candidates(
+    _append_pipe_attachment_candidates(
         candidates,
-        [item for item in free_items if _is_hook_item(item)],
+        [item for item in free_items if _is_pipe_attachment_item(item)],
         [item for item in free_items if _is_pipe_item(item)],
         seen_pair_keys,
     )
@@ -1404,15 +1411,15 @@ def _connect_free_links_to_scene(free_items, group_objects, context=None):
         tuple(sorted((candidate[6].link_uid, candidate[7].link_uid)))
         for candidate in candidates
     }
-    _append_hook_pipe_candidates(
+    _append_pipe_attachment_candidates(
         candidates,
-        [item for item in free_items if _is_hook_item(item)],
+        [item for item in free_items if _is_pipe_attachment_item(item)],
         [item for item in scene_items if _is_pipe_item(item)],
         seen_pair_keys,
     )
-    _append_hook_pipe_candidates(
+    _append_pipe_attachment_candidates(
         candidates,
-        [item for item in scene_items if _is_hook_item(item)],
+        [item for item in scene_items if _is_pipe_attachment_item(item)],
         [item for item in free_items if _is_pipe_item(item)],
         seen_pair_keys,
     )

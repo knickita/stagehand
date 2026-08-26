@@ -28,9 +28,9 @@ class StagehandLinkType(IntEnum):
     INFILED_MECHANICAL_UP = 23
     INFILED_MECHANICAL_DOWN = 24
     LITEC40 = 25
+    #non stiamo usando il numero 27, forse possiamo riutilizzarlo per altro?
     LITEC_CARRELLO_TRUSS = 26
-    LITEC30_SECTION_OUTER = 27
-    LITEC30_SECTION_INNER = 28
+    LITEC_CARRELLO_SECTION_INNER = 28
     SIXTEMA_JOINT = 29
     SIXTEMA_LEG_SITE = 30
     SIXTEMA_LEG = 31
@@ -45,6 +45,10 @@ LINK_COMPATIBILITY = {
         StagehandLinkType.LITEC_CARRELLO_TRUSS,
     ),
     StagehandLinkType.HOOK: (StagehandLinkType.PIPE,),
+    StagehandLinkType.PIPE: (
+        StagehandLinkType.HOOK,
+        StagehandLinkType.LITEC_CARRELLO_SECTION_INNER,
+    ),
     StagehandLinkType.POWER_IN_CEE16A_MONO: (StagehandLinkType.POWER_OUT_CEE16A_MONO,),
     StagehandLinkType.POWER_OUT_CEE16A_MONO: (StagehandLinkType.POWER_IN_CEE16A_MONO,),
     StagehandLinkType.POWER_IN_POWERCON_BLUE: (StagehandLinkType.POWER_OUT_POWERCON_BLUE,),
@@ -77,8 +81,7 @@ LINK_COMPATIBILITY = {
         StagehandLinkType.LITEC30,
         StagehandLinkType.LITEC40,
     ),
-    StagehandLinkType.LITEC30_SECTION_OUTER: (StagehandLinkType.LITEC30_SECTION_INNER,),
-    StagehandLinkType.LITEC30_SECTION_INNER: (StagehandLinkType.LITEC30_SECTION_OUTER,),
+    StagehandLinkType.LITEC_CARRELLO_SECTION_INNER: (StagehandLinkType.PIPE,),
     StagehandLinkType.SIXTEMA_JOINT: (StagehandLinkType.SIXTEMA_JOINT,),
     StagehandLinkType.SIXTEMA_LEG_SITE: (StagehandLinkType.SIXTEMA_LEG,),
     StagehandLinkType.SIXTEMA_LEG: (StagehandLinkType.SIXTEMA_LEG_SITE,),
