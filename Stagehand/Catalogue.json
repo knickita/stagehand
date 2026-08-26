@@ -5219,6 +5219,70 @@
                     "allowrotations": "none"
                 }
             ]
+        },
+        {
+            "name": "selvoline - piantone 50cm",
+            "uniqueId": 53,
+            "mesh3d": "Models/selvoline_piantone_50cm",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.07,
+                        0.51,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 35,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07,
+                        0.0,
+                        0.51,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 35,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.07,
+                        0.0,
+                        0.51,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 35,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.0,
+                        -0.07,
+                        0.51,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 35,
+                    "allowrotations": "none"
+                }
+            ]
         }
     ]
 }
