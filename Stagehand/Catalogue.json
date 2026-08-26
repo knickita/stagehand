@@ -5281,6 +5281,618 @@
                     "displayradius": 0.05,
                     "type": 35,
                     "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.03,
+                        0.03,
+                        0.2,
+                        0.0,
+                        0.0,
+                        -0.3826834323650898,
+                        0.9238795325112867
+                    ],
+                    "displayradius": 0.05,
+                    "type": 46,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.03,
+                        0.03,
+                        0.2,
+                        0.0,
+                        0.0,
+                        0.3826834323650898,
+                        0.9238795325112867
+                    ],
+                    "displayradius": 0.05,
+                    "type": 46,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.03,
+                        -0.03,
+                        0.2,
+                        0.0,
+                        0.0,
+                        -0.9238795325112867,
+                        0.3826834323650898
+                    ],
+                    "displayradius": 0.05,
+                    "type": 46,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.03,
+                        -0.03,
+                        0.2,
+                        0.0,
+                        0.0,
+                        0.9238795325112867,
+                        0.3826834323650898
+                    ],
+                    "displayradius": 0.05,
+                    "type": 46,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - travetta senza innesti",
+            "uniqueId": 54,
+            "mesh3d": "Models/selvoline_travetta_senza_innesti",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        0.07,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 36,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.93,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 36,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - travetta con innesti",
+            "uniqueId": 55,
+            "mesh3d": "Models/selvoline_travetta_con_innesti",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        0.07,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 36,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.93,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 36,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.0,
+                        0.07,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 37,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.0,
+                        -0.07,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 37,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - cavalla",
+            "uniqueId": 56,
+            "mesh3d": "Models/selvoline_cavalla",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        0.07,
+                        0.0,
+                        -0.01,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 38,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.93,
+                        0.0,
+                        -0.01,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 38,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.25,
+                        0.0,
+                        0.02,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 39,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.75,
+                        0.0,
+                        0.02,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 39,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.25,
+                        0.0,
+                        0.02,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 39,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.75,
+                        0.0,
+                        0.02,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 39,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - tavola",
+            "uniqueId": 57,
+            "mesh3d": "Models/selvoline_tavola",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        1.0,
+                        0.0,
+                        0.0,
+                        0.5,
+                        -0.5,
+                        0.5,
+                        -0.5
+                    ],
+                    "displayradius": 0.05,
+                    "type": 40,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - montante_doppio",
+            "uniqueId": 58,
+            "mesh3d": "Models/selvoline_montante_doppio",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        -0.07,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 36,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        0.07,
+                        0.035,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        -0.07,
+                        0.035,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        0.07,
+                        0.59,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        -0.07,
+                        0.59,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        0.07,
+                        0.965,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        -0.07,
+                        0.965,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - montante_dx",
+            "uniqueId": 59,
+            "mesh3d": "Models/selvoline_montante_dx",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        -0.07,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 36,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        0.07,
+                        0.035,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        0.07,
+                        0.59,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        0.07,
+                        0.965,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - montante_sx",
+            "uniqueId": 60,
+            "mesh3d": "Models/selvoline_montante_sx",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        -0.07,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 36,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        -0.07,
+                        0.035,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        -0.07,
+                        0.59,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        -0.05,
+                        -0.07,
+                        0.965,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 42,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - mancorrente alto",
+            "uniqueId": 61,
+            "mesh3d": "Models/selvoline_mancorrente_alto",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        0.07,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 43,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.93,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 43,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - mancorrente centrale",
+            "uniqueId": 62,
+            "mesh3d": "Models/selvoline_mancorrente_centrale",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        0.07,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 43,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.93,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 43,
+                    "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "selvoline - battitacco",
+            "uniqueId": 63,
+            "mesh3d": "Models/selvoline_battitacco",
+            "tags": [],
+            "links": [
+                {
+                    "posdir": [
+                        0.07,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 43,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        1.93,
+                        0.0,
+                        -0.035,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 43,
+                    "allowrotations": "none"
                 }
             ]
         }
