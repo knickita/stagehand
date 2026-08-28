@@ -4074,7 +4074,10 @@
             "uniqueId": 40,
             "mesh3d": "Models/sixtema_200cmx100cm",
             "tags": [
-                "riser"
+                "riser",
+                "structure",
+                "structure-horizontal",
+                "sixtema-stage-deck"
             ],
             "links": [
                 {
@@ -4240,7 +4243,10 @@
             "uniqueId": 41,
             "mesh3d": "Models/sixtema_100cmx100cm",
             "tags": [
-                "riser"
+                "riser",
+                "structure",
+                "structure-horizontal",
+                "sixtema-stage-deck"
             ],
             "links": [
                 {
@@ -4378,7 +4384,10 @@
             "uniqueId": 42,
             "mesh3d": "Models/sixtema_200cmx50cm",
             "tags": [
-                "riser"
+                "riser",
+                "structure",
+                "structure-horizontal",
+                "sixtema-stage-deck"
             ],
             "links": [
                 {
@@ -4516,7 +4525,10 @@
             "uniqueId": 43,
             "mesh3d": "Models/sixtema_100cmx50cm",
             "tags": [
-                "riser"
+                "riser",
+                "structure",
+                "structure-horizontal",
+                "sixtema-stage-deck"
             ],
             "links": [
                 {
@@ -4625,7 +4637,7 @@
             "name": "sixtema - gamba 70-120",
             "uniqueId": 44,
             "mesh3d": "Models/sixtema_leg_70_120",
-            "tags": [],
+            "tags": ["structure", "structure-vertical"],
             "links": [
                 {
                     "posdir": [
@@ -5201,7 +5213,8 @@
             "uniqueId": 52,
             "mesh3d": "Models/sixtema_fence",
             "tags": [
-                "riser"
+                "riser",
+                "structure"
             ],
             "links": [
                 {
@@ -5224,7 +5237,7 @@
             "name": "selvoline - piantone 50cm",
             "uniqueId": 53,
             "mesh3d": "Models/selvoline_piantone_50cm",
-            "tags": [],
+            "tags": ["structure", "structure-vertical"],
             "links": [
                 {
                     "posdir": [
@@ -5344,7 +5357,7 @@
             "name": "selvoline - travetta senza innesti",
             "uniqueId": 54,
             "mesh3d": "Models/selvoline_travetta_senza_innesti",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5380,7 +5393,7 @@
             "name": "selvoline - travetta con innesti",
             "uniqueId": 55,
             "mesh3d": "Models/selvoline_travetta_con_innesti",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5444,7 +5457,7 @@
             "name": "selvoline - cavalla",
             "uniqueId": 56,
             "mesh3d": "Models/selvoline_cavalla",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5536,7 +5549,7 @@
             "name": "selvoline - tavola",
             "uniqueId": 57,
             "mesh3d": "Models/selvoline_tavola",
-            "tags": [],
+            "tags": ["structure", "structure-horizontal", "selvoline-stage-deck"],
             "links": [
                 {
                     "posdir": [
@@ -5558,7 +5571,7 @@
             "name": "selvoline - montante_doppio",
             "uniqueId": 58,
             "mesh3d": "Models/selvoline_montante_doppio",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5664,7 +5677,7 @@
             "name": "selvoline - montante_dx",
             "uniqueId": 59,
             "mesh3d": "Models/selvoline_montante_dx",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5728,7 +5741,7 @@
             "name": "selvoline - montante_sx",
             "uniqueId": 60,
             "mesh3d": "Models/selvoline_montante_sx",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5792,7 +5805,7 @@
             "name": "selvoline - mancorrente alto",
             "uniqueId": 61,
             "mesh3d": "Models/selvoline_mancorrente_alto",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5828,7 +5841,7 @@
             "name": "selvoline - mancorrente centrale",
             "uniqueId": 62,
             "mesh3d": "Models/selvoline_mancorrente_centrale",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5864,7 +5877,7 @@
             "name": "selvoline - battitacco",
             "uniqueId": 63,
             "mesh3d": "Models/selvoline_battitacco",
-            "tags": [],
+            "tags": ["structure"],
             "links": [
                 {
                     "posdir": [
@@ -5900,7 +5913,7 @@
             "name": "selvoline - piantone 150cm",
             "uniqueId": 64,
             "mesh3d": "Models/selvoline_piantone_150cm",
-            "tags": [],
+            "tags": ["structure", "structure-vertical"],
             "links": [
                 {
                     "posdir": [

@@ -38,8 +38,12 @@ PDF_MAX_CONVERSION_WORKERS = os.cpu_count() or 1
 PDF_RENDER_ENGINE_CANDIDATES = ("BLENDER_WORKBENCH", "BLENDER_EEVEE_NEXT", "BLENDER_EEVEE", "BLENDER_RENDER")
 PDF_FALLBACK_EEVEE_TAA_RENDER_SAMPLES = 4
 PDF_USE_FREESTYLE = False
-LAYHER_HORIZONTAL_TAG = "structure-horizontal"
-LAYHER_VERTICAL_TAG = "structure-vertical"
+STRUCTURE_HORIZONTAL_TAG = "structure-horizontal"
+STRUCTURE_VERTICAL_TAG = "structure-vertical"
+STAGE_DECK_THICKNESS_BY_TAG = {
+    "sixtema-stage-deck": 0.085,
+    "selvoline-stage-deck": 0.025,
+}
 WHITE = (1.0, 1.0, 1.0)
 BLACK = (0.0, 0.0, 0.0)
 OPAQUE_WHITE = (1.0, 1.0, 1.0, 1.0)
@@ -567,9 +571,10 @@ def _segment_key(objects):
 
 
 class _StructureSegment(list):
-    def __init__(self, objects, quote_axis=None):
+    def __init__(self, objects, quote_axis=None, quote_end_offset=0.0):
         super().__init__(objects)
         self.quote_axis = quote_axis
+        self.quote_end_offset = quote_end_offset
 
 
 def _build_truss_segments(truss_objects):
@@ -661,8 +666,8 @@ def _object_cardinal_axis(obj, structure_rotation, threshold=0.82):
 
 
 def _layher_quote_axis(obj, structure_rotation):
-    is_horizontal = _has_tag(obj, LAYHER_HORIZONTAL_TAG)
-    is_vertical = _has_tag(obj, LAYHER_VERTICAL_TAG)
+    is_horizontal = _has_tag(obj, STRUCTURE_HORIZONTAL_TAG)
+    is_vertical = _has_tag(obj, STRUCTURE_VERTICAL_TAG)
     if not is_horizontal and not is_vertical:
         return None
 
@@ -750,10 +755,49 @@ def _build_layher_segments(layher_objects):
     return segments
 
 
+def _build_tagged_axis_segments(structure_objects):
+    horizontal_objects = [
+        obj for obj in structure_objects
+        if _has_tag(obj, STRUCTURE_HORIZONTAL_TAG)
+    ]
+    vertical_objects = [
+        obj for obj in structure_objects
+        if _has_tag(obj, STRUCTURE_VERTICAL_TAG)
+    ]
+    if not horizontal_objects and not vertical_objects:
+        return None
+
+    deck_thickness = max(
+        (
+            thickness
+            for obj in horizontal_objects
+            for tag, thickness in STAGE_DECK_THICKNESS_BY_TAG.items()
+            if _has_tag(obj, tag)
+        ),
+        default=0.0,
+    )
+    segments = []
+    if horizontal_objects:
+        segments.append(_StructureSegment(horizontal_objects, "X"))
+        segments.append(_StructureSegment(horizontal_objects, "Y"))
+    if vertical_objects:
+        segments.append(_StructureSegment(
+            vertical_objects,
+            "Z",
+            quote_end_offset=deck_thickness,
+        ))
+
+    return segments
+
+
 def _build_structure_segments(structure_objects):
     structure_kind = _structure_kind(structure_objects[0]) if structure_objects else None
     if structure_kind == "layher":
         return _build_layher_segments(structure_objects)
+
+    tagged_axis_segments = _build_tagged_axis_segments(structure_objects)
+    if tagged_axis_segments is not None:
+        return tagged_axis_segments
 
     return _build_truss_segments(structure_objects)
 
@@ -1005,7 +1049,7 @@ def _layher_center_span(segment_objects, axis, structure_rotation, origin):
     axis_index = {"X": 0, "Y": 1}[axis]
     vertical_positions = []
     for obj in segment_objects:
-        if not _has_tag(obj, LAYHER_VERTICAL_TAG):
+        if not _has_tag(obj, STRUCTURE_VERTICAL_TAG):
             continue
 
         local_center = _local_point_for_structure(obj.matrix_world.translation, origin, structure_rotation)
@@ -1061,6 +1105,16 @@ def _build_dimension_candidates(structure_segments, structure_rotation):
         axis_index = {"X": 0, "Y": 1, "Z": 2}[axis]
         span_override = _layher_center_span(segment_objects, axis, structure_rotation, local_box["origin"])
         value = (span_override[1] - span_override[0]) if span_override is not None else dimensions[axis_index]
+        quote_end_offset = max(0.0, float(getattr(segment_objects, "quote_end_offset", 0.0)))
+        if quote_end_offset > 0.0:
+            if span_override is None:
+                span_override = (
+                    local_box["min_corner"][axis_index],
+                    local_box["max_corner"][axis_index] + quote_end_offset,
+                )
+            else:
+                span_override = (span_override[0], span_override[1] + quote_end_offset)
+            value += quote_end_offset
         if value <= DIMENSION_DUPLICATE_TOLERANCE:
             continue
 
@@ -2579,19 +2633,19 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             self.report({'WARNING'}, "PDF generation is already running")
             return {'CANCELLED'}
 
-        objects = _visible_mesh_objects(context)
-        if not objects:
+        visible_objects = _visible_mesh_objects(context)
+        if not visible_objects:
             self.report({'ERROR'}, "No visible mesh objects found for PDF drawings")
             return {'CANCELLED'}
 
-        structure_objects = [obj for obj in objects if _is_structure_object(obj)]
-        structure_groups = _connected_structure_groups(structure_objects) if structure_objects else [objects]
+        structure_objects = [obj for obj in visible_objects if _is_structure_object(obj)]
+        structure_groups = _connected_structure_groups(structure_objects)
         conversion_workers = min(len(structure_groups) * 4, PDF_MAX_CONVERSION_WORKERS)
         self._pdf_started_at = time.perf_counter()
         self._pdf_profiler = _PdfPhaseProfiler()
         self._pdf_conversion_executor = ThreadPoolExecutor(max_workers=max(1, conversion_workers))
         self._pdf_timer = context.window_manager.event_timer_add(0.01, window=context.window)
-        self._pdf_steps = self._generate_pdf_steps(context, objects, structure_groups)
+        self._pdf_steps = self._generate_pdf_steps(context, visible_objects, structure_groups)
         self._pdf_last_step_finished_at = time.perf_counter()
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -2685,7 +2739,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 profiler.record_since("conversion executor shutdown", shutdown_started_at)
             self._pdf_conversion_executor = None
 
-    def _generate_pdf_steps(self, context, objects, structure_groups):
+    def _generate_pdf_steps(self, context, visible_objects, structure_groups):
         scene = context.scene
         progress = _ProgressReporter(
             context,
@@ -2738,8 +2792,8 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 profiler.count("views", len(structure_groups) * 4)
             yield
             data_started_at = time.perf_counter()
-            bom_entries = _collect_bom_entries(objects)
-            details_data = _collect_structure_details(objects)
+            bom_entries = _collect_bom_entries(visible_objects)
+            details_data = _collect_structure_details(visible_objects)
             if profiler is not None:
                 profiler.record_since("drawing data", data_started_at)
             progress.advance(message="PDF drawing data ready")
@@ -2766,7 +2820,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     temporary_line_objects, white_material, original_hide_render = _create_line_render_objects(
                         scene,
                         group_objects,
-                        objects,
+                        visible_objects,
                     )
                     if profiler is not None:
                         profiler.record_since("line object setup", line_objects_started_at)
