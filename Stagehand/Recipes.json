@@ -484,6 +484,94 @@
             ]
         },
         {
+            "id": "selvoline_stage",
+            "name": "Palco Selvoline",
+            "description": "Crea un palco Selvoline modulare con campate da 2x2m",
+            "builder": "selvoline_stage",
+            "parameters": {
+                "width": {
+                    "type": "INT",
+                    "label": "Larghezza (m)",
+                    "description": "Larghezza esatta del palco, in multipli di 2m",
+                    "default": 4,
+                    "min": 2,
+                    "max": 100,
+                    "step": 2
+                },
+                "depth": {
+                    "type": "INT",
+                    "label": "Profondità (m)",
+                    "description": "Profondità esatta del palco, in multipli di 2m",
+                    "default": 4,
+                    "min": 2,
+                    "max": 100,
+                    "step": 2
+                },
+                "stageHeight": {
+                    "type": "ENUM",
+                    "label": "Altezza",
+                    "description": "Altezza dei piantoni Selvoline",
+                    "default": "H50",
+                    "items": [
+                        { "value": "H50", "label": "50 cm" },
+                        { "value": "H150", "label": "150 cm" }
+                    ]
+                },
+                "railings": {
+                    "type": "ENUM",
+                    "label": "Mancorrenti",
+                    "description": "Aggiunge i mancorrenti al perimetro del palco",
+                    "default": "NONE",
+                    "items": [
+                        { "value": "NONE", "label": "Nessuno" },
+                        { "value": "THREE_SIDES", "label": "3 lati" },
+                        { "value": "FOUR_SIDES", "label": "4 lati" }
+                    ]
+                }
+            },
+            "settings": {
+                "moduleSize": 2.0,
+                "postAssetIds": {
+                    "H50": 53,
+                    "H150": 64
+                },
+                "xBeamAssetId": 55,
+                "yBeamAssetId": 54,
+                "bearerAssetId": 56,
+                "boardAssetId": 57,
+                "postLinks": {
+                    "xPositive": 1,
+                    "xNegative": 2,
+                    "yPositive": 0,
+                    "yNegative": 3
+                },
+                "beamStartLink": 0,
+                "beamEndLink": 1,
+                "xBeamBearerLinks": [2, 3],
+                "bearerStartLink": 0,
+                "bearerEndLink": 1,
+                "bearerBoardLinks": [2, 3, 4, 5],
+                "boardLink": 0,
+                "railingAssets": {
+                    "doublePost": 58,
+                    "rightPost": 59,
+                    "leftPost": 60,
+                    "highRail": 61,
+                    "centerRail": 62,
+                    "toeBoard": 63
+                },
+                "railingLinks": {
+                    "postBase": 0,
+                    "single": [1, 2, 3],
+                    "doublePositive": [1, 3, 5],
+                    "doubleNegative": [2, 4, 6],
+                    "railStart": 0,
+                    "railEnd": 1
+                },
+                "maxItems": 10000
+            }
+        },
+        {
             "id": "layher_structure",
             "name": "Struttura Layher",
             "description": "Crea una struttura Layher tridimensionale con basette, montanti, correnti e una diagonale per ogni faccia verticale unica",

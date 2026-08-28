@@ -1647,6 +1647,466 @@ def build_litec_structure(context, definition, parameters):
 register_builder("litec_structure", build_litec_structure)
 
 
+def _normalized_selvoline_settings(definition, parameters):
+    settings = definition.get("settings", {})
+    try:
+        module_size = float(settings.get("moduleSize", 2.0))
+        max_items = int(settings.get("maxItems", 2000))
+        post_asset_ids = {
+            str(key): int(value)
+            for key, value in settings["postAssetIds"].items()
+        }
+        asset_settings = {
+            "xBeamAssetId": int(settings["xBeamAssetId"]),
+            "yBeamAssetId": int(settings["yBeamAssetId"]),
+            "bearerAssetId": int(settings["bearerAssetId"]),
+            "boardAssetId": int(settings["boardAssetId"]),
+        }
+        post_links = {
+            str(key): int(value)
+            for key, value in settings["postLinks"].items()
+        }
+        x_beam_bearer_links = tuple(
+            int(value) for value in settings["xBeamBearerLinks"]
+        )
+        bearer_board_links = tuple(
+            int(value) for value in settings["bearerBoardLinks"]
+        )
+        railing_assets = {
+            str(key): int(value)
+            for key, value in settings["railingAssets"].items()
+        }
+        railing_links = settings["railingLinks"]
+        single_railing_links = tuple(
+            int(value) for value in railing_links["single"]
+        )
+        double_positive_railing_links = tuple(
+            int(value) for value in railing_links["doublePositive"]
+        )
+        double_negative_railing_links = tuple(
+            int(value) for value in railing_links["doubleNegative"]
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Invalid Selvoline recipe settings") from exc
+
+    height_key = str(parameters.get("stageHeight", ""))
+    post_asset_id = post_asset_ids.get(height_key)
+    if post_asset_id is None:
+        raise ValueError("Selvoline stage height must be 50cm or 150cm")
+
+    railings_mode = str(parameters.get("railings", "NONE"))
+    if railings_mode not in {"NONE", "THREE_SIDES", "FOUR_SIDES"}:
+        raise ValueError("Invalid Selvoline railings option")
+
+    asset_ids = {post_asset_id, *asset_settings.values(), *railing_assets.values()}
+    missing_asset_ids = sorted(
+        asset_id
+        for asset_id in asset_ids
+        if asset_id not in LoadCatalogue.CATALOGUE_BY_ID
+    )
+    if missing_asset_ids:
+        raise ValueError(
+            "Selvoline recipe references missing catalogue assets: "
+            + ", ".join(str(asset_id) for asset_id in missing_asset_ids)
+        )
+    if module_size <= 0.0 or max_items <= 0:
+        raise ValueError("Invalid Selvoline recipe limits")
+    if len(x_beam_bearer_links) != 2 or len(bearer_board_links) != 4:
+        raise ValueError("Invalid Selvoline connection layout")
+    if not all(
+        len(link_group) == 3
+        for link_group in (
+            single_railing_links,
+            double_positive_railing_links,
+            double_negative_railing_links,
+        )
+    ):
+        raise ValueError("Invalid Selvoline railing connection layout")
+
+    return {
+        "moduleSize": module_size,
+        "maxItems": max_items,
+        "postAssetId": post_asset_id,
+        **asset_settings,
+        "postLinks": post_links,
+        "beamStartLink": int(settings.get("beamStartLink", 0)),
+        "beamEndLink": int(settings.get("beamEndLink", 1)),
+        "xBeamBearerLinks": x_beam_bearer_links,
+        "bearerStartLink": int(settings.get("bearerStartLink", 0)),
+        "bearerEndLink": int(settings.get("bearerEndLink", 1)),
+        "bearerBoardLinks": bearer_board_links,
+        "boardLink": int(settings.get("boardLink", 0)),
+        "railingsMode": railings_mode,
+        "railingAssets": railing_assets,
+        "railingLinks": {
+            "postBase": int(railing_links.get("postBase", 0)),
+            "single": single_railing_links,
+            "doublePositive": double_positive_railing_links,
+            "doubleNegative": double_negative_railing_links,
+            "railStart": int(railing_links.get("railStart", 0)),
+            "railEnd": int(railing_links.get("railEnd", 1)),
+        },
+    }
+
+
+def _selvoline_module_count(value, dimension_name, module_size):
+    try:
+        dimension = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Selvoline {dimension_name} must be a number") from exc
+
+    module_count = round(dimension / module_size)
+    if dimension > 0.0 and abs(dimension - module_count * module_size) <= 0.0001:
+        return module_count, module_count * module_size
+
+    lower_count = max(1, int(dimension // module_size))
+    if lower_count * module_size >= dimension - 0.0001:
+        lower_count = max(1, lower_count - 1)
+    upper_count = max(1, lower_count + 1)
+    raise ValueError(
+        f"Selvoline {dimension_name} must be a multiple of {module_size:g}m. "
+        f"Available dimensions: {lower_count * module_size:g}m or "
+        f"{upper_count * module_size:g}m"
+    )
+
+
+def _import_selvoline_object(asset_id, imported_objects):
+    imported = LoadCatalogue.import_catalogue_asset(asset_id)
+    imported_objects.extend(imported)
+    return _single_stagehand_object(imported, asset_id)
+
+
+def _connect_selvoline_pair(obj_a, link_index_a, obj_b, link_index_b):
+    link_a = Connections.get_link(obj_a, link_index_a)
+    link_b = Connections.get_link(obj_b, link_index_b)
+    if link_a is None or link_b is None:
+        raise RuntimeError("Unable to find a Selvoline connection link")
+    if not are_link_types_compatible(link_a.type, link_b.type):
+        raise RuntimeError("The selected Selvoline components are not compatible")
+    if not Connections.links_are_aligned(obj_a, link_index_a, obj_b, link_index_b):
+        raise RuntimeError("Unable to align the Selvoline structure exactly")
+    if not Connections.connect_links(obj_a, link_index_a, obj_b, link_index_b):
+        raise RuntimeError("Unable to connect the Selvoline structure")
+
+
+def _add_selvoline_between(
+    asset_id,
+    start_obj,
+    start_link_index,
+    end_obj,
+    end_link_index,
+    component_start_link,
+    component_end_link,
+    imported_objects,
+):
+    component = _import_selvoline_object(asset_id, imported_objects)
+    if not Connections.align_object_link_to_target(
+        component,
+        component_start_link,
+        start_obj,
+        start_link_index,
+    ):
+        raise RuntimeError("Unable to position a Selvoline component")
+    _connect_selvoline_pair(
+        component,
+        component_start_link,
+        start_obj,
+        start_link_index,
+    )
+    _connect_selvoline_pair(
+        component,
+        component_end_link,
+        end_obj,
+        end_link_index,
+    )
+    return component
+
+
+def _selvoline_railing_runs(width_count, depth_count, mode):
+    if mode == "NONE":
+        return []
+
+    runs = [
+        {
+            "name": "back",
+            "coordinates": [
+                (x_index, depth_count)
+                for x_index in range(width_count + 1)
+            ],
+            "postLink": "yPositive",
+            "startPost": "rightPost",
+            "endPost": "leftPost",
+            "positiveLinks": "doublePositive",
+            "negativeLinks": "doubleNegative",
+        },
+        {
+            "name": "left",
+            "coordinates": [
+                (0, y_index)
+                for y_index in range(depth_count + 1)
+            ],
+            "postLink": "xNegative",
+            "startPost": "rightPost",
+            "endPost": "leftPost",
+            "positiveLinks": "doublePositive",
+            "negativeLinks": "doubleNegative",
+        },
+        {
+            "name": "right",
+            "coordinates": [
+                (width_count, y_index)
+                for y_index in range(depth_count + 1)
+            ],
+            "postLink": "xPositive",
+            "startPost": "leftPost",
+            "endPost": "rightPost",
+            "positiveLinks": "doubleNegative",
+            "negativeLinks": "doublePositive",
+        },
+    ]
+    if mode == "FOUR_SIDES":
+        runs.append(
+            {
+                "name": "front",
+                "coordinates": [
+                    (x_index, 0)
+                    for x_index in range(width_count + 1)
+                ],
+                "postLink": "yNegative",
+                "startPost": "leftPost",
+                "endPost": "rightPost",
+                "positiveLinks": "doubleNegative",
+                "negativeLinks": "doublePositive",
+            }
+        )
+    return runs
+
+
+def _add_selvoline_railing_run(
+    run,
+    posts,
+    settings,
+    imported_objects,
+):
+    railing_assets = settings["railingAssets"]
+    railing_links = settings["railingLinks"]
+    post_link_index = settings["postLinks"][run["postLink"]]
+    coordinates = run["coordinates"]
+    mounts = []
+
+    for node_index, coordinates_at_node in enumerate(coordinates):
+        if node_index == 0:
+            mount_asset_id = railing_assets[run["startPost"]]
+            positive_links = railing_links["single"]
+            negative_links = None
+        elif node_index == len(coordinates) - 1:
+            mount_asset_id = railing_assets[run["endPost"]]
+            positive_links = None
+            negative_links = railing_links["single"]
+        else:
+            mount_asset_id = railing_assets["doublePost"]
+            positive_links = railing_links[run["positiveLinks"]]
+            negative_links = railing_links[run["negativeLinks"]]
+
+        mount = _import_selvoline_object(mount_asset_id, imported_objects)
+        if not Connections.align_object_link_to_target(
+            mount,
+            railing_links["postBase"],
+            posts[coordinates_at_node],
+            post_link_index,
+        ):
+            raise RuntimeError(
+                f"Unable to position a Selvoline railing post on the {run['name']} side"
+            )
+        _connect_selvoline_pair(
+            mount,
+            railing_links["postBase"],
+            posts[coordinates_at_node],
+            post_link_index,
+        )
+        mounts.append(
+            {
+                "object": mount,
+                "positiveLinks": positive_links,
+                "negativeLinks": negative_links,
+            }
+        )
+
+    rail_assets = (
+        railing_assets["toeBoard"],
+        railing_assets["centerRail"],
+        railing_assets["highRail"],
+    )
+    rail_count = 0
+    for segment_index in range(len(mounts) - 1):
+        start_mount = mounts[segment_index]
+        end_mount = mounts[segment_index + 1]
+        for rail_asset_id, start_link, end_link in zip(
+            rail_assets,
+            start_mount["positiveLinks"],
+            end_mount["negativeLinks"],
+        ):
+            _add_selvoline_between(
+                rail_asset_id,
+                start_mount["object"],
+                start_link,
+                end_mount["object"],
+                end_link,
+                railing_links["railStart"],
+                railing_links["railEnd"],
+                imported_objects,
+            )
+            rail_count += 1
+
+    return len(mounts), rail_count
+
+
+def build_selvoline_stage(context, definition, parameters):
+    """Build a modular Selvoline stage with one bearer and four boards per bay."""
+    settings = _normalized_selvoline_settings(definition, parameters)
+    module_size = settings["moduleSize"]
+    width_count, width = _selvoline_module_count(
+        parameters.get("width"), "width", module_size
+    )
+    depth_count, depth = _selvoline_module_count(
+        parameters.get("depth"), "depth", module_size
+    )
+
+    post_count = (width_count + 1) * (depth_count + 1)
+    x_beam_count = width_count * (depth_count + 1)
+    y_beam_count = depth_count * (width_count + 1)
+    bearer_count = width_count * depth_count
+    board_count = bearer_count * len(settings["bearerBoardLinks"])
+    railing_runs = _selvoline_railing_runs(
+        width_count,
+        depth_count,
+        settings["railingsMode"],
+    )
+    railing_post_count = sum(len(run["coordinates"]) for run in railing_runs)
+    railing_segment_count = sum(
+        len(run["coordinates"]) - 1
+        for run in railing_runs
+    )
+    railing_component_count = railing_segment_count * 3
+    total_items = (
+        post_count
+        + x_beam_count
+        + y_beam_count
+        + bearer_count
+        + board_count
+        + railing_post_count
+        + railing_component_count
+    )
+    if total_items > settings["maxItems"]:
+        raise ValueError(
+            f"This Selvoline stage needs {total_items} items; "
+            f"the recipe limit is {settings['maxItems']}"
+        )
+
+    imported_objects = []
+    posts = {}
+    x_beams = {}
+    connection_count = 0
+    structure_matrix = None
+    post_links = settings["postLinks"]
+
+    try:
+        for y_index in range(depth_count + 1):
+            for x_index in range(width_count + 1):
+                post = _import_selvoline_object(settings["postAssetId"], imported_objects)
+                if structure_matrix is None:
+                    structure_matrix = post.matrix_world.copy()
+                    structure_matrix.translation = context.scene.cursor.location
+                post.matrix_world = structure_matrix.copy()
+                post.matrix_world.translation = (
+                    structure_matrix.translation
+                    + structure_matrix.to_quaternion()
+                    @ Vector((x_index * module_size, y_index * module_size, 0.0))
+                )
+                posts[(x_index, y_index)] = post
+
+        for y_index in range(depth_count + 1):
+            for x_index in range(width_count):
+                x_beams[(x_index, y_index)] = _add_selvoline_between(
+                    settings["xBeamAssetId"],
+                    posts[(x_index, y_index)], post_links["xPositive"],
+                    posts[(x_index + 1, y_index)], post_links["xNegative"],
+                    settings["beamStartLink"], settings["beamEndLink"],
+                    imported_objects,
+                )
+                connection_count += 2
+
+        for x_index in range(width_count + 1):
+            for y_index in range(depth_count):
+                _add_selvoline_between(
+                    settings["yBeamAssetId"],
+                    posts[(x_index, y_index)], post_links["yPositive"],
+                    posts[(x_index, y_index + 1)], post_links["yNegative"],
+                    settings["beamStartLink"], settings["beamEndLink"],
+                    imported_objects,
+                )
+                connection_count += 2
+
+        front_bearer_link, back_bearer_link = settings["xBeamBearerLinks"]
+        for y_index in range(depth_count):
+            for x_index in range(width_count):
+                bearer = _add_selvoline_between(
+                    settings["bearerAssetId"],
+                    x_beams[(x_index, y_index)], front_bearer_link,
+                    x_beams[(x_index, y_index + 1)], back_bearer_link,
+                    settings["bearerStartLink"], settings["bearerEndLink"],
+                    imported_objects,
+                )
+                connection_count += 2
+
+                for bearer_board_link in settings["bearerBoardLinks"]:
+                    board = _import_selvoline_object(
+                        settings["boardAssetId"], imported_objects
+                    )
+                    if not Connections.align_object_link_to_target(
+                        board, settings["boardLink"], bearer, bearer_board_link
+                    ):
+                        raise RuntimeError("Unable to position a Selvoline board")
+                    _connect_selvoline_pair(
+                        board, settings["boardLink"], bearer, bearer_board_link
+                    )
+                    connection_count += 1
+
+        for railing_run in railing_runs:
+            added_posts, added_rails = _add_selvoline_railing_run(
+                railing_run,
+                posts,
+                settings,
+                imported_objects,
+            )
+            connection_count += added_posts + (added_rails * 2)
+    except Exception:
+        _remove_imported_objects(imported_objects)
+        raise
+
+    for selected in context.selected_objects:
+        selected.select_set(False)
+    for obj in imported_objects:
+        obj.select_set(True)
+    context.view_layer.objects.active = posts[(0, 0)]
+
+    height_label = "50cm" if str(parameters["stageHeight"]) == "H50" else "150cm"
+    railings_label = {
+        "NONE": "senza mancorrenti",
+        "THREE_SIDES": "mancorrenti su 3 lati",
+        "FOUR_SIDES": "mancorrenti su 4 lati",
+    }[settings["railingsMode"]]
+    return (
+        imported_objects,
+        f"Aggiunto palco Selvoline {width:g}m x {depth:g}m, "
+        f"altezza {height_label}, {railings_label} ({total_items} elementi, "
+        f"{connection_count} connessioni)",
+    )
+
+
+register_builder("selvoline_stage", build_selvoline_stage)
+
+
 def _layher_asset_link(asset_id, link_index, label):
     asset = LoadCatalogue.CATALOGUE_BY_ID.get(asset_id)
     if asset is None:
@@ -2320,6 +2780,8 @@ def _property_from_definition(parameter_name, parameter):
             options["min"] = int(parameter["min"])
         if "max" in parameter:
             options["max"] = int(parameter["max"])
+        if "step" in parameter:
+            options["step"] = int(parameter["step"])
         return bpy.props.IntProperty(**options)
 
     if property_type == "ENUM":
