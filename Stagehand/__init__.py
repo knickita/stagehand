@@ -34,6 +34,7 @@ OptionsPanel = _load_submodule("OptionsPanel")
 PdfDrawings = _load_submodule("PdfDrawings")
 PowerManagement = _load_submodule("PowerManagement")
 PowerPdf = _load_submodule("PowerPdf")
+RentmanExport = _load_submodule("RentmanExport")
 SnapLogics = _load_submodule("SnapLogics")
 
 classes = (    
@@ -48,6 +49,7 @@ classes = (
     PdfDrawings,
     PowerManagement,
     PowerPdf,
+    RentmanExport,
     MenuConfiguration,
     Alerts,
     UpdateAddon,

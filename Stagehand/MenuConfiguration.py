@@ -18,6 +18,7 @@ class Stagehand_MT_menu(bpy.types.Menu):
         self.layout.separator()
         self.layout.operator("stagehand.generate_pdf_drawings", text="Generate PDF Drawings")
         self.layout.operator("stagehand.generate_pdf_power", text="Generate PDF Power")
+        self.layout.operator("stagehand.export_rentman_csv", text="Export Rentman CSV")
         self.layout.separator()
         self.layout.operator("stagehand.repair_all_connections", text="Repair All Links")
         self.layout.separator()
