@@ -1411,6 +1411,7 @@ def _add_litec_run(
     imported_objects,
     target_obj=None,
     target_link_index=None,
+    return_endpoint=False,
 ):
     current_obj = start_obj
     current_link_index = start_link_index
@@ -1451,7 +1452,35 @@ def _add_litec_run(
         )
         connection_count += 1
 
+    if return_endpoint:
+        return connection_count, current_obj, current_link_index
     return connection_count
+
+
+def _add_litec_heavy_base(
+    leg_obj,
+    leg_link_index,
+    base_asset_id,
+    base_link_index,
+    imported_objects,
+):
+    imported = LoadCatalogue.import_catalogue_asset(base_asset_id)
+    imported_objects.extend(imported)
+    base_obj = _single_stagehand_object(imported, base_asset_id)
+    if not Connections.align_object_link_to_target(
+        base_obj,
+        base_link_index,
+        leg_obj,
+        leg_link_index,
+    ):
+        raise RuntimeError("Unable to position a Litec heavy base")
+    _connect_litec_pair(
+        base_obj,
+        base_link_index,
+        leg_obj,
+        leg_link_index,
+    )
+    return base_obj
 
 
 def build_litec_structure(context, definition, parameters):
@@ -1471,6 +1500,7 @@ def build_litec_structure(context, definition, parameters):
 
     family = _normalized_litec_family(definition, parameters)
     measurement_mode = str(parameters.get("measurementMode", "INTERNAL")).upper()
+    add_heavy_base = bool(parameters.get("heavyBase", False))
     max_run = float(settings.get("maxRun", 50.0))
     max_items = int(settings.get("maxItems", 500))
     if max_run <= 0.0 or max_items <= 0:
@@ -1511,18 +1541,35 @@ def build_litec_structure(context, definition, parameters):
 
     cube_size = family["cubeSize"]
     cube_links = family["cubeLinks"]
+    heavy_base_asset_id = int(settings.get("heavyBaseAssetId", 10))
+    heavy_base_link = int(settings.get("heavyBaseLink", 0))
+    if add_heavy_base:
+        heavy_base_asset = LoadCatalogue.CATALOGUE_BY_ID.get(heavy_base_asset_id)
+        if heavy_base_asset is None:
+            raise ValueError(
+                f"Catalogue asset ID {heavy_base_asset_id} was not found"
+            )
+        try:
+            heavy_base_asset["links"][heavy_base_link]
+        except (IndexError, TypeError) as exc:
+            raise ValueError(
+                f"Heavy base link {heavy_base_link} is invalid for asset "
+                f"{heavy_base_asset_id}"
+            ) from exc
     center_width = straight_width + cube_size
     requested_depth = None
     straight_depth = None
     depth_plan = None
 
     if structure_type == "PORTAL":
+        leg_count = 2
         cube_offsets = (
             (0.0, 0.0, straight_height),
             (center_width, 0.0, straight_height),
         )
         total_items = 2 + len(width_plan) + (2 * len(height_plan))
     else:
+        leg_count = 4
         requested_depth = float(parameters["depth"])
         straight_depth = _litec_straight_length(
             requested_depth,
@@ -1553,6 +1600,9 @@ def build_litec_structure(context, definition, parameters):
             + (4 * len(height_plan))
         )
 
+    heavy_base_count = leg_count if add_heavy_base else 0
+    total_items += heavy_base_count
+
     if total_items > max_items:
         raise ValueError(
             f"This structure needs {total_items} items; "
@@ -1569,6 +1619,28 @@ def build_litec_structure(context, definition, parameters):
             imported_objects,
         )
 
+        def add_vertical_leg(cube):
+            result = _add_litec_run(
+                cube,
+                cube_links["bottom"],
+                height_plan,
+                family,
+                imported_objects,
+                return_endpoint=add_heavy_base,
+            )
+            if not add_heavy_base:
+                return result
+
+            run_connections, leg_obj, leg_link_index = result
+            _add_litec_heavy_base(
+                leg_obj,
+                leg_link_index,
+                heavy_base_asset_id,
+                heavy_base_link,
+                imported_objects,
+            )
+            return run_connections + 1
+
         if structure_type == "PORTAL":
             connection_count += _add_litec_run(
                 cubes[0],
@@ -1580,13 +1652,7 @@ def build_litec_structure(context, definition, parameters):
                 cube_links["xNegative"],
             )
             for cube in cubes:
-                connection_count += _add_litec_run(
-                    cube,
-                    cube_links["bottom"],
-                    height_plan,
-                    family,
-                    imported_objects,
-                )
+                connection_count += add_vertical_leg(cube)
         else:
             for first, second in ((0, 1), (3, 2)):
                 connection_count += _add_litec_run(
@@ -1609,13 +1675,7 @@ def build_litec_structure(context, definition, parameters):
                     cube_links["yNegative"],
                 )
             for cube in cubes:
-                connection_count += _add_litec_run(
-                    cube,
-                    cube_links["bottom"],
-                    height_plan,
-                    family,
-                    imported_objects,
-                )
+                connection_count += add_vertical_leg(cube)
     except Exception:
         _remove_imported_objects(imported_objects)
         raise
@@ -1640,7 +1700,8 @@ def build_litec_structure(context, definition, parameters):
     return (
         imported_objects,
         f"Added {family['label']} {structure_label} ({dimensions} {mode_label}, "
-        f"{total_items} items, {connection_count} connections)",
+        f"{total_items} items, {connection_count} connections"
+        f"{f', {heavy_base_count} heavy bases' if heavy_base_count else ''})",
     )
 
 

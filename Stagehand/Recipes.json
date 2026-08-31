@@ -754,11 +754,19 @@
                             "description": "Le misure includono lo spessore dei cubi"
                         }
                     ]
+                },
+                "heavyBase": {
+                    "type": "BOOL",
+                    "label": "Base pesante",
+                    "description": "Aggiunge una base pesante da 90kg sotto ogni gamba verticale",
+                    "default": false
                 }
             },
             "settings": {
                 "structureTypeParameter": "structureType",
                 "familyResource": "litecFamilies",
+                "heavyBaseAssetId": 10,
+                "heavyBaseLink": 0,
                 "maxRun": 50.0,
                 "maxItems": 500
             }

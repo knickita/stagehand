@@ -955,7 +955,7 @@
                         0.7071067094802856
                     ],
                     "displayradius": 0.1,
-                    "type": 0,
+                    "type": 26,
                     "allowrotations": "90"
                 }
             ]

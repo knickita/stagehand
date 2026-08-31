@@ -8,6 +8,8 @@ class Stagehand_MT_menu(bpy.types.Menu):
     bl_idname = "Stagehand_MT_menu"
 
     def draw(self, context):
+        self.layout.operator("stagehand.open_controls", text="StagehandControls", icon='TOOL_SETTINGS')
+        self.layout.separator()
         self.layout.menu("STAGEHAND_MT_catalogue_menu", text="Add Item")
         self.layout.menu("STAGEHAND_MT_recipe_menu", text="Add Recipe")
         self.layout.operator("stagehand.import_mvr_structure", text="Import MVR Structure")
