@@ -102,7 +102,7 @@ class StagehandObject(bpy.types.PropertyGroup):
 
     asset_id: bpy.props.IntProperty(
         name="Asset ID",
-        default=-1,
+        default=0,
         options={'HIDDEN'},
     )
 
@@ -282,7 +282,7 @@ def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
         preserved_link_states = _snapshot_stagehand_links(stagehand.links)
 
     if asset_data is None:
-        stagehand.asset_id = -1
+        stagehand.asset_id = 0
         stagehand.catalogueName = ""
         stagehand.watt = 0.0
         _clear_collection(stagehand.tags)
@@ -385,7 +385,7 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
         readonly_column = layout.column()
         readonly_column.enabled = False
 
-        if stagehand.asset_id >= 0:
+        if stagehand.asset_id != 0:
             readonly_column.label(text=f"Asset ID: {stagehand.asset_id}")
 
         if stagehand.uid:

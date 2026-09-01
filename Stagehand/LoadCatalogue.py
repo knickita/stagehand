@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 
@@ -32,6 +33,26 @@ def _normalize_asset_name(name):
     sanitized = "".join(ch if ch.isalnum() else "_" for ch in name.lower())
     sanitized = sanitized.strip("_")
     return sanitized or "asset"
+
+
+def catalogue_display_name(asset_data):
+    name = str(asset_data.get("name", "")).strip() or "Stagehand asset"
+    asset_id = int(asset_data.get("uniqueId", 0))
+    if asset_id < 0:
+        parent = CATALOGUE_BY_ID.get(int(asset_data.get("parentId", 0)))
+        parent_name = str((parent or {}).get("name", "")).strip()
+        return f"{parent_name or name} {asset_id}"
+    return name
+
+
+def catalogue_sort_key(asset_id):
+    asset_data = CATALOGUE_BY_ID[asset_id]
+    parent_id = int(asset_data.get("parentId", asset_id))
+    return parent_id, asset_id < 0, abs(asset_id)
+
+
+def _operator_asset_token(asset_id):
+    return f"variant_{abs(asset_id)}" if asset_id < 0 else str(asset_id)
 
 
 def _candidate_mesh_paths(mesh_path):
@@ -77,7 +98,11 @@ def refresh_scene_objects_from_catalogue():
 
     for obj in _iter_stagehand_scene_objects():
         asset_id = int(obj.stagehand.asset_id)
-        if asset_id < 0:
+        if asset_id == -1 and not str(obj.stagehand.catalogueName).strip():
+            # Files created before asset ID 0 became the unassigned sentinel.
+            obj.stagehand.asset_id = 0
+            continue
+        if asset_id == 0:
             continue
 
         asset_data = CATALOGUE_BY_ID.get(asset_id)
@@ -344,8 +369,10 @@ def import_catalogue_asset(asset_id):
 
 def _build_operator(asset_data):
     asset_id = asset_data["uniqueId"]
-    operator_suffix = _normalize_asset_name(asset_data["name"])
-    class_name = f"STAGEHAND_OT_import_catalogue_{asset_id}_{operator_suffix}"
+    operator_token = _operator_asset_token(asset_id)
+    display_name = catalogue_display_name(asset_data)
+    operator_suffix = _normalize_asset_name(display_name)
+    class_name = f"STAGEHAND_OT_import_catalogue_{operator_token}_{operator_suffix}"
 
     def execute(self, context):
         del context
@@ -362,9 +389,9 @@ def _build_operator(asset_data):
         class_name,
         (bpy.types.Operator,),
         {
-            "bl_idname": f"stagehand.import_catalogue_{asset_id}",
-            "bl_label": asset_data["name"],
-            "bl_description": f"Import Stagehand asset '{asset_data['name']}'",
+            "bl_idname": f"stagehand.import_catalogue_{operator_token}",
+            "bl_label": display_name,
+            "bl_description": f"Import Stagehand asset '{display_name}'",
             "bl_options": {'REGISTER', 'UNDO'},
             "execute": execute,
         },
@@ -416,15 +443,144 @@ class STAGEHAND_MT_catalogue_menu(bpy.types.Menu):
             layout.label(text="No catalogue items found")
             return
 
-        for asset_id in sorted(CATALOGUE_BY_ID):
+        for asset_id in sorted(CATALOGUE_BY_ID, key=catalogue_sort_key):
             asset_data = CATALOGUE_BY_ID[asset_id]
-            layout.operator(f"stagehand.import_catalogue_{asset_id}", text=asset_data["name"])
+            operator_token = _operator_asset_token(asset_id)
+            layout.operator(
+                f"stagehand.import_catalogue_{operator_token}",
+                text=catalogue_display_name(asset_data),
+            )
 
 
 BASE_CLASSES = (
     STAGEHAND_OT_reload_catalogue,
     STAGEHAND_MT_catalogue_menu,
 )
+
+
+def _require_catalogue_id(entry, entry_label):
+    if "uniqueId" not in entry:
+        raise ValueError(f"Catalogue {entry_label} is missing uniqueId: {entry}")
+
+    asset_id = entry["uniqueId"]
+    if isinstance(asset_id, bool) or not isinstance(asset_id, int):
+        raise TypeError(
+            f"Catalogue {entry_label} uniqueId must be an integer: {entry}"
+        )
+    return asset_id
+
+
+def _resolve_variant(parent, variant):
+    variant_id = _require_catalogue_id(variant, "variant")
+    parent_id = variant.get("parentId")
+    if isinstance(parent_id, bool) or not isinstance(parent_id, int):
+        raise TypeError(
+            f"Catalogue variant parentId must be an integer: {variant}"
+        )
+
+    resolved = copy.deepcopy(parent)
+    resolved["uniqueId"] = variant_id
+    resolved["parentId"] = parent_id
+
+    for key, value in variant.items():
+        if key in {"uniqueId", "parentId", "links"}:
+            continue
+        resolved[key] = copy.deepcopy(value)
+
+    source_links = resolved.get("links", [])
+    if not isinstance(source_links, list):
+        raise TypeError(
+            f"Catalogue item {parent_id} links must be an array"
+        )
+
+    link_overrides = variant.get("links", [])
+    if not isinstance(link_overrides, list):
+        raise TypeError(
+            f"Catalogue variant {variant_id} links must be an array"
+        )
+
+    overridden_parent_ids = set()
+    for link_override in link_overrides:
+        if not isinstance(link_override, dict):
+            raise TypeError(
+                f"Catalogue variant {variant_id} link override must be an object"
+            )
+
+        parent_link_id = link_override.get("parentId")
+        if isinstance(parent_link_id, bool) or not isinstance(parent_link_id, int):
+            raise TypeError(
+                f"Catalogue variant {variant_id} link override requires an integer parentId"
+            )
+        if parent_link_id < 0 or parent_link_id >= len(source_links):
+            raise ValueError(
+                f"Catalogue variant {variant_id} link parentId {parent_link_id} is outside "
+                f"parent item {parent_id} links"
+            )
+        if parent_link_id in overridden_parent_ids:
+            raise ValueError(
+                f"Catalogue variant {variant_id} overrides link parentId {parent_link_id} more than once"
+            )
+        overridden_parent_ids.add(parent_link_id)
+
+        resolved_link = copy.deepcopy(source_links[parent_link_id])
+        for key, value in link_override.items():
+            if key == "parentId":
+                continue
+            resolved_link[key] = copy.deepcopy(value)
+        source_links[parent_link_id] = resolved_link
+
+    resolved["links"] = source_links
+    return resolved
+
+
+def _catalogue_from_raw(raw_catalogue):
+    if not isinstance(raw_catalogue, dict):
+        raise TypeError("Catalogue root must be an object")
+
+    catalogue_by_id = {}
+    items = raw_catalogue.get("items", [])
+    variants = raw_catalogue.get("variants", [])
+    if not isinstance(items, list):
+        raise TypeError("Catalogue items must be an array")
+    if not isinstance(variants, list):
+        raise TypeError("Catalogue variants must be an array")
+
+    for item in items:
+        if not isinstance(item, dict):
+            raise TypeError(f"Catalogue item must be an object: {item}")
+        asset_id = _require_catalogue_id(item, "item")
+        if asset_id <= 0:
+            raise ValueError(
+                f"Catalogue item uniqueId must be greater than zero: {item}"
+            )
+
+        if asset_id in catalogue_by_id:
+            raise ValueError(f"Duplicate catalogue id found: {asset_id}")
+
+        catalogue_by_id[asset_id] = copy.deepcopy(item)
+
+    for variant in variants:
+        if not isinstance(variant, dict):
+            raise TypeError(f"Catalogue variant must be an object: {variant}")
+
+        variant_id = _require_catalogue_id(variant, "variant")
+        if variant_id >= 0:
+            raise ValueError(
+                f"Catalogue variant uniqueId must be less than zero: {variant}"
+            )
+        if variant_id in catalogue_by_id:
+            raise ValueError(f"Duplicate catalogue id found: {variant_id}")
+
+        parent_id = variant.get("parentId")
+        parent = catalogue_by_id.get(parent_id)
+        if parent is None or int(parent.get("uniqueId", 0)) <= 0:
+            raise ValueError(
+                f"Catalogue variant {variant_id} parent item {parent_id} was not found"
+            )
+
+        catalogue_by_id[variant_id] = _resolve_variant(parent, variant)
+
+    return catalogue_by_id
 
 
 def _load_catalogue():
@@ -435,22 +591,25 @@ def _load_catalogue():
     with catalogue_path.open("r", encoding="utf-8") as handle:
         raw_catalogue = json.load(handle)
 
-    catalogue_by_id = {}
+    return _catalogue_from_raw(raw_catalogue)
 
-    for item in raw_catalogue.get("items", []):
-        if "uniqueId" not in item:
-            raise ValueError(f"Catalogue item is missing uniqueId: {item}")
 
-        asset_id = item["uniqueId"]
-        if not isinstance(asset_id, int):
-            raise TypeError(f"Catalogue item uniqueId must be an integer: {item}")
+def canonical_asset_id(asset_id):
+    """Return the physical parent item ID used for BOM and external exports."""
+    try:
+        asset_id = int(asset_id)
+    except (TypeError, ValueError):
+        return 0
 
-        if asset_id in catalogue_by_id:
-            raise ValueError(f"Duplicate catalogue id found: {asset_id}")
+    asset_data = CATALOGUE_BY_ID.get(asset_id)
+    if asset_data is None:
+        return asset_id
+    return int(asset_data.get("parentId", asset_id))
 
-        catalogue_by_id[asset_id] = item
 
-    return catalogue_by_id
+def canonical_asset_data(asset_id):
+    canonical_id = canonical_asset_id(asset_id)
+    return CATALOGUE_BY_ID.get(canonical_id)
 
 
 def _unregister_dynamic_classes():
@@ -466,7 +625,7 @@ def reload_catalogue_operators():
     _unregister_dynamic_classes()
     CATALOGUE_BY_ID = _load_catalogue()
 
-    for asset_id in sorted(CATALOGUE_BY_ID):
+    for asset_id in sorted(CATALOGUE_BY_ID, key=catalogue_sort_key):
         operator_class = _build_operator(CATALOGUE_BY_ID[asset_id])
         safe_register_class(operator_class)
         REGISTERED_CLASSES.append(operator_class)

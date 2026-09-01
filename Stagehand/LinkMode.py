@@ -392,7 +392,12 @@ def _pick_clicked_compatible_link(context, event, obj, target_link_type):
 
 def _compatible_catalogue_items(link_type):
     compatible_items = []
-    for asset_id, asset_data in sorted(LoadCatalogue.CATALOGUE_BY_ID.items()):
+    sorted_asset_ids = sorted(
+        LoadCatalogue.CATALOGUE_BY_ID,
+        key=LoadCatalogue.catalogue_sort_key,
+    )
+    for asset_id in sorted_asset_ids:
+        asset_data = LoadCatalogue.CATALOGUE_BY_ID[asset_id]
         for link in asset_data.get("links", []):
             if are_link_types_compatible(link.get("type", -1), link_type):
                 compatible_items.append((asset_id, asset_data))
@@ -405,7 +410,8 @@ def _search_popup_items(_self, context):
     clicked_link_type = getattr(wm, "stagehand_clicked_link_type", -1)
     items = []
     for asset_id, asset_data in _compatible_catalogue_items(clicked_link_type):
-        items.append((str(asset_id), asset_data["name"], asset_data["name"]))
+        display_name = LoadCatalogue.catalogue_display_name(asset_data)
+        items.append((str(asset_id), display_name, display_name))
     return items
 
 

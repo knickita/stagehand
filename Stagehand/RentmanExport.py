@@ -4,6 +4,7 @@ import bpy
 from bpy_extras.io_utils import ExportHelper
 
 from .RegistrationUtils import safe_register_class, safe_unregister_class
+from . import LoadCatalogue
 from .RentmanCsv import (
     RentmanConfigError,
     collect_export_rows,
@@ -34,7 +35,11 @@ def _stagehand_asset_ids():
         stagehand = getattr(obj, "stagehand", None)
         if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
             continue
-        yield int(getattr(stagehand, "asset_id", -1))
+        asset_id = LoadCatalogue.canonical_asset_id(
+            getattr(stagehand, "asset_id", 0)
+        )
+        if asset_id > 0:
+            yield asset_id
 
 
 class STAGEHAND_OT_export_rentman_csv(bpy.types.Operator, ExportHelper):

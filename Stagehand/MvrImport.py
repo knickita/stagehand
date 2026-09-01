@@ -110,7 +110,8 @@ def _catalogue_lookup_by_name():
 
     return {
         asset_data.get("name", "").lower(): asset_data
-        for asset_data in LoadCatalogue.CATALOGUE_BY_ID.values()
+        for asset_id, asset_data in LoadCatalogue.CATALOGUE_BY_ID.items()
+        if asset_id > 0
     }
 
 

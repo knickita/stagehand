@@ -1980,10 +1980,23 @@ def _pdf_image_stream(image):
 def _bom_entry_data(obj):
     stagehand = getattr(obj, "stagehand", None)
     if stagehand is not None and getattr(stagehand, "is_stagehand_object", False):
-        item_name = str(stagehand.catalogueName).strip() or obj.name_full
-        asset_id = int(getattr(stagehand, "asset_id", -1))
+        from . import LoadCatalogue
+
+        raw_asset_id = int(getattr(stagehand, "asset_id", 0))
+        asset_id = LoadCatalogue.canonical_asset_id(raw_asset_id)
+        canonical_data = LoadCatalogue.canonical_asset_data(raw_asset_id) or {}
+        item_name = (
+            str(canonical_data.get("name", "")).strip()
+            or str(stagehand.catalogueName).strip()
+            or obj.name_full
+        )
+        if asset_id == 0:
+            return {
+                "key": ("stagehand-unassigned", item_name.casefold()),
+                "name": item_name,
+            }
         return {
-            "key": ("stagehand", asset_id, item_name.casefold()),
+            "key": ("stagehand", asset_id),
             "name": item_name,
         }
 
@@ -2105,6 +2118,8 @@ def _cube_category(active_indexes):
 
 
 def _collect_cube_type_entries(objects, asset_id):
+    from . import LoadCatalogue
+
     category_order = [
         "senza vie",
         "1 via",
@@ -2123,7 +2138,10 @@ def _collect_cube_type_entries(objects, asset_id):
         stagehand = getattr(obj, "stagehand", None)
         if stagehand is None or not getattr(stagehand, "is_stagehand_object", False):
             continue
-        if int(getattr(stagehand, "asset_id", -1)) != asset_id:
+        object_asset_id = LoadCatalogue.canonical_asset_id(
+            getattr(stagehand, "asset_id", 0)
+        )
+        if object_asset_id != asset_id:
             continue
 
         category_counts[_cube_category(_active_link_indexes(obj))] += 1
