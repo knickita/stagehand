@@ -27,6 +27,8 @@ SPHERE_SEGMENTS = 24
 SPHERE_COLOR = (1.0, 0.1, 0.1, 1.0)
 CYAN_COLOR = (0.0, 1.0, 1.0, 1.0)
 CLICK_PIXEL_RADIUS = 18.0
+SECOND_ANCHOR_DISTANCE_THRESHOLD = 0.002
+SECOND_ANCHOR_ANGLE_THRESHOLD = math.radians(0.5)
 
 
 def _is_stagehand_object(obj):
@@ -71,6 +73,7 @@ def _tag_view3d_redraw(context):
 
 def _exit_link_mode(context, force_object_mode=True):
     _set_selecting_link_mode(context, False)
+    _set_second_anchor_mode(context, False)
     _set_link_mode(context, False)
     if force_object_mode and context.mode != 'OBJECT':
         try:
@@ -129,6 +132,25 @@ def _get_pending_objects(context):
         if obj is not None:
             objects.append(obj)
     return objects
+
+
+def _set_second_anchor_mode(context, enabled, asset_id=0):
+    wm = context.window_manager
+    wm.stagehand_second_anchor_mode_enabled = bool(enabled)
+    wm.stagehand_second_anchor_asset_id = int(asset_id) if enabled else 0
+
+
+def _get_second_anchor_request(context):
+    wm = context.window_manager
+    if not getattr(wm, "stagehand_second_anchor_mode_enabled", False):
+        return None, -1, 0
+
+    target_object = bpy.data.objects.get(
+        getattr(wm, "stagehand_clicked_object_name", "")
+    )
+    target_link_index = getattr(wm, "stagehand_clicked_link_index", -1)
+    asset_id = getattr(wm, "stagehand_second_anchor_asset_id", 0)
+    return target_object, target_link_index, asset_id
 
 
 def _apply_preview_alignment(context, imported_object, imported_link_index):
@@ -398,6 +420,8 @@ def _compatible_catalogue_items(link_type):
     )
     for asset_id in sorted_asset_ids:
         asset_data = LoadCatalogue.CATALOGUE_BY_ID[asset_id]
+        if not LoadCatalogue.is_user_selectable_asset(asset_data):
+            continue
         for link in asset_data.get("links", []):
             if are_link_types_compatible(link.get("type", -1), link_type):
                 compatible_items.append((asset_id, asset_data))
@@ -432,6 +456,318 @@ def _find_imported_compatible_link(imported_objects, target_link_type):
     return None
 
 
+def _catalogue_alternatives(asset_id):
+    try:
+        asset_id = int(asset_id)
+    except (TypeError, ValueError):
+        return []
+
+    parent = LoadCatalogue.CATALOGUE_BY_ID.get(asset_id)
+    if parent is None or not LoadCatalogue.is_user_selectable_asset(parent):
+        return []
+
+    alternatives = [parent]
+    variants = [
+        asset_data
+        for candidate_id, asset_data in LoadCatalogue.CATALOGUE_BY_ID.items()
+        if candidate_id < 0 and int(asset_data.get("parentId", 0)) == asset_id
+    ]
+    alternatives.extend(
+        sorted(variants, key=lambda asset_data: abs(int(asset_data["uniqueId"])))
+    )
+    return alternatives
+
+
+def _supports_second_anchor_selection(asset_data, target_link_type):
+    compatible_anchor_count = sum(
+        1
+        for link_data in asset_data.get("links", [])
+        if not link_data.get("cylindricaltype", False)
+        and are_link_types_compatible(
+            link_data.get("type", -1),
+            target_link_type,
+        )
+    )
+    return compatible_anchor_count >= 2
+
+
+def _catalogue_link_transform(link_data):
+    pos_dir = link_data.get("posdir", ())
+    if len(pos_dir) != 7:
+        return None, None
+    position = Vector(pos_dir[:3])
+    rotation = Quaternion((pos_dir[6], pos_dir[3], pos_dir[4], pos_dir[5]))
+    return position, rotation
+
+
+def _predicted_secondary_links(target_object, target_link_index, asset_id):
+    if (
+        target_object is None
+        or target_link_index < 0
+        or target_link_index >= len(target_object.stagehand.links)
+    ):
+        return []
+
+    target_link = target_object.stagehand.links[target_link_index]
+    target_center, target_rotation = _link_transform(target_object, target_link)
+    predictions = []
+
+    for asset_data in _catalogue_alternatives(asset_id):
+        links = asset_data.get("links", [])
+        for primary_index, primary_data in enumerate(links):
+            if not are_link_types_compatible(
+                primary_data.get("type", -1),
+                target_link.type,
+            ):
+                continue
+
+            primary_position, primary_rotation = _catalogue_link_transform(primary_data)
+            if primary_position is None:
+                continue
+
+            world_rotation = Connections.link_alignment_rotation_delta(
+                primary_rotation,
+                target_rotation,
+            )
+            world_translation = target_center - (world_rotation @ primary_position)
+
+            for secondary_index, secondary_data in enumerate(links):
+                if secondary_index == primary_index:
+                    continue
+                secondary_position, secondary_rotation = _catalogue_link_transform(
+                    secondary_data
+                )
+                if secondary_position is None:
+                    continue
+                predictions.append(
+                    {
+                        "asset_id": int(asset_data["uniqueId"]),
+                        "primary_index": primary_index,
+                        "secondary_index": secondary_index,
+                        "secondary_type": int(secondary_data.get("type", -1)),
+                        "center": world_translation + (
+                            world_rotation @ secondary_position
+                        ),
+                        "rotation": world_rotation @ secondary_rotation,
+                    }
+                )
+
+    return predictions
+
+
+def _iter_available_scene_links(target_object, target_link_index):
+    for obj in bpy.data.objects:
+        if not _is_stagehand_object(obj):
+            continue
+        if obj.hide_get() or obj.hide_viewport:
+            continue
+
+        for link_index, link in enumerate(obj.stagehand.links):
+            if obj == target_object and link_index == target_link_index:
+                continue
+            if Connections.is_link_connected(link):
+                continue
+            if link.cylindricalType or not visualize_in_editor(link):
+                continue
+
+            center, rotation = _link_transform(obj, link)
+            radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
+            yield obj, link_index, link, center, rotation, radius
+
+
+def _second_anchor_solutions(target_object, target_link_index, asset_id):
+    predictions = _predicted_secondary_links(
+        target_object,
+        target_link_index,
+        asset_id,
+    )
+    if not predictions:
+        return []
+
+    best_by_link = {}
+    for obj, link_index, link, center, rotation, radius in (
+        _iter_available_scene_links(target_object, target_link_index)
+    ):
+        for prediction in predictions:
+            if not are_link_types_compatible(
+                prediction["secondary_type"],
+                link.type,
+            ):
+                continue
+
+            distance = (prediction["center"] - center).length
+            # A reversed endpoint can expose small modelling tolerances that are
+            # irrelevant for an explicit two-anchor choice but too large for
+            # unattended auto-connect.
+            if distance > SECOND_ANCHOR_DISTANCE_THRESHOLD:
+                continue
+
+            desired_rotation = rotation @ Connections.LINK_ALIGNMENT_FLIP
+            angle = desired_rotation.rotation_difference(
+                prediction["rotation"]
+            ).angle
+            angle = min(angle, abs((2.0 * math.pi) - angle))
+            if angle > SECOND_ANCHOR_ANGLE_THRESHOLD:
+                continue
+
+            solution = dict(prediction)
+            solution.update(
+                {
+                    "target_object": obj,
+                    "target_link_index": link_index,
+                    "target_link": link,
+                    "target_center": center,
+                    "target_rotation": rotation,
+                    "target_radius": radius,
+                    "distance": distance,
+                    "angle": angle,
+                }
+            )
+            key = (obj.as_pointer(), link_index)
+            current = best_by_link.get(key)
+            score = distance + angle
+            if current is None or score < current[0]:
+                best_by_link[key] = (score, solution)
+
+    return [entry[1] for entry in best_by_link.values()]
+
+
+def _pick_clicked_second_anchor(context, event):
+    target_object, target_link_index, asset_id = _get_second_anchor_request(context)
+    if context.region is None or context.region_data is None:
+        return None
+
+    mouse_position = Vector((event.mouse_region_x, event.mouse_region_y))
+    best_solution = None
+    best_distance = None
+    for solution in _second_anchor_solutions(
+        target_object,
+        target_link_index,
+        asset_id,
+    ):
+        center = solution["target_center"]
+        rotation = solution["target_rotation"]
+        radius = solution["target_radius"]
+        if not _link_is_facing_camera(context, center, rotation):
+            continue
+
+        screen_position = view3d_utils.location_3d_to_region_2d(
+            context.region,
+            context.region_data,
+            center,
+        )
+        if screen_position is None:
+            continue
+        edge_world_position = center + (rotation @ Vector((1, 0, 0)) * radius)
+        edge_screen_position = view3d_utils.location_3d_to_region_2d(
+            context.region,
+            context.region_data,
+            edge_world_position,
+        )
+        pixel_radius = CLICK_PIXEL_RADIUS
+        if edge_screen_position is not None:
+            pixel_radius = max(
+                CLICK_PIXEL_RADIUS,
+                (edge_screen_position - screen_position).length,
+            )
+
+        distance = (screen_position - mouse_position).length
+        if distance <= pixel_radius and (
+            best_distance is None or distance <= best_distance
+        ):
+            best_solution = solution
+            best_distance = distance
+
+    return best_solution
+
+
+def _select_imported_objects(context, imported_objects, active_object):
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in imported_objects:
+        obj.select_set(True)
+    context.view_layer.objects.active = active_object
+
+
+def _place_catalogue_alternative(
+    context,
+    target_object,
+    target_link_index,
+    asset_id,
+    primary_index,
+    secondary_solution=None,
+):
+    asset_data = LoadCatalogue.CATALOGUE_BY_ID.get(int(asset_id))
+    if asset_data is None:
+        return False, "Stagehand alternative was not found in the catalogue"
+
+    imported_objects = LoadCatalogue._import_asset(asset_data)
+    imported_object = next(
+        (
+            obj for obj in imported_objects
+            if _is_stagehand_object(obj)
+            and int(obj.stagehand.asset_id) == int(asset_id)
+            and primary_index < len(obj.stagehand.links)
+        ),
+        None,
+    )
+    if imported_object is None:
+        return False, "Imported Stagehand object has no expected anchor link"
+
+    target_link = target_object.stagehand.links[target_link_index]
+    imported_link = imported_object.stagehand.links[primary_index]
+    target_center, target_rotation = _link_transform(target_object, target_link)
+    imported_center, imported_rotation = _link_transform(imported_object, imported_link)
+    rotation_delta = Connections.link_alignment_rotation_delta(
+        imported_rotation,
+        target_rotation,
+    )
+    _rotate_objects_around_pivot(imported_objects, rotation_delta, imported_center)
+    corrected_center, _corrected_rotation = _link_transform(
+        imported_object,
+        imported_link,
+    )
+    _translate_objects(imported_objects, target_center - corrected_center)
+
+    if not Connections.connect_links(
+        target_object,
+        target_link_index,
+        imported_object,
+        primary_index,
+    ):
+        return False, "Unable to connect the first Stagehand anchor"
+
+    if secondary_solution is not None:
+        secondary_index = secondary_solution["secondary_index"]
+        secondary_target = secondary_solution["target_object"]
+        secondary_target_index = secondary_solution["target_link_index"]
+        distance, angle = Connections.link_alignment_metrics(
+            imported_object,
+            secondary_index,
+            secondary_target,
+            secondary_target_index,
+        )
+        if (
+            distance is None
+            or distance > SECOND_ANCHOR_DISTANCE_THRESHOLD
+            or angle > SECOND_ANCHOR_ANGLE_THRESHOLD
+        ):
+            return False, "Resolved alternative does not align with the second anchor"
+        if not Connections.connect_links(
+            secondary_target,
+            secondary_target_index,
+            imported_object,
+            secondary_index,
+        ):
+            return False, "Unable to connect the second Stagehand anchor"
+
+    _set_second_anchor_mode(context, False)
+    _set_selecting_link_mode(context, False)
+    _select_imported_objects(context, imported_objects, imported_object)
+    _set_link_mode(context, True, imported_object)
+    _tag_view3d_redraw(context)
+    return True, ""
+
+
 def _translate_objects(objects, delta):
     for obj in objects:
         matrix_world = obj.matrix_world.copy()
@@ -452,8 +788,45 @@ def _draw_link_mode():
     context = bpy.context
     draw_groups = []
 
+    second_target, second_target_index, second_asset_id = (
+        _get_second_anchor_request(context)
+    )
     target_object, target_link_index, pending_anchor_object, selected_link_index = _get_selecting_mode_target(context)
-    if target_object is not None and pending_anchor_object is not None:
+    if (
+        second_target is not None
+        and 0 <= second_target_index < len(second_target.stagehand.links)
+    ):
+        target_link = second_target.stagehand.links[second_target_index]
+        target_center, target_rotation = _link_transform(second_target, target_link)
+        target_radius = (
+            target_link.displayRadius if target_link.displayRadius > 0.0 else 0.1
+        )
+        draw_groups.append(
+            _build_link_segments_for_items(
+                [(target_link, target_center, target_rotation, target_radius)],
+                SPHERE_COLOR,
+            )
+        )
+        solutions = _second_anchor_solutions(
+            second_target,
+            second_target_index,
+            second_asset_id,
+        )
+        draw_groups.append(
+            _build_link_segments_for_items(
+                [
+                    (
+                        solution["target_link"],
+                        solution["target_center"],
+                        solution["target_rotation"],
+                        solution["target_radius"],
+                    )
+                    for solution in solutions
+                ],
+                CYAN_COLOR,
+            )
+        )
+    elif target_object is not None and pending_anchor_object is not None:
         if 0 <= target_link_index < len(target_object.stagehand.links):
             target_link = target_object.stagehand.links[target_link_index]
             target_center, target_rotation = _link_transform(target_object, target_link)
@@ -524,6 +897,19 @@ class STAGEHAND_OT_toggle_link_mode(bpy.types.Operator):
         active_object = context.active_object
         wm = context.window_manager
 
+        if getattr(wm, "stagehand_second_anchor_mode_enabled", False):
+            target_object, _target_link_index, _asset_id = (
+                _get_second_anchor_request(context)
+            )
+            _set_second_anchor_mode(context, False)
+            _set_link_mode(
+                context,
+                target_object is not None,
+                target_object,
+            )
+            _tag_view3d_redraw(context)
+            return {'FINISHED'}
+
         if getattr(wm, "stagehand_selecting_link_mode_enabled", False):
             target_object, target_link_index, pending_anchor_object, selected_link_index = _get_selecting_mode_target(context)
             if (
@@ -580,6 +966,7 @@ class STAGEHAND_OT_exit_link_mode(bpy.types.Operator):
         if (
             not getattr(wm, "stagehand_link_mode_enabled", False)
             and not getattr(wm, "stagehand_selecting_link_mode_enabled", False)
+            and not getattr(wm, "stagehand_second_anchor_mode_enabled", False)
         ):
             return {'PASS_THROUGH'}
 
@@ -628,8 +1015,67 @@ class STAGEHAND_OT_add_from_link_popup(bpy.types.Operator):
             self.report({'ERROR'}, "Selected Stagehand asset was not found in the catalogue")
             return {'CANCELLED'}
 
-        imported_objects = LoadCatalogue._import_asset(asset_data)
         target_link = target_object.stagehand.links[target_link_index]
+        alternatives = _catalogue_alternatives(self.asset_id)
+        if len(alternatives) > 1 and _supports_second_anchor_selection(
+            asset_data,
+            target_link.type,
+        ):
+            solutions = _second_anchor_solutions(
+                target_object,
+                target_link_index,
+                int(self.asset_id),
+            )
+            if len(solutions) > 1:
+                _set_link_mode(context, False)
+                _set_selecting_link_mode(context, False)
+                _set_second_anchor_mode(context, True, int(self.asset_id))
+                _tag_view3d_redraw(context)
+                self.report({'INFO'}, "Select the second Stagehand anchor")
+                return {'FINISHED'}
+
+            if len(solutions) == 1:
+                solution = solutions[0]
+                success, message = _place_catalogue_alternative(
+                    context,
+                    target_object,
+                    target_link_index,
+                    solution["asset_id"],
+                    solution["primary_index"],
+                    secondary_solution=solution,
+                )
+                if not success:
+                    self.report({'ERROR'}, message)
+                    return {'CANCELLED'}
+                return {'FINISHED'}
+
+            primary_index = next(
+                (
+                    link_index
+                    for link_index, link_data in enumerate(asset_data.get("links", []))
+                    if are_link_types_compatible(
+                        link_data.get("type", -1),
+                        target_link.type,
+                    )
+                ),
+                -1,
+            )
+            if primary_index < 0:
+                self.report({'ERROR'}, "Selected Stagehand asset has no compatible link")
+                return {'CANCELLED'}
+            success, message = _place_catalogue_alternative(
+                context,
+                target_object,
+                target_link_index,
+                int(self.asset_id),
+                primary_index,
+            )
+            if not success:
+                self.report({'ERROR'}, message)
+                return {'CANCELLED'}
+            return {'FINISHED'}
+
+        imported_objects = LoadCatalogue._import_asset(asset_data)
         imported_link = _find_imported_compatible_link(imported_objects, target_link.type)
         if imported_link is None:
             self.report({'ERROR'}, "Imported object has no compatible link")
@@ -673,8 +1119,33 @@ class STAGEHAND_OT_pick_link_for_add(bpy.types.Operator):
         wm = context.window_manager
         link_mode_active = getattr(wm, "stagehand_link_mode_enabled", False)
         selecting_mode_active = getattr(wm, "stagehand_selecting_link_mode_enabled", False)
-        if not link_mode_active and not selecting_mode_active:
+        second_anchor_mode_active = getattr(
+            wm,
+            "stagehand_second_anchor_mode_enabled",
+            False,
+        )
+        if not link_mode_active and not selecting_mode_active and not second_anchor_mode_active:
             return {'PASS_THROUGH'}
+
+        if second_anchor_mode_active:
+            solution = _pick_clicked_second_anchor(context, event)
+            if solution is None:
+                return {'FINISHED'}
+            target_object, target_link_index, _asset_id = (
+                _get_second_anchor_request(context)
+            )
+            success, message = _place_catalogue_alternative(
+                context,
+                target_object,
+                target_link_index,
+                solution["asset_id"],
+                solution["primary_index"],
+                secondary_solution=solution,
+            )
+            if not success:
+                self.report({'ERROR'}, message)
+                return {'CANCELLED'}
+            return {'FINISHED'}
 
         target_object, target_link_index, pending_anchor_object, _selected_link_index = _get_selecting_mode_target(context)
         if target_object is not None and pending_anchor_object is not None:
@@ -805,6 +1276,16 @@ def register():
         default="",
         options={'HIDDEN'},
     ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_second_anchor_mode_enabled", bpy.props.BoolProperty(
+        name="Stagehand Second Anchor Mode Enabled",
+        default=False,
+        options={'HIDDEN'},
+    ))
+    safe_define_property(bpy.types.WindowManager, "stagehand_second_anchor_asset_id", bpy.props.IntProperty(
+        name="Stagehand Second Anchor Asset ID",
+        default=0,
+        options={'HIDDEN'},
+    ))
 
     register_keymap()
 
@@ -829,6 +1310,8 @@ def unregister():
 
     unregister_keymap()
 
+    safe_remove_property(bpy.types.WindowManager, "stagehand_second_anchor_asset_id")
+    safe_remove_property(bpy.types.WindowManager, "stagehand_second_anchor_mode_enabled")
     safe_remove_property(bpy.types.WindowManager, "stagehand_clicked_link_type")
     safe_remove_property(bpy.types.WindowManager, "stagehand_clicked_link_index")
     safe_remove_property(bpy.types.WindowManager, "stagehand_clicked_object_name")

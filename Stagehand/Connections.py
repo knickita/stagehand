@@ -1876,6 +1876,7 @@ class STAGEHAND_OT_select_connected_objects(bpy.types.Operator):
         if (
             getattr(wm, "stagehand_link_mode_enabled", False)
             or getattr(wm, "stagehand_selecting_link_mode_enabled", False)
+            or getattr(wm, "stagehand_second_anchor_mode_enabled", False)
         ):
             return {'FINISHED'}
         if context.mode != 'OBJECT':

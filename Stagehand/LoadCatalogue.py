@@ -51,6 +51,11 @@ def catalogue_sort_key(asset_id):
     return parent_id, asset_id < 0, abs(asset_id)
 
 
+def is_user_selectable_asset(asset_data):
+    """Variants are internal alternatives, never direct user choices."""
+    return int(asset_data.get("uniqueId", 0)) > 0
+
+
 def _operator_asset_token(asset_id):
     return f"variant_{abs(asset_id)}" if asset_id < 0 else str(asset_id)
 
@@ -445,6 +450,8 @@ class STAGEHAND_MT_catalogue_menu(bpy.types.Menu):
 
         for asset_id in sorted(CATALOGUE_BY_ID, key=catalogue_sort_key):
             asset_data = CATALOGUE_BY_ID[asset_id]
+            if not is_user_selectable_asset(asset_data):
+                continue
             operator_token = _operator_asset_token(asset_id)
             layout.operator(
                 f"stagehand.import_catalogue_{operator_token}",
@@ -626,7 +633,10 @@ def reload_catalogue_operators():
     CATALOGUE_BY_ID = _load_catalogue()
 
     for asset_id in sorted(CATALOGUE_BY_ID, key=catalogue_sort_key):
-        operator_class = _build_operator(CATALOGUE_BY_ID[asset_id])
+        asset_data = CATALOGUE_BY_ID[asset_id]
+        if not is_user_selectable_asset(asset_data):
+            continue
+        operator_class = _build_operator(asset_data)
         safe_register_class(operator_class)
         REGISTERED_CLASSES.append(operator_class)
 
