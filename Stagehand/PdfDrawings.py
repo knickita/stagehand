@@ -2482,7 +2482,7 @@ def _write_pdf(filepath, pages, title, page_titles=None, bom_entries=None, detai
     next_object_number = 4
 
     layout_started_at = time.perf_counter()
-    bom_streams = _bom_page_streams(title, bom_entries or [])
+    bom_streams = _bom_page_streams(title, bom_entries) if bom_entries is not None else []
 
     for bom_stream in bom_streams:
         page_object_number = next_object_number
@@ -2637,6 +2637,36 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         default="*.pdf",
         options={'HIDDEN'},
     )
+    include_material_list: bpy.props.BoolProperty(
+        name="Elenco materiale",
+        description="Include l'elenco completo del materiale visibile",
+        default=True,
+    )
+    include_truss_details: bpy.props.BoolProperty(
+        name="Dettaglio americane",
+        description="Include lunghezze, cubi e ferramenta delle americane",
+        default=True,
+    )
+    include_general_view: bpy.props.BoolProperty(
+        name="Vista generale",
+        description="Include le quattro viste non quotate dell'intera scena",
+        default=True,
+    )
+    include_dimensioned_views: bpy.props.BoolProperty(
+        name="Viste quotate",
+        description="Include le quattro viste quotate di ogni struttura",
+        default=True,
+    )
+
+    def draw(self, context):
+        del context
+        layout = self.layout
+        layout.label(text="Contenuto PDF")
+        column = layout.column(align=True)
+        column.prop(self, "include_material_list")
+        column.prop(self, "include_truss_details")
+        column.prop(self, "include_general_view")
+        column.prop(self, "include_dimensioned_views")
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -2651,17 +2681,40 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             self.report({'WARNING'}, "PDF generation is already running")
             return {'CANCELLED'}
 
+        if not any((
+            self.include_material_list,
+            self.include_truss_details,
+            self.include_general_view,
+            self.include_dimensioned_views,
+        )):
+            self.report({'ERROR'}, "Select at least one PDF section")
+            return {'CANCELLED'}
+
         visible_objects = _visible_mesh_objects(context)
         if not visible_objects:
             self.report({'ERROR'}, "No visible mesh objects found for PDF drawings")
             return {'CANCELLED'}
 
-        structure_objects = [obj for obj in visible_objects if _is_structure_object(obj)]
-        structure_groups = _connected_structure_groups(structure_objects)
-        conversion_workers = min((len(structure_groups) + 1) * 4, PDF_MAX_CONVERSION_WORKERS)
+        structure_groups = []
+        if self.include_dimensioned_views:
+            structure_objects = [obj for obj in visible_objects if _is_structure_object(obj)]
+            structure_groups = _connected_structure_groups(structure_objects)
+
+        render_page_count = len(structure_groups) + (1 if self.include_general_view else 0)
+        if render_page_count == 0 and not (
+            self.include_material_list or self.include_truss_details
+        ):
+            self.report({'ERROR'}, "No visible structure objects found for dimensioned views")
+            return {'CANCELLED'}
+
+        conversion_workers = min(render_page_count * 4, PDF_MAX_CONVERSION_WORKERS)
         self._pdf_started_at = time.perf_counter()
         self._pdf_profiler = _PdfPhaseProfiler()
-        self._pdf_conversion_executor = ThreadPoolExecutor(max_workers=max(1, conversion_workers))
+        self._pdf_conversion_executor = (
+            ThreadPoolExecutor(max_workers=conversion_workers)
+            if conversion_workers > 0
+            else None
+        )
         self._pdf_timer = context.window_manager.event_timer_add(0.01, window=context.window)
         self._pdf_steps = self._generate_pdf_steps(context, visible_objects, structure_groups)
         self._pdf_last_step_finished_at = time.perf_counter()
@@ -2759,9 +2812,10 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
     def _generate_pdf_steps(self, context, visible_objects, structure_groups):
         scene = context.scene
+        render_page_count = len(structure_groups) + (1 if self.include_general_view else 0)
         progress = _ProgressReporter(
             context,
-            PDF_PROGRESS_METADATA_STEPS + ((len(structure_groups) + 1) * 4) + PDF_PROGRESS_WRITE_STEPS,
+            PDF_PROGRESS_METADATA_STEPS + (render_page_count * 4) + PDF_PROGRESS_WRITE_STEPS,
         )
         profiler = getattr(self, "_pdf_profiler", None)
         conversion_executor = getattr(self, "_pdf_conversion_executor", None)
@@ -2807,76 +2861,86 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             progress.begin("Preparing PDF drawing data")
             if profiler is not None:
                 profiler.count("structures", len(structure_groups))
-                profiler.count("views", (len(structure_groups) + 1) * 4)
+                profiler.count("views", render_page_count * 4)
             yield
             data_started_at = time.perf_counter()
-            bom_entries = _collect_bom_entries(visible_objects)
-            details_data = _collect_structure_details(visible_objects)
+            bom_entries = (
+                _collect_bom_entries(visible_objects)
+                if self.include_material_list
+                else None
+            )
+            details_data = (
+                _collect_structure_details(visible_objects)
+                if self.include_truss_details
+                else None
+            )
             if profiler is not None:
                 profiler.record_since("drawing data", data_started_at)
             progress.advance(message="PDF drawing data ready")
             yield
 
-            render_config_started_at = time.perf_counter()
-            scene.render.resolution_x = RENDER_WIDTH
-            scene.render.resolution_y = RENDER_HEIGHT
-            scene.render.resolution_percentage = 100
-            scene.render.image_settings.file_format = 'PNG'
+            if render_page_count > 0:
+                render_config_started_at = time.perf_counter()
+                scene.render.resolution_x = RENDER_WIDTH
+                scene.render.resolution_y = RENDER_HEIGHT
+                scene.render.resolution_percentage = 100
+                scene.render.image_settings.file_format = 'PNG'
 
-            _set_render_engine(scene)
-            _configure_line_render(scene, context.view_layer)
-            if profiler is not None:
-                profiler.record_since("render config", render_config_started_at)
+                _set_render_engine(scene)
+                _configure_line_render(scene, context.view_layer)
+                if profiler is not None:
+                    profiler.record_since("render config", render_config_started_at)
             temp_directory_started_at = time.perf_counter()
             with tempfile.TemporaryDirectory() as temp_directory:
-                general_view_started_at = time.perf_counter()
-                general_page_title = f"{_project_name()} - Vista generale"
-                general_temp_directory = Path(temp_directory) / "general"
-                general_temp_directory.mkdir(exist_ok=True)
-                line_objects_started_at = time.perf_counter()
-                temporary_line_objects, white_material, original_hide_render = _create_line_render_objects(
-                    scene,
-                    visible_objects,
-                    visible_objects,
-                )
-                if profiler is not None:
-                    profiler.record_since("line object setup", line_objects_started_at)
-                    profiler.count("line objects", len(temporary_line_objects))
-
-                general_center, _general_dimensions = _object_bounds(visible_objects)
-                general_rotation = Matrix.Identity(3)
-                general_rendered_views = {}
-
-                try:
-                    for view_name in ("Front", "Left", "Top", "Iso"):
-                        progress.set_message(f"Rendering general view: {view_name}")
-                        general_rendered_views[view_name] = _render_view(
-                            context,
-                            view_name,
-                            general_center,
-                            visible_objects,
-                            [],
-                            general_rotation,
-                            general_temp_directory,
-                            profiler=profiler,
-                            conversion_executor=conversion_executor,
-                            profile_label=f"general {view_name}",
-                        )
-                        progress.advance(message=f"Rendered general view: {view_name}")
-                finally:
-                    line_cleanup_started_at = time.perf_counter()
-                    _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
+                if self.include_general_view:
+                    general_view_started_at = time.perf_counter()
+                    general_page_title = f"{_project_name()} - Vista generale"
+                    general_temp_directory = Path(temp_directory) / "general"
+                    general_temp_directory.mkdir(exist_ok=True)
+                    line_objects_started_at = time.perf_counter()
+                    temporary_line_objects, white_material, original_hide_render = _create_line_render_objects(
+                        scene,
+                        visible_objects,
+                        visible_objects,
+                    )
                     if profiler is not None:
-                        profiler.record_since("line object cleanup", line_cleanup_started_at)
-                    temporary_line_objects = []
-                    white_material = None
-                    original_hide_render = []
+                        profiler.record_since("line object setup", line_objects_started_at)
+                        profiler.count("line objects", len(temporary_line_objects))
 
-                if profiler is not None:
-                    profiler.record_structure("general view", time.perf_counter() - general_view_started_at)
-                page_titles.append(general_page_title)
-                rendered_pages.append(general_rendered_views)
-                yield
+                    general_center, _general_dimensions = _object_bounds(visible_objects)
+                    general_rotation = Matrix.Identity(3)
+                    general_rendered_views = {}
+
+                    try:
+                        for view_name in ("Front", "Left", "Top", "Iso"):
+                            progress.set_message(f"Rendering general view: {view_name}")
+                            general_rendered_views[view_name] = _render_view(
+                                context,
+                                view_name,
+                                general_center,
+                                visible_objects,
+                                [],
+                                general_rotation,
+                                general_temp_directory,
+                                profiler=profiler,
+                                conversion_executor=conversion_executor,
+                                profile_label=f"general {view_name}",
+                            )
+                            progress.advance(message=f"Rendered general view: {view_name}")
+                    finally:
+                        line_cleanup_started_at = time.perf_counter()
+                        _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
+                        if profiler is not None:
+                            profiler.record_since("line object cleanup", line_cleanup_started_at)
+                        temporary_line_objects = []
+                        white_material = None
+                        original_hide_render = []
+
+                    if profiler is not None:
+                        profiler.record_structure("general view", time.perf_counter() - general_view_started_at)
+                    page_titles.append(general_page_title)
+                    rendered_pages.append(general_rendered_views)
+                    yield
 
                 for group_index, group_objects in enumerate(structure_groups, start=1):
                     structure_total_started_at = time.perf_counter()
