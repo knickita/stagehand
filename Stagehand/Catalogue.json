@@ -6080,6 +6080,50 @@
                     "allowrotations": "90"
                 }
             ]
+        },
+        {
+            "name": "sixtema - gamba 40-60",
+            "uniqueId": 66,
+            "mesh3d": "Models/sixtema_leg_40_60",
+            "tags": ["structure", "structure-vertical"],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.045,
+                    "type": 31,
+                    "allowrotations": "90"
+                }
+            ]
+        },
+        {
+            "name": "sixtema - gamba 20-25",
+            "uniqueId": 67,
+            "mesh3d": "Models/sixtema_leg_20_25",
+            "tags": ["structure", "structure-vertical"],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.045,
+                    "type": 31,
+                    "allowrotations": "90"
+                }
+            ]
         }
     ],
     "variants": [

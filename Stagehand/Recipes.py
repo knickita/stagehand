@@ -637,12 +637,53 @@ def _connect_grid_modules(placements):
     return connection_count
 
 
+def _grid_variant_settings(raw_settings, parameters, setting_name):
+    if raw_settings is None:
+        return None
+    if not isinstance(raw_settings, dict):
+        raise ValueError(f"Recipe setting '{setting_name}' must be an object")
+
+    variant_parameter = raw_settings.get("variantParameter")
+    if variant_parameter is None:
+        return raw_settings
+
+    variant_parameter = str(variant_parameter)
+    if variant_parameter not in parameters:
+        raise ValueError(
+            f"Recipe setting '{setting_name}' requires parameter "
+            f"'{variant_parameter}'"
+        )
+    variants = raw_settings.get("variants")
+    if not isinstance(variants, dict) or not variants:
+        raise ValueError(
+            f"Recipe setting '{setting_name}' requires variants"
+        )
+
+    variant_key = str(parameters[variant_parameter])
+    variant = variants.get(variant_key)
+    if not isinstance(variant, dict):
+        raise ValueError(
+            f"Recipe setting '{setting_name}' has no variant "
+            f"for '{variant_key}'"
+        )
+
+    resolved = {
+        key: value
+        for key, value in raw_settings.items()
+        if key not in {"variantParameter", "variants"}
+    }
+    resolved.update(variant)
+    return resolved
+
+
 def _grid_elevation_offset(settings, parameters):
-    elevation_settings = settings.get("elevation")
+    elevation_settings = _grid_variant_settings(
+        settings.get("elevation"),
+        parameters,
+        "elevation",
+    )
     if elevation_settings is None:
         return Vector((0.0, 0.0, 0.0))
-    if not isinstance(elevation_settings, dict):
-        raise ValueError("Recipe setting 'elevation' must be an object")
 
     try:
         height_parameter = str(elevation_settings["heightParameter"])
@@ -687,11 +728,13 @@ def _add_grid_supports(
     parameters,
     imported_objects,
 ):
-    support_settings = settings.get("supports")
+    support_settings = _grid_variant_settings(
+        settings.get("supports"),
+        parameters,
+        "supports",
+    )
     if support_settings is None:
         return 0, 0
-    if not isinstance(support_settings, dict):
-        raise ValueError("Recipe setting 'supports' must be an object")
 
     try:
         asset_id = int(support_settings["assetId"])

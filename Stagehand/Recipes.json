@@ -289,13 +289,58 @@
                     "min": 0.5,
                     "unit": "LENGTH"
                 },
+                "legRange": {
+                    "type": "ENUM",
+                    "label": "Range altezza",
+                    "description": "Seleziona il tipo di gamba Sixtema da utilizzare",
+                    "default": "RANGE_70_120",
+                    "items": [
+                        {
+                            "value": "RANGE_70_120",
+                            "label": "70-120 cm"
+                        },
+                        {
+                            "value": "RANGE_40_60",
+                            "label": "40-60 cm"
+                        },
+                        {
+                            "value": "RANGE_20_25",
+                            "label": "20-25 cm"
+                        }
+                    ]
+                },
                 "stageHeightCm": {
                     "type": "INT",
                     "label": "Height (cm)",
                     "description": "Overall Sixtema stage height in centimetres, including the 8.5cm deck",
                     "default": 100,
                     "min": 70,
-                    "max": 120
+                    "max": 120,
+                    "visibleWhen": {
+                        "legRange": "RANGE_70_120"
+                    }
+                },
+                "stageHeight40To60Cm": {
+                    "type": "INT",
+                    "label": "Height (cm)",
+                    "description": "Overall Sixtema stage height in centimetres, including the 8.5cm deck",
+                    "default": 50,
+                    "min": 40,
+                    "max": 60,
+                    "visibleWhen": {
+                        "legRange": "RANGE_40_60"
+                    }
+                },
+                "stageHeight20To25Cm": {
+                    "type": "INT",
+                    "label": "Height (cm)",
+                    "description": "Overall Sixtema stage height in centimetres, including the 8.5cm deck",
+                    "default": 25,
+                    "min": 20,
+                    "max": 25,
+                    "visibleWhen": {
+                        "legRange": "RANGE_20_25"
+                    }
                 },
                 "addRailings": {
                     "type": "BOOL",
@@ -323,16 +368,42 @@
                     0.0
                 ],
                 "supports": {
-                    "assetId": 44,
-                    "heightParameter": "stageHeightCm",
+                    "variantParameter": "legRange",
+                    "variants": {
+                        "RANGE_70_120": {
+                            "assetId": 44,
+                            "heightParameter": "stageHeightCm",
+                            "baseLength": 1.0
+                        },
+                        "RANGE_40_60": {
+                            "assetId": 66,
+                            "heightParameter": "stageHeight40To60Cm",
+                            "baseLength": 0.5
+                        },
+                        "RANGE_20_25": {
+                            "assetId": 67,
+                            "heightParameter": "stageHeight20To25Cm",
+                            "baseLength": 0.2
+                        }
+                    },
                     "parameterScale": 0.01,
                     "lengthOffset": -0.085,
-                    "baseLength": 1.0,
                     "scaleAxis": "Z",
                     "linkIndex": 0
                 },
                 "elevation": {
-                    "heightParameter": "stageHeightCm",
+                    "variantParameter": "legRange",
+                    "variants": {
+                        "RANGE_70_120": {
+                            "heightParameter": "stageHeightCm"
+                        },
+                        "RANGE_40_60": {
+                            "heightParameter": "stageHeight40To60Cm"
+                        },
+                        "RANGE_20_25": {
+                            "heightParameter": "stageHeight20To25Cm"
+                        }
+                    },
                     "parameterScale": 0.01,
                     "heightOffset": -0.085,
                     "vector": [
