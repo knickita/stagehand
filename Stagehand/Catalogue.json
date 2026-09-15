@@ -825,7 +825,7 @@
             ]
         },
         {
-            "name": "base 90 kg",
+            "name": "base 90 kg - ovetti centrali",
             "uniqueId": 10,
             "mesh3d": "Models/base-90kg",
             "tags": [
@@ -3737,6 +3737,32 @@
             ]
         },
         {
+            "name": "base 90 kg - ovetti a 45",
+            "uniqueId": 37,
+            "mesh3d": "Models/base-90kg",
+            "tags": [
+                "structure",
+                "structure-joint",
+                "truss"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.2,
+                        0.0,
+                        0.019999999552965164,
+                        0.6532815263252633,
+                        0.27059806825172017,
+                        0.2705980226323001,
+                        0.6532814161902405
+                    ],
+                    "displayradius": 0.1,
+                    "type": 0,
+                    "allowrotations": "90"
+                }
+            ]
+        },
+        {
             "name": "fornitura 16A monofase",
             "uniqueId": 38,
             "mesh3d": "Models/16Amono-plug",
@@ -6026,6 +6052,32 @@
                     "displayradius": 0.05,
                     "type": 46,
                     "allowrotations": "none"
+                }
+            ]
+        },
+        {
+            "name": "base 90 kg - ovetti laterali",
+            "uniqueId": 65,
+            "mesh3d": "Models/base-90kg",
+            "tags": [
+                "structure",
+                "structure-joint",
+                "truss"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.25,
+                        0.0,
+                        0.019999999552965164,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071067094802856
+                    ],
+                    "displayradius": 0.1,
+                    "type": 0,
+                    "allowrotations": "90"
                 }
             ]
         }
