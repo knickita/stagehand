@@ -571,10 +571,11 @@ def _segment_key(objects):
 
 
 class _StructureSegment(list):
-    def __init__(self, objects, quote_axis=None, quote_end_offset=0.0):
+    def __init__(self, objects, quote_axis=None, quote_end_offset=0.0, is_overall=False):
         super().__init__(objects)
         self.quote_axis = quote_axis
         self.quote_end_offset = quote_end_offset
+        self.is_overall = is_overall
 
 
 def _build_truss_segments(truss_objects):
@@ -582,6 +583,24 @@ def _build_truss_segments(truss_objects):
     truss_joint_objects = [obj for obj in truss_objects if _is_truss_joint_object(obj)]
     segments = [[obj] for obj in truss_joint_objects]
     seen_segments = set()
+    overall_segments = []
+    seen_overall_segments = set()
+
+    def add_overall_segment(path):
+        run_objects = [obj for obj in path if not _is_truss_joint_object(obj)]
+        if not run_objects:
+            return
+
+        run_axes = [_object_longest_world_axis(obj) for obj in run_objects]
+        if any(axis is None for axis in run_axes):
+            return
+        if any(abs(run_axes[0].dot(axis)) < 0.995 for axis in run_axes[1:]):
+            return
+
+        key = _segment_key(path)
+        if key not in seen_overall_segments:
+            seen_overall_segments.add(key)
+            overall_segments.append(_StructureSegment(path, is_overall=True))
 
     for obj in truss_joint_objects:
         seen_segments.add((_object_uid(obj),))
@@ -607,6 +626,7 @@ def _build_truss_segments(truss_objects):
                     if segment and key not in seen_segments:
                         seen_segments.add(key)
                         segments.append(segment)
+                    add_overall_segment(path)
                     break
 
                 next_objects = [
@@ -621,6 +641,7 @@ def _build_truss_segments(truss_objects):
                     if segment and key not in seen_segments:
                         seen_segments.add(key)
                         segments.append(segment)
+                    add_overall_segment(path)
                     break
 
                 previous_uid = current_uid
@@ -630,7 +651,7 @@ def _build_truss_segments(truss_objects):
     if not segments and truss_objects:
         segments.append(list(truss_objects))
 
-    return segments
+    return segments + overall_segments
 
 
 def _object_cardinal_axis(obj, structure_rotation, threshold=0.82):
@@ -1129,6 +1150,7 @@ def _build_dimension_candidates(structure_segments, structure_rotation):
             "segment": tuple(segment_objects),
             "index": index,
             "span": span_override,
+            "is_overall": bool(getattr(segment_objects, "is_overall", False)),
         })
 
     return candidates
@@ -1617,6 +1639,7 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
     assembly_center = dimension_data["center"]
     overlay_depth = dimension_data["overlay_depth"]
     placed_boxes_by_bucket = {}
+    placed_dimensions = []
 
     for index, axis_dimension in enumerate(dimension_data["axes"]):
         if axis_dimension["value"] <= 0.01:
@@ -1637,11 +1660,30 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
         text_width = len(_format_dimension(axis_dimension["value"])) * text_size * 0.58
         text_height = text_size
         chosen = None
+        is_overall = axis_dimension["candidate"].get("is_overall", False)
+        overall_uids = set(_segment_key(axis_dimension["candidate"]["segment"])) if is_overall else set()
+        preferred_start_offset = base_offset
 
         for side_index, side_multiplier in enumerate((1.0, -1.0)):
             normal = preferred_normal * side_multiplier
             max_offset = max_stack_offset if side_index == 0 else max_stack_offset * 1.5
             offset = base_offset
+            if is_overall:
+                offset += offset_step
+                for placed_dimension, placed_q1, placed_q2 in placed_dimensions:
+                    if not _projected_dimensions_are_parallel(axis_dimension, placed_dimension, 0.05):
+                        continue
+                    placed_uids = set(_segment_key(placed_dimension["candidate"]["segment"]))
+                    if not placed_uids.issubset(overall_uids):
+                        continue
+                    offset = max(
+                        offset,
+                        normal.dot(placed_q1 - p1) + offset_step,
+                        normal.dot(placed_q2 - p1) + offset_step,
+                    )
+                max_offset = max(max_offset, offset + max_stack_offset)
+            if side_index == 0:
+                preferred_start_offset = offset
 
             while offset <= max_offset:
                 q1 = p1 + (normal * offset)
@@ -1663,8 +1705,8 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
 
         if chosen is None:
             normal = preferred_normal
-            q1 = p1 + (normal * base_offset)
-            q2 = p2 + (normal * base_offset)
+            q1 = p1 + (normal * preferred_start_offset)
+            q2 = p2 + (normal * preferred_start_offset)
             label_point = ((q1 + q2) * 0.5) + (normal * (text_size * 0.65))
             chosen = (
                 normal,
@@ -1677,6 +1719,7 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
 
         normal, q1, q2, label_point, box, bucket = chosen
         placed_boxes_by_bucket.setdefault(bucket, []).append(box)
+        placed_dimensions.append((axis_dimension, q1, q2))
         tick_vector = normal * tick
 
         world_segments = [
