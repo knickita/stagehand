@@ -33,6 +33,8 @@
         "42":"5164",
         "43":"2874",
         "44":"2714",
+        "45":"1249",
+        "46":"2677",
         "47":"3816",
         "48":"7937",
         "50":"5002",
@@ -53,5 +55,28 @@
         "65":"6176",
         "66":"2713",
         "67":"1754"
+    },
+    "specialItems": {        
+        "litecPin":"526",
+        "litecSpigot":"527",
+        "litecSpring":"528",
+        "litec30Dado1Way": "5741",
+        "litec30Dado2WayLine": "5742",
+        "litec30Dado2WayL": "5743",
+        "litec30Dado3WayT": "5744",
+        "litec30Dado3WayL": "5797",
+        "litec30Dado4WayL": "5745",
+        "litec30Dado4WayCross": "8251",
+        "litec30Dado5Way": "8252",
+        "litec30Dado6Way": "5746",
+        "litec40Dado1Way": "5754",
+        "litec40Dado2WayLine": "5755",
+        "litec40Dado2WayL": "5756",
+        "litec40Dado3WayT": "5757",
+        "litec40Dado3WayL": "5798",
+        "litec40Dado4WayL": "5758",
+        "litec40Dado4WayCross": "8253",
+        "litec40Dado5Way": "5759",
+        "litec40Dado6Way": "5760"
     }
 }

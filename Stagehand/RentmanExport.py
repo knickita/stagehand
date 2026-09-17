@@ -4,10 +4,12 @@ import bpy
 from bpy_extras.io_utils import ExportHelper
 
 from .RegistrationUtils import safe_register_class, safe_unregister_class
-from . import LoadCatalogue
+from . import LoadCatalogue, PdfDrawings
 from .RentmanCsv import (
+    CUBE_SPECIAL_ITEM_PREFIXES,
     RentmanConfigError,
     collect_export_rows,
+    collect_special_item_rows,
     load_export_config,
     write_export_csv,
 )
@@ -45,7 +47,7 @@ def _stagehand_asset_ids():
 class STAGEHAND_OT_export_rentman_csv(bpy.types.Operator, ExportHelper):
     bl_idname = "stagehand.export_rentman_csv"
     bl_label = "Export Rentman CSV"
-    bl_description = "Export Stagehand item quantities using the Rentman ID mapping"
+    bl_description = "Export Stagehand items and Litec fasteners using Rentman equipment codes"
     bl_options = {'REGISTER'}
 
     filename_ext = ".csv"
@@ -55,7 +57,7 @@ class STAGEHAND_OT_export_rentman_csv(bpy.types.Operator, ExportHelper):
     )
     config_filepath: bpy.props.StringProperty(
         name="Configuration",
-        description="JSON file containing column names and Stagehand-to-Rentman item mappings",
+        description="JSON file containing Stagehand-to-Rentman mappings and special item codes",
         subtype='FILE_PATH',
     )
 
@@ -80,7 +82,20 @@ class STAGEHAND_OT_export_rentman_csv(bpy.types.Operator, ExportHelper):
                 self.report({'ERROR'}, "No Stagehand objects found")
                 return {'CANCELLED'}
 
-            rows = collect_export_rows(asset_ids, config["itemMappings"])
+            # Classify all exported cubes with the same connection rules as the PDF.
+            cube_type_entries = {
+                asset_id: PdfDrawings._collect_cube_type_entries(bpy.data.objects, asset_id)
+                for asset_id in CUBE_SPECIAL_ITEM_PREFIXES
+                if asset_id in asset_ids
+            }
+            rows = collect_export_rows(
+                asset_ids, config["itemMappings"], cube_type_entries, config["specialItems"]
+            )
+            # Match the fastener quantities shown on the PDF structure details page.
+            fastener_totals = PdfDrawings._collect_fastener_totals(
+                PdfDrawings._visible_mesh_objects(context)
+            )
+            rows.extend(collect_special_item_rows(fastener_totals, config["specialItems"]))
             output_path = bpy.path.ensure_ext(bpy.path.abspath(self.filepath), self.filename_ext)
             write_export_csv(output_path, rows)
         except (RentmanConfigError, OSError, TypeError, ValueError) as exc:
