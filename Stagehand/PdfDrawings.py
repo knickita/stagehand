@@ -47,6 +47,12 @@ STAGE_DECK_THICKNESS_BY_TAG = {
 WHITE = (1.0, 1.0, 1.0)
 BLACK = (0.0, 0.0, 0.0)
 OPAQUE_WHITE = (1.0, 1.0, 1.0, 1.0)
+PDF_LINE_COLOR = BLACK
+PDF_DIMENSION_COLOR = (0.0, 0.0, 1.0, 1.0)
+# Workbench outlines use quarter-opacity contributions from adjacent pixels.
+# Compensate neutral ink only; keep colored dimension pixels unchanged.
+PDF_WORKBENCH_OUTLINE_INK_GAIN = 4.0
+PDF_NEUTRAL_COLOR_TOLERANCE = 1.0 / 255.0
 
 
 class _PdfPhaseProfiler:
@@ -1423,6 +1429,7 @@ def _configure_line_render(scene, view_layer):
     _set_attribute_if_available(shading, "show_wireframes", True)
     _set_attribute_if_available(shading, "wireframe_opacity", 1.0)
     _set_attribute_if_available(shading, "show_object_outline", True)
+    _set_attribute_if_available(shading, "object_outline_color", PDF_LINE_COLOR)
 
     world = scene.world
     if world is not None:
@@ -1446,7 +1453,7 @@ def _configure_line_render(scene, view_layer):
         line_set.select_material_boundary = False
         line_set.select_contour = False
         line_set.visibility = 'VISIBLE'
-        line_set.linestyle.color = (0.0, 0.0, 0.0)
+        line_set.linestyle.color = PDF_LINE_COLOR
         line_set.linestyle.thickness = 1.2
 
     try:
@@ -1503,7 +1510,7 @@ def _restore_freestyle_settings(scene, view_layer, state):
             pass
 
 
-def _create_white_material():
+def _create_surface_material():
     material = bpy.data.materials.new("Stagehand PDF White Surface")
     material.diffuse_color = OPAQUE_WHITE
     material.use_nodes = True
@@ -1520,9 +1527,9 @@ def _create_white_material():
     return material
 
 
-def _create_black_material():
-    material = bpy.data.materials.new("Stagehand PDF Black Dimension")
-    material.diffuse_color = (0.0, 0.0, 0.0, 1.0)
+def _create_dimension_material():
+    material = bpy.data.materials.new("Stagehand PDF Blue Dimension")
+    material.diffuse_color = PDF_DIMENSION_COLOR
     material.use_nodes = True
 
     nodes = material.node_tree.nodes
@@ -1530,7 +1537,7 @@ def _create_black_material():
 
     output_node = nodes.new(type="ShaderNodeOutputMaterial")
     emission_node = nodes.new(type="ShaderNodeEmission")
-    emission_node.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+    emission_node.inputs["Color"].default_value = PDF_DIMENSION_COLOR
     emission_node.inputs["Strength"].default_value = 1.0
     material.node_tree.links.new(emission_node.outputs["Emission"], output_node.inputs["Surface"])
 
@@ -1538,7 +1545,7 @@ def _create_black_material():
 
 
 def _create_line_render_objects(scene, objects, hidden_objects=None):
-    white_material = _create_white_material()
+    surface_material = _create_surface_material()
     temporary_objects = []
     original_hide_render = []
     hidden_objects = hidden_objects or objects
@@ -1555,16 +1562,16 @@ def _create_line_render_objects(scene, objects, hidden_objects=None):
         line_obj.parent = None
         line_obj.matrix_world = obj.matrix_world.copy()
         line_obj.data.materials.clear()
-        line_obj.data.materials.append(white_material)
+        line_obj.data.materials.append(surface_material)
         line_obj.hide_render = False
 
         scene.collection.objects.link(line_obj)
         temporary_objects.append(line_obj)
 
-    return temporary_objects, white_material, original_hide_render
+    return temporary_objects, surface_material, original_hide_render
 
 
-def _remove_line_render_objects(temporary_objects, white_material, original_hide_render):
+def _remove_line_render_objects(temporary_objects, surface_material, original_hide_render):
     for obj, hide_render in original_hide_render:
         try:
             obj.hide_render = hide_render
@@ -1577,8 +1584,8 @@ def _remove_line_render_objects(temporary_objects, white_material, original_hide
         if mesh is not None and mesh.users == 0:
             bpy.data.meshes.remove(mesh)
 
-    if white_material is not None and white_material.users == 0:
-        bpy.data.materials.remove(white_material)
+    if surface_material is not None and surface_material.users == 0:
+        bpy.data.materials.remove(surface_material)
 
 
 def _camera_overlay_point(camera_rotation, center, point, overlay_depth=0.0):
@@ -1628,7 +1635,7 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
         return [], None
 
     camera_rotation = camera.rotation_euler.to_matrix()
-    material = _create_black_material()
+    material = _create_dimension_material()
     temporary_objects = []
     base_offset = camera.data.ortho_scale * 0.04
     offset_step = camera.data.ortho_scale * 0.035
@@ -1877,17 +1884,22 @@ def _render_view(
             pixel_read_started_at = time.perf_counter()
             image_size = tuple(image.size)
             pixels = list(image.pixels)
+            outline_ink_gain = (
+                PDF_WORKBENCH_OUTLINE_INK_GAIN
+                if scene.render.engine == 'BLENDER_WORKBENCH'
+                else 1.0
+            )
             if profiler is not None:
                 profiler.record_since("pixel read", pixel_read_started_at)
 
             if conversion_executor is None:
                 image_convert_started_at = time.perf_counter()
-                converted_image = _image_pixels_to_pdf_rgb(image_size, pixels)
+                converted_image = _image_pixels_to_pdf_rgb(image_size, pixels, outline_ink_gain)
                 if profiler is not None:
                     profiler.record_since("image conversion", image_convert_started_at)
                 return converted_image
 
-            return conversion_executor.submit(_timed_image_pixels_to_pdf_rgb, image_size, pixels)
+            return conversion_executor.submit(_timed_image_pixels_to_pdf_rgb, image_size, pixels, outline_ink_gain)
         finally:
             bpy.data.images.remove(image)
     finally:
@@ -1908,24 +1920,27 @@ def _image_to_pdf_rgb(image):
     return _image_pixels_to_pdf_rgb(tuple(image.size), list(image.pixels))
 
 
-def _timed_image_pixels_to_pdf_rgb(image_size, pixels):
+def _timed_image_pixels_to_pdf_rgb(image_size, pixels, outline_ink_gain=1.0):
     started_at = time.perf_counter()
-    return _image_pixels_to_pdf_rgb(image_size, pixels), time.perf_counter() - started_at
+    return _image_pixels_to_pdf_rgb(image_size, pixels, outline_ink_gain), time.perf_counter() - started_at
 
 
-def _image_pixels_to_pdf_rgb(image_size, pixels):
+def _image_pixels_to_pdf_rgb(image_size, pixels, outline_ink_gain=1.0):
     if np is not None:
-        return _image_pixels_to_pdf_rgb_numpy(image_size, pixels)
+        return _image_pixels_to_pdf_rgb_numpy(image_size, pixels, outline_ink_gain)
 
-    return _image_pixels_to_pdf_rgb_python(image_size, pixels)
+    return _image_pixels_to_pdf_rgb_python(image_size, pixels, outline_ink_gain)
 
 
-def _image_pixels_to_pdf_rgb_numpy(image_size, pixels):
+def _image_pixels_to_pdf_rgb_numpy(image_size, pixels, outline_ink_gain=1.0):
     width, height = image_size
     pixel_array = np.asarray(pixels, dtype=np.float32).reshape((height, width, 4))
     rgb_array = pixel_array[:, :, :3]
     alpha_array = pixel_array[:, :, 3:4]
     rgb_array = np.flipud((rgb_array * alpha_array) + (1.0 - alpha_array))
+    if outline_ink_gain != 1.0:
+        neutral_pixels = np.ptp(rgb_array, axis=2) <= PDF_NEUTRAL_COLOR_TOLERANCE
+        rgb_array[neutral_pixels] = 1.0 - ((1.0 - rgb_array[neutral_pixels]) * outline_ink_gain)
     rgb_array = np.clip(rgb_array * 255.0, 0.0, 255.0).astype(np.uint8, copy=False)
 
     return {
@@ -1935,7 +1950,7 @@ def _image_pixels_to_pdf_rgb_numpy(image_size, pixels):
     }
 
 
-def _image_pixels_to_pdf_rgb_python(image_size, pixels):
+def _image_pixels_to_pdf_rgb_python(image_size, pixels, outline_ink_gain=1.0):
     width, height = image_size
     data = bytearray(width * height * 3)
     target = 0
@@ -1948,6 +1963,10 @@ def _image_pixels_to_pdf_rgb_python(image_size, pixels):
             red = pixels[pixel_start] * alpha + (1.0 - alpha)
             green = pixels[pixel_start + 1] * alpha + (1.0 - alpha)
             blue = pixels[pixel_start + 2] * alpha + (1.0 - alpha)
+            if outline_ink_gain != 1.0 and max(red, green, blue) - min(red, green, blue) <= PDF_NEUTRAL_COLOR_TOLERANCE:
+                red = 1.0 - ((1.0 - red) * outline_ink_gain)
+                green = 1.0 - ((1.0 - green) * outline_ink_gain)
+                blue = 1.0 - ((1.0 - blue) * outline_ink_gain)
             data[target] = max(0, min(255, int(red * 255.0)))
             data[target + 1] = max(0, min(255, int(green * 255.0)))
             data[target + 2] = max(0, min(255, int(blue * 255.0)))
@@ -2891,13 +2910,14 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 "show_wireframes",
                 "wireframe_opacity",
                 "show_object_outline",
+                "object_outline_color",
             ),
         )
 
         rendered_pages = []
         page_titles = []
         temporary_line_objects = []
-        white_material = None
+        surface_material = None
         original_hide_render = []
 
         try:
@@ -2941,7 +2961,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     general_temp_directory = Path(temp_directory) / "general"
                     general_temp_directory.mkdir(exist_ok=True)
                     line_objects_started_at = time.perf_counter()
-                    temporary_line_objects, white_material, original_hide_render = _create_line_render_objects(
+                    temporary_line_objects, surface_material, original_hide_render = _create_line_render_objects(
                         scene,
                         visible_objects,
                         visible_objects,
@@ -2972,11 +2992,11 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                             progress.advance(message=f"Rendered general view: {view_name}")
                     finally:
                         line_cleanup_started_at = time.perf_counter()
-                        _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
+                        _remove_line_render_objects(temporary_line_objects, surface_material, original_hide_render)
                         if profiler is not None:
                             profiler.record_since("line object cleanup", line_cleanup_started_at)
                         temporary_line_objects = []
-                        white_material = None
+                        surface_material = None
                         original_hide_render = []
 
                     if profiler is not None:
@@ -2991,7 +3011,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     page_temp_directory = Path(temp_directory) / f"structure_{group_index}"
                     page_temp_directory.mkdir(exist_ok=True)
                     line_objects_started_at = time.perf_counter()
-                    temporary_line_objects, white_material, original_hide_render = _create_line_render_objects(
+                    temporary_line_objects, surface_material, original_hide_render = _create_line_render_objects(
                         scene,
                         group_objects,
                         visible_objects,
@@ -3037,11 +3057,11 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                             )
                     finally:
                         line_cleanup_started_at = time.perf_counter()
-                        _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
+                        _remove_line_render_objects(temporary_line_objects, surface_material, original_hide_render)
                         if profiler is not None:
                             profiler.record_since("line object cleanup", line_cleanup_started_at)
                         temporary_line_objects = []
-                        white_material = None
+                        surface_material = None
                         original_hide_render = []
 
                     if profiler is not None:
@@ -3077,7 +3097,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                 profiler.record_since("progress finish", progress_finish_started_at)
             self._pdf_progress = None
             final_line_cleanup_started_at = time.perf_counter()
-            _remove_line_render_objects(temporary_line_objects, white_material, original_hide_render)
+            _remove_line_render_objects(temporary_line_objects, surface_material, original_hide_render)
             if profiler is not None:
                 profiler.record_since("final line cleanup", final_line_cleanup_started_at)
             restore_started_at = time.perf_counter()

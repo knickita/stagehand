@@ -3011,7 +3011,7 @@ def _update_selvoline_editor_pages(operator, context):
 
 def _draw_selvoline_editor(operator, layout):
     row = layout.row(align=True)
-    row.prop(operator, "selvolineEdit", text="Edit", icon='EDITMODE_HLT', toggle=True)
+    row.prop(operator, "selvolineEdit", text="Advanced", icon='EDITMODE_HLT', toggle=True)
     enabled_count = sum(cell.enabled for cell in operator.selvolineCells)
     row.label(text=f"{enabled_count} moduli 2x2m")
     if not operator.selvolineEdit:
