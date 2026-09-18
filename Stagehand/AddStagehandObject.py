@@ -12,6 +12,7 @@ from .RegistrationUtils import (
 
 
 addon_keymaps = []
+RECIPE_EXTRA_LINKS_KEY = "stagehand_recipe_extra_link_indices"
 
 
 class StagehandTagItem(bpy.types.PropertyGroup):
@@ -278,8 +279,19 @@ def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
     ensure_stagehand_uid(obj)
 
     preserved_link_states = []
+    preserved_recipe_links = []
     if preserve_links and asset_data is not None:
-        preserved_link_states = _snapshot_stagehand_links(stagehand.links)
+        extra_indices = set(obj.get(RECIPE_EXTRA_LINKS_KEY, ()))
+        snapshots = _snapshot_stagehand_links(stagehand.links)
+        if stagehand.asset_id == int(asset_data["uniqueId"]):
+            preserved_recipe_links = [
+                state for state in snapshots if state["index"] in extra_indices
+            ]
+        preserved_link_states = [
+            state for state in snapshots if state["index"] not in extra_indices
+        ]
+    if RECIPE_EXTRA_LINKS_KEY in obj:
+        del obj[RECIPE_EXTRA_LINKS_KEY]
 
     if asset_data is None:
         stagehand.asset_id = 0
@@ -309,6 +321,17 @@ def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
                 link_index,
             )
         _apply_stagehand_link_data(link_item, link_data, preserved_state=preserved_state)
+
+    extra_indices = []
+    for state in preserved_recipe_links:
+        extra_indices.append(len(stagehand.links))
+        link_item = stagehand.links.add()
+        for name, value in state.items():
+            if name != "index":
+                setattr(link_item, name, value)
+        ensure_stagehand_link_uid(link_item)
+    if extra_indices:
+        obj[RECIPE_EXTRA_LINKS_KEY] = extra_indices
 
 
 def prevent_stagehand_edit_mode():

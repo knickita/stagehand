@@ -567,7 +567,8 @@
                     "default": 4,
                     "min": 2,
                     "max": 100,
-                    "step": 2
+                    "step": 2,
+                    "multipleOf": 2
                 },
                 "depth": {
                     "type": "INT",
@@ -576,7 +577,8 @@
                     "default": 4,
                     "min": 2,
                     "max": 100,
-                    "step": 2
+                    "step": 2,
+                    "multipleOf": 2
                 },
                 "stageHeight": {
                     "type": "ENUM",
@@ -598,6 +600,12 @@
                         { "value": "THREE_SIDES", "label": "3 lati" },
                         { "value": "FOUR_SIDES", "label": "4 lati" }
                     ]
+                },
+                "moduleLayout": {
+                    "type": "STRING",
+                    "default": "",
+                    "hidden": true,
+                    "description": "Griglia dei moduli 2x2m abilitati nell'editor"
                 }
             },
             "settings": {

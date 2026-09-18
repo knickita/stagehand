@@ -15,6 +15,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 from . import Connections, LoadCatalogue
+from .AddStagehandObject import RECIPE_EXTRA_LINKS_KEY
 from .LinkTypes import are_link_types_compatible
 from .RegistrationUtils import safe_register_class, safe_unregister_class
 
@@ -1860,7 +1861,7 @@ def _selvoline_module_count(value, dimension_name, module_size):
         raise ValueError(f"Selvoline {dimension_name} must be a number") from exc
 
     module_count = round(dimension / module_size)
-    if dimension > 0.0 and abs(dimension - module_count * module_size) <= 0.0001:
+    if module_count >= 1 and abs(dimension - module_count * module_size) <= 0.0001:
         return module_count, module_count * module_size
 
     lower_count = max(1, int(dimension // module_size))
@@ -1872,6 +1873,56 @@ def _selvoline_module_count(value, dimension_name, module_size):
         f"Available dimensions: {lower_count * module_size:g}m or "
         f"{upper_count * module_size:g}m"
     )
+
+
+def _selvoline_enabled_cells(parameters, width_count, depth_count, allow_empty=False):
+    raw_layout = parameters.get("moduleLayout", "")
+    if not raw_layout:
+        return {
+            (x, y)
+            for y in range(depth_count)
+            for x in range(width_count)
+        }
+    try:
+        layout = json.loads(raw_layout)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("La griglia Selvoline non è valida") from exc
+    if isinstance(layout, dict):
+        if (
+            layout.get("width") != width_count
+            or layout.get("depth") != depth_count
+        ):
+            raise ValueError("Le dimensioni della griglia Selvoline non corrispondono al palco")
+        layout = layout.get("enabled")
+    if not isinstance(layout, list):
+        raise ValueError("La griglia Selvoline deve contenere una lista di moduli")
+    cells = set()
+    for cell in layout:
+        if (
+            not isinstance(cell, list)
+            or len(cell) != 2
+            or any(type(value) is not int for value in cell)
+        ):
+            raise ValueError("Coordinate del modulo Selvoline non valide")
+        x, y = cell
+        if not (0 <= x < width_count and 0 <= y < depth_count):
+            raise ValueError("Un modulo Selvoline è fuori dalla griglia")
+        cells.add((x, y))
+    if not cells and not allow_empty:
+        raise ValueError("Abilita almeno un modulo Selvoline nella griglia")
+    return cells
+
+
+def _selvoline_structure_sites(cells):
+    """Deduplicate corners and edges shared by enabled 2x2m modules."""
+    posts = set()
+    x_edges = set()
+    y_edges = set()
+    for x, y in cells:
+        posts.update(((x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)))
+        x_edges.update(((x, y), (x, y + 1)))
+        y_edges.update(((x, y), (x + 1, y)))
+    return posts, x_edges, y_edges
 
 
 def _import_selvoline_object(asset_id, imported_objects):
@@ -1926,64 +1977,103 @@ def _add_selvoline_between(
     return component
 
 
-def _selvoline_railing_runs(width_count, depth_count, mode):
+def _selvoline_railing_runs(width_count, depth_count, mode, cells=None):
+    """Group exposed edges into straight runs, including holes and recesses."""
     if mode == "NONE":
         return []
-
-    runs = [
-        {
-            "name": "back",
-            "coordinates": [
-                (x_index, depth_count)
-                for x_index in range(width_count + 1)
-            ],
+    if cells is None:
+        cells = {(x, y) for y in range(depth_count) for x in range(width_count)}
+    if not cells:
+        return []
+    front_y = min(y for _x, y in cells)
+    templates = {
+        "back": {
             "postLink": "yPositive",
             "startPost": "rightPost",
             "endPost": "leftPost",
             "positiveLinks": "doublePositive",
             "negativeLinks": "doubleNegative",
         },
-        {
-            "name": "left",
-            "coordinates": [
-                (0, y_index)
-                for y_index in range(depth_count + 1)
-            ],
+        "left": {
             "postLink": "xNegative",
             "startPost": "rightPost",
             "endPost": "leftPost",
             "positiveLinks": "doublePositive",
             "negativeLinks": "doubleNegative",
         },
-        {
-            "name": "right",
-            "coordinates": [
-                (width_count, y_index)
-                for y_index in range(depth_count + 1)
-            ],
+        "right": {
             "postLink": "xPositive",
             "startPost": "leftPost",
             "endPost": "rightPost",
             "positiveLinks": "doubleNegative",
             "negativeLinks": "doublePositive",
         },
-    ]
-    if mode == "FOUR_SIDES":
-        runs.append(
-            {
-                "name": "front",
-                "coordinates": [
-                    (x_index, 0)
-                    for x_index in range(width_count + 1)
-                ],
-                "postLink": "yNegative",
-                "startPost": "leftPost",
-                "endPost": "rightPost",
-                "positiveLinks": "doubleNegative",
-                "negativeLinks": "doublePositive",
-            }
+        "front": {
+            "postLink": "yNegative",
+            "startPost": "leftPost",
+            "endPost": "rightPost",
+            "positiveLinks": "doubleNegative",
+            "negativeLinks": "doublePositive",
+        },
+    }
+    edges = {}
+    for x, y in cells:
+        candidates = (
+            ("back", (x, y + 1), y + 1, x),
+            ("front", (x, y - 1), y, x),
+            ("left", (x - 1, y), x, y),
+            ("right", (x + 1, y), x + 1, y),
         )
+        for side, neighbour, fixed, start in candidates:
+            if neighbour in cells:
+                continue
+            if mode == "THREE_SIDES" and side == "front" and fixed == front_y:
+                continue
+            edges.setdefault((side, fixed), set()).add(start)
+
+    runs = []
+    for (side, fixed), starts in sorted(edges.items()):
+        ordered = sorted(starts)
+        first = previous = ordered[0]
+        intervals = []
+        for start in ordered[1:]:
+            if start != previous + 1:
+                intervals.append((first, previous + 1))
+                first = start
+            previous = start
+        intervals.append((first, previous + 1))
+        for first, end in intervals:
+            coordinates = [
+                (index, fixed) if side in {"back", "front"} else (fixed, index)
+                for index in range(first, end + 1)
+            ]
+            runs.append({"name": side, "coordinates": coordinates, **templates[side]})
     return runs
+
+
+def _selvoline_railing_attachment_link(post, link_index):
+    """Keep the structural connection at re-entrant corners intact."""
+    connected_obj, _link, _index = Connections.get_connected_link(post, link_index)
+    if connected_obj is None:
+        return link_index
+    source = post.stagehand.links[link_index]
+    state = {
+        name: getattr(source, name)
+        for name in (
+            "type", "allowRotations", "cylindricalType", "planeType",
+            "displayRadius", "length", "width", "anchorForCables",
+        )
+    }
+    state["posDir"] = tuple(source.posDir)
+    new_index = len(post.stagehand.links)
+    attachment = post.stagehand.links.add()
+    for name, value in state.items():
+        setattr(attachment, name, value)
+    Connections.ensure_stagehand_link_uid(attachment)
+    indices = list(post.get(RECIPE_EXTRA_LINKS_KEY, ()))
+    indices.append(new_index)
+    post[RECIPE_EXTRA_LINKS_KEY] = indices
+    return new_index
 
 
 def _add_selvoline_railing_run(
@@ -2013,11 +2103,13 @@ def _add_selvoline_railing_run(
             negative_links = railing_links[run["negativeLinks"]]
 
         mount = _import_selvoline_object(mount_asset_id, imported_objects)
+        post = posts[coordinates_at_node]
+        attachment_link_index = _selvoline_railing_attachment_link(post, post_link_index)
         if not Connections.align_object_link_to_target(
             mount,
             railing_links["postBase"],
-            posts[coordinates_at_node],
-            post_link_index,
+            post,
+            attachment_link_index,
         ):
             raise RuntimeError(
                 f"Unable to position a Selvoline railing post on the {run['name']} side"
@@ -2025,8 +2117,8 @@ def _add_selvoline_railing_run(
         _connect_selvoline_pair(
             mount,
             railing_links["postBase"],
-            posts[coordinates_at_node],
-            post_link_index,
+            post,
+            attachment_link_index,
         )
         mounts.append(
             {
@@ -2075,16 +2167,18 @@ def build_selvoline_stage(context, definition, parameters):
     depth_count, depth = _selvoline_module_count(
         parameters.get("depth"), "depth", module_size
     )
-
-    post_count = (width_count + 1) * (depth_count + 1)
-    x_beam_count = width_count * (depth_count + 1)
-    y_beam_count = depth_count * (width_count + 1)
-    bearer_count = width_count * depth_count
+    cells = _selvoline_enabled_cells(parameters, width_count, depth_count)
+    post_sites, x_beam_sites, y_beam_sites = _selvoline_structure_sites(cells)
+    post_count = len(post_sites)
+    x_beam_count = len(x_beam_sites)
+    y_beam_count = len(y_beam_sites)
+    bearer_count = len(cells)
     board_count = bearer_count * len(settings["bearerBoardLinks"])
     railing_runs = _selvoline_railing_runs(
         width_count,
         depth_count,
         settings["railingsMode"],
+        cells,
     )
     railing_post_count = sum(len(run["coordinates"]) for run in railing_runs)
     railing_segment_count = sum(
@@ -2115,66 +2209,62 @@ def build_selvoline_stage(context, definition, parameters):
     post_links = settings["postLinks"]
 
     try:
-        for y_index in range(depth_count + 1):
-            for x_index in range(width_count + 1):
-                post = _import_selvoline_object(settings["postAssetId"], imported_objects)
-                if structure_matrix is None:
-                    structure_matrix = post.matrix_world.copy()
-                    structure_matrix.translation = context.scene.cursor.location
-                post.matrix_world = structure_matrix.copy()
-                post.matrix_world.translation = (
-                    structure_matrix.translation
-                    + structure_matrix.to_quaternion()
-                    @ Vector((x_index * module_size, y_index * module_size, 0.0))
-                )
-                posts[(x_index, y_index)] = post
+        for x_index, y_index in sorted(post_sites, key=lambda site: (site[1], site[0])):
+            post = _import_selvoline_object(settings["postAssetId"], imported_objects)
+            if structure_matrix is None:
+                structure_matrix = post.matrix_world.copy()
+                structure_matrix.translation = context.scene.cursor.location
+            post.matrix_world = structure_matrix.copy()
+            post.matrix_world.translation = (
+                structure_matrix.translation
+                + structure_matrix.to_quaternion()
+                @ Vector((x_index * module_size, y_index * module_size, 0.0))
+            )
+            posts[(x_index, y_index)] = post
 
-        for y_index in range(depth_count + 1):
-            for x_index in range(width_count):
-                x_beams[(x_index, y_index)] = _add_selvoline_between(
-                    settings["xBeamAssetId"],
-                    posts[(x_index, y_index)], post_links["xPositive"],
-                    posts[(x_index + 1, y_index)], post_links["xNegative"],
-                    settings["beamStartLink"], settings["beamEndLink"],
-                    imported_objects,
-                )
-                connection_count += 2
+        for x_index, y_index in sorted(x_beam_sites, key=lambda site: (site[1], site[0])):
+            x_beams[(x_index, y_index)] = _add_selvoline_between(
+                settings["xBeamAssetId"],
+                posts[(x_index, y_index)], post_links["xPositive"],
+                posts[(x_index + 1, y_index)], post_links["xNegative"],
+                settings["beamStartLink"], settings["beamEndLink"],
+                imported_objects,
+            )
+            connection_count += 2
 
-        for x_index in range(width_count + 1):
-            for y_index in range(depth_count):
-                _add_selvoline_between(
-                    settings["yBeamAssetId"],
-                    posts[(x_index, y_index)], post_links["yPositive"],
-                    posts[(x_index, y_index + 1)], post_links["yNegative"],
-                    settings["beamStartLink"], settings["beamEndLink"],
-                    imported_objects,
-                )
-                connection_count += 2
+        for x_index, y_index in sorted(y_beam_sites, key=lambda site: (site[1], site[0])):
+            _add_selvoline_between(
+                settings["yBeamAssetId"],
+                posts[(x_index, y_index)], post_links["yPositive"],
+                posts[(x_index, y_index + 1)], post_links["yNegative"],
+                settings["beamStartLink"], settings["beamEndLink"],
+                imported_objects,
+            )
+            connection_count += 2
 
         front_bearer_link, back_bearer_link = settings["xBeamBearerLinks"]
-        for y_index in range(depth_count):
-            for x_index in range(width_count):
-                bearer = _add_selvoline_between(
-                    settings["bearerAssetId"],
-                    x_beams[(x_index, y_index)], front_bearer_link,
-                    x_beams[(x_index, y_index + 1)], back_bearer_link,
-                    settings["bearerStartLink"], settings["bearerEndLink"],
-                    imported_objects,
-                )
-                connection_count += 2
+        for x_index, y_index in sorted(cells, key=lambda site: (site[1], site[0])):
+            bearer = _add_selvoline_between(
+                settings["bearerAssetId"],
+                x_beams[(x_index, y_index)], front_bearer_link,
+                x_beams[(x_index, y_index + 1)], back_bearer_link,
+                settings["bearerStartLink"], settings["bearerEndLink"],
+                imported_objects,
+            )
+            connection_count += 2
 
-                for bearer_board_link in settings["bearerBoardLinks"]:
-                    board = _import_selvoline_object(
-                        settings["boardAssetId"], imported_objects
-                    )
-                    if not Connections.align_object_link_to_target(
-                        board, settings["boardLink"], bearer, bearer_board_link
-                    ):
-                        raise RuntimeError("Unable to position a Selvoline board")
-                    _connect_selvoline_pair(
-                        board, settings["boardLink"], bearer, bearer_board_link
-                    )
-                    connection_count += 1
+            for bearer_board_link in settings["bearerBoardLinks"]:
+                board = _import_selvoline_object(
+                    settings["boardAssetId"], imported_objects
+                )
+                if not Connections.align_object_link_to_target(
+                    board, settings["boardLink"], bearer, bearer_board_link
+                ):
+                    raise RuntimeError("Unable to position a Selvoline board")
+                _connect_selvoline_pair(
+                    board, settings["boardLink"], bearer, bearer_board_link
+                )
+                connection_count += 1
 
         for railing_run in railing_runs:
             added_posts, added_rails = _add_selvoline_railing_run(
@@ -2192,7 +2282,7 @@ def build_selvoline_stage(context, definition, parameters):
         selected.select_set(False)
     for obj in imported_objects:
         obj.select_set(True)
-    context.view_layer.objects.active = posts[(0, 0)]
+    context.view_layer.objects.active = posts[min(post_sites, key=lambda site: (site[1], site[0]))]
 
     height_label = "50cm" if str(parameters["stageHeight"]) == "H50" else "150cm"
     railings_label = {
@@ -2200,10 +2290,12 @@ def build_selvoline_stage(context, definition, parameters):
         "THREE_SIDES": "mancorrenti su 3 lati",
         "FOUR_SIDES": "mancorrenti su 4 lati",
     }[settings["railingsMode"]]
+    module_label = "modulo" if len(cells) == 1 else "moduli"
     return (
         imported_objects,
         f"Aggiunto palco Selvoline {width:g}m x {depth:g}m, "
-        f"altezza {height_label}, {railings_label} ({total_items} elementi, "
+        f"altezza {height_label}, {railings_label} "
+        f"({len(cells)} {module_label}, {total_items} elementi, "
         f"{connection_count} connessioni)",
     )
 
@@ -2856,7 +2948,100 @@ register_builder("layher_grid", build_layher_grid)
 register_builder("grid", build_grid)
 
 
-def _property_from_definition(parameter_name, parameter):
+class STAGEHAND_PG_selvoline_cell(bpy.types.PropertyGroup):
+    x: bpy.props.IntProperty()
+    y: bpy.props.IntProperty()
+    enabled: bpy.props.BoolProperty(default=True)
+
+
+def _sync_selvoline_editor(operator):
+    width_count, _width = _selvoline_module_count(operator.width, "width", 2.0)
+    depth_count, _depth = _selvoline_module_count(operator.depth, "depth", 2.0)
+    if (
+        operator.selvolineGridReady
+        and operator.selvolineGridWidth == width_count
+        and operator.selvolineGridDepth == depth_count
+    ):
+        return
+
+    previous = {(cell.x, cell.y): cell.enabled for cell in operator.selvolineCells}
+    if not operator.selvolineGridReady:
+        enabled = _selvoline_enabled_cells(
+            {"moduleLayout": operator.moduleLayout},
+            width_count,
+            depth_count,
+            allow_empty=True,
+        )
+        previous = {
+            (x, y): (x, y) in enabled
+            for y in range(depth_count)
+            for x in range(width_count)
+        }
+    operator.selvolineCells.clear()
+    for y in range(depth_count):
+        for x in range(width_count):
+            cell = operator.selvolineCells.add()
+            cell.x, cell.y = x, y
+            cell.enabled = previous.get((x, y), True)
+    operator.selvolineGridWidth = width_count
+    operator.selvolineGridDepth = depth_count
+    operator.selvolinePageX = min(operator.selvolinePageX, ceil(width_count / 12))
+    operator.selvolinePageY = min(operator.selvolinePageY, ceil(depth_count / 12))
+    operator.selvolineGridReady = True
+
+
+def _update_selvoline_editor_dimensions(operator, context):
+    del context
+    if operator.selvolineGridReady:
+        _sync_selvoline_editor(operator)
+
+
+def _update_selvoline_editor_pages(operator, context):
+    del context
+    if not operator.selvolineGridReady:
+        return
+    for name, count in (
+        ("selvolinePageX", operator.selvolineGridWidth),
+        ("selvolinePageY", operator.selvolineGridDepth),
+    ):
+        last_page = max(1, ceil(count / 12))
+        if getattr(operator, name) > last_page:
+            setattr(operator, name, last_page)
+
+
+def _draw_selvoline_editor(operator, layout):
+    row = layout.row(align=True)
+    row.prop(operator, "selvolineEdit", text="Edit", icon='EDITMODE_HLT', toggle=True)
+    enabled_count = sum(cell.enabled for cell in operator.selvolineCells)
+    row.label(text=f"{enabled_count} moduli 2x2m")
+    if not operator.selvolineEdit:
+        return
+
+    width_count = operator.selvolineGridWidth
+    depth_count = operator.selvolineGridDepth
+    box = layout.box()
+    box.label(text="Clicca sui quadrati per abilitare o disabilitare i moduli")
+    if width_count > 12 or depth_count > 12:
+        pages = box.row()
+        if width_count > 12:
+            pages.prop(operator, "selvolinePageX", text=f"Pagina X / {ceil(width_count / 12)}")
+        if depth_count > 12:
+            pages.prop(operator, "selvolinePageY", text=f"Pagina Y / {ceil(depth_count / 12)}")
+    page_x = min(operator.selvolinePageX, ceil(width_count / 12)) - 1
+    page_y = min(operator.selvolinePageY, ceil(depth_count / 12)) - 1
+    first_x, first_y = page_x * 12, page_y * 12
+    last_x, last_y = min(width_count, first_x + 12), min(depth_count, first_y + 12)
+    for y in reversed(range(first_y, last_y)):
+        row = box.row(align=True)
+        row.alignment = 'LEFT'
+        row.scale_x = 1.4
+        row.scale_y = 1.4
+        for x in range(first_x, last_x):
+            cell = operator.selvolineCells[y * width_count + x]
+            row.prop(cell, "enabled", text="", icon='MESH_PLANE', toggle=True)
+
+
+def _property_from_definition(parameter_name, parameter, update_callback=None):
     if not isinstance(parameter, dict):
         raise TypeError(f"Recipe parameter '{parameter_name}' must be an object")
 
@@ -2886,6 +3071,23 @@ def _property_from_definition(parameter_name, parameter):
             options["max"] = int(parameter["max"])
         if "step" in parameter:
             options["step"] = int(parameter["step"])
+        multiple = int(parameter.get("multipleOf", 1))
+        if multiple <= 0:
+            raise ValueError(f"Recipe parameter '{parameter_name}' multipleOf must be positive")
+        if multiple != 1 or update_callback is not None:
+            def update(operator, context):
+                value = getattr(operator, parameter_name)
+                snapped = ((value + multiple // 2) // multiple) * multiple
+                if "min" in parameter:
+                    snapped = max(snapped, ceil(int(parameter["min"]) / multiple) * multiple)
+                if "max" in parameter:
+                    snapped = min(snapped, (int(parameter["max"]) // multiple) * multiple)
+                if value != snapped:
+                    setattr(operator, parameter_name, snapped)
+                    return
+                if update_callback is not None:
+                    update_callback(operator, context)
+            options["update"] = update
         return bpy.props.IntProperty(**options)
 
     if property_type == "ENUM":
@@ -2941,12 +3143,32 @@ def _build_operator(definition):
     normalized_id = _normalize_identifier(recipe_id)
     annotations = {}
     parameters = definition.get("parameters", {})
+    is_selvoline = definition["builder"] == "selvoline_stage"
     for parameter_name, parameter in parameters.items():
-        annotations[parameter_name] = _property_from_definition(parameter_name, parameter)
+        update_callback = (
+            _update_selvoline_editor_dimensions
+            if is_selvoline and parameter_name in {"width", "depth"}
+            else None
+        )
+        annotations[parameter_name] = _property_from_definition(
+            parameter_name, parameter, update_callback
+        )
+    if is_selvoline:
+        annotations.update({
+            "selvolineCells": bpy.props.CollectionProperty(type=STAGEHAND_PG_selvoline_cell, options={'HIDDEN'}),
+            "selvolineGridReady": bpy.props.BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'}),
+            "selvolineGridWidth": bpy.props.IntProperty(options={'HIDDEN'}),
+            "selvolineGridDepth": bpy.props.IntProperty(options={'HIDDEN'}),
+            "selvolineEdit": bpy.props.BoolProperty(default=False, options={'SKIP_SAVE'}),
+            "selvolinePageX": bpy.props.IntProperty(default=1, min=1, max=5, update=_update_selvoline_editor_pages, options={'SKIP_SAVE'}),
+            "selvolinePageY": bpy.props.IntProperty(default=1, min=1, max=5, update=_update_selvoline_editor_pages, options={'SKIP_SAVE'}),
+        })
 
     def draw(self, context):
         del context
         for parameter_name, parameter in parameters.items():
+            if parameter.get("hidden", False):
+                continue
             conditions = parameter.get("visibleWhen", {})
             if not isinstance(conditions, dict):
                 raise TypeError(
@@ -2958,10 +3180,19 @@ def _build_operator(definition):
             ):
                 continue
             self.layout.prop(self, parameter_name)
+            if is_selvoline and parameter_name == "depth":
+                _draw_selvoline_editor(self, self.layout)
 
     def invoke(self, context, event):
         del event
         if parameters:
+            if is_selvoline:
+                try:
+                    _sync_selvoline_editor(self)
+                except ValueError as exc:
+                    self.report({'ERROR'}, str(exc))
+                    return {'CANCELLED'}
+                return context.window_manager.invoke_props_dialog(self, width=540)
             return context.window_manager.invoke_props_dialog(self)
         return self.execute(context)
 
@@ -2971,8 +3202,15 @@ def _build_operator(definition):
             self.report({'ERROR'}, f"Unknown recipe builder: {definition['builder']}")
             return {'CANCELLED'}
 
-        values = {name: getattr(self, name) for name in parameters}
         try:
+            if is_selvoline:
+                _sync_selvoline_editor(self)
+                self.moduleLayout = json.dumps({
+                    "width": self.selvolineGridWidth,
+                    "depth": self.selvolineGridDepth,
+                    "enabled": [[cell.x, cell.y] for cell in self.selvolineCells if cell.enabled],
+                })
+            values = {name: getattr(self, name) for name in parameters}
             with Connections.database_transaction():
                 _objects, message = builder(context, definition, values)
         except Exception as exc:
@@ -3020,7 +3258,7 @@ class STAGEHAND_MT_recipe_menu(bpy.types.Menu):
             )
 
 
-BASE_CLASSES = (STAGEHAND_MT_recipe_menu,)
+BASE_CLASSES = (STAGEHAND_PG_selvoline_cell, STAGEHAND_MT_recipe_menu)
 
 
 def _load_recipes():
