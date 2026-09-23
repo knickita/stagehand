@@ -1908,7 +1908,7 @@ def register_keymap():
         STAGEHAND_OT_select_connected_objects.bl_idname,
         type='LEFTMOUSE',
         value='PRESS',
-        alt=True,
+        ctrl=True,
     )
     addon_keymaps.append((km, kmi))
 
