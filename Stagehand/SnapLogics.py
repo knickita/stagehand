@@ -441,7 +441,14 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
         prune_ms = _profile_ms(prune_started_at)
         self.moving_objects = moving_objects
         self.initial_matrices = {obj.name_full: obj.matrix_world.copy() for obj in moving_objects}
-        self.plane_origin = context.active_object.matrix_world.to_translation().copy()
+        active_object = context.active_object
+        if active_object is not None:
+            self.plane_origin = active_object.matrix_world.to_translation().copy()
+        else:
+            self.plane_origin = sum(
+                (obj.matrix_world.to_translation() for obj in moving_objects),
+                Vector((0.0, 0.0, 0.0)),
+            ) / len(moving_objects)
         self.plane_normal = context.region_data.view_rotation @ Vector((0, 0, -1))
         screen_started_at = time.perf_counter()
         self.start_plane_point = _screen_to_plane_point(context, event, self.plane_origin, self.plane_normal)
