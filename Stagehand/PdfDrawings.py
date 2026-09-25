@@ -412,53 +412,19 @@ def _segment_local_box(segment_objects, rotation=None):
     }
 
 
-def _object_longest_local_axis_data(obj):
-    local_min = Vector((math.inf, math.inf, math.inf))
-    local_max = Vector((-math.inf, -math.inf, -math.inf))
-
-    for corner in obj.bound_box:
-        corner = Vector(corner)
-        local_min.x = min(local_min.x, corner.x)
-        local_min.y = min(local_min.y, corner.y)
-        local_min.z = min(local_min.z, corner.z)
-        local_max.x = max(local_max.x, corner.x)
-        local_max.y = max(local_max.y, corner.y)
-        local_max.z = max(local_max.z, corner.z)
-
-    dimensions = local_max - local_min
-    axis_index = max(range(3), key=lambda index: dimensions[index])
-    if dimensions[axis_index] <= 0.000001:
-        return None
-
-    return Vector((
-        1.0 if axis_index == 0 else 0.0,
-        1.0 if axis_index == 1 else 0.0,
-        1.0 if axis_index == 2 else 0.0,
-    )), dimensions[axis_index]
-
-
-def _object_longest_local_axis(obj):
-    axis_data = _object_longest_local_axis_data(obj)
-    if axis_data is None:
-        return None
-
-    return axis_data[0]
-
-
-def _object_longest_local_axis_length(obj):
-    axis_data = _object_longest_local_axis_data(obj)
-    if axis_data is None:
+def _object_local_z_length(obj):
+    local_z_values = [corner[2] for corner in obj.bound_box]
+    if not local_z_values:
         return 0.0
 
-    return axis_data[1]
+    return max(local_z_values) - min(local_z_values)
 
 
-def _object_longest_world_axis(obj):
-    local_axis = _object_longest_local_axis(obj)
-    if local_axis is None:
+def _object_local_z_world_axis(obj):
+    if _object_local_z_length(obj) <= 0.000001:
         return None
 
-    world_axis = obj.matrix_world.to_quaternion() @ local_axis
+    world_axis = obj.matrix_world.to_quaternion() @ Vector((0.0, 0.0, 1.0))
     if world_axis.length_squared <= 0.000001:
         return None
 
@@ -520,14 +486,14 @@ def _structure_rotation(objects):
     best_horizontal_score = 0.0
     for obj in objects:
         orientation = obj.matrix_world.to_quaternion()
-        world_axis = _object_longest_world_axis(obj)
+        world_axis = _object_local_z_world_axis(obj)
         if world_axis is None:
             continue
 
         if fallback_orientation is None:
             fallback_orientation = orientation
 
-        axis_length = _object_longest_local_axis_length(obj)
+        axis_length = _object_local_z_length(obj)
         horizontal_score = axis_length * math.hypot(world_axis.x, world_axis.y)
         if horizontal_score > best_horizontal_score:
             best_horizontal_score = horizontal_score
@@ -597,7 +563,7 @@ def _build_truss_segments(truss_objects):
         if not run_objects:
             return
 
-        run_axes = [_object_longest_world_axis(obj) for obj in run_objects]
+        run_axes = [_object_local_z_world_axis(obj) for obj in run_objects]
         if any(axis is None for axis in run_axes):
             return
         if any(abs(run_axes[0].dot(axis)) < 0.995 for axis in run_axes[1:]):
@@ -705,6 +671,27 @@ def _layher_quote_axis(obj, structure_rotation):
         return "Z" if axis == "Z" else None
 
     return None
+
+
+def _truss_quote_axis(segment_objects, structure_rotation):
+    axis_objects = [obj for obj in segment_objects if not _is_truss_joint_object(obj)]
+    if not axis_objects:
+        axis_objects = list(segment_objects)
+
+    axes = []
+    for obj in axis_objects:
+        world_axis = _object_local_z_world_axis(obj)
+        if world_axis is None:
+            continue
+
+        structure_axis = structure_rotation.inverted() @ world_axis
+        axis_index = max(range(3), key=lambda index: abs(structure_axis[index]))
+        axes.append(("X", "Y", "Z")[axis_index])
+
+    if not axes:
+        return None
+
+    return max(("X", "Y", "Z"), key=lambda axis: axes.count(axis))
 
 
 def _build_layher_segments(layher_objects):
@@ -1097,6 +1084,11 @@ def _dimension_axis_for_segment(segment_objects, structure_rotation, dimensions)
     quote_axis = getattr(segment_objects, "quote_axis", None)
     if quote_axis in {"X", "Y", "Z"}:
         return quote_axis
+
+    if any(_is_truss_object(obj) for obj in segment_objects):
+        truss_axis = _truss_quote_axis(segment_objects, structure_rotation)
+        if truss_axis is not None:
+            return truss_axis
 
     layher_axes = [
         _layher_quote_axis(obj, structure_rotation)
