@@ -27,6 +27,7 @@ LinkMode = _load_submodule("LinkMode")
 LoadCatalogue = _load_submodule("LoadCatalogue")
 Recipes = _load_submodule("Recipes")
 StagehandControls = _load_submodule("StagehandControls")
+AudioVisualization = _load_submodule("AudioVisualization")
 MenuConfiguration = _load_submodule("MenuConfiguration")
 MvrImport = _load_submodule("MvrImport")
 Alerts = _load_submodule("Alerts")
@@ -47,6 +48,7 @@ classes = (
     LoadCatalogue,
     Recipes,
     StagehandControls,
+    AudioVisualization,
     MvrImport,
     PdfDrawings,
     PowerManagement,

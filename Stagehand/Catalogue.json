@@ -5,8 +5,29 @@
             "uniqueId": 1,
             "mesh3d": "Models/Audio/vio_l208",
             "tags": [
-                "audioarray"
+                "audioarray",
+                "audiosource"
             ],
+            "audio": {
+                "splAtOneMeter": 133.5,
+                "delayMeters": 0.0,
+                "reversePolarity": false,
+                "muted": false,
+                "attenuation": 0.0,
+                "omnidirectional": false,
+                "horizontalDispersion": 100.0,
+                "verticalDispersion": 15.0,
+                "nearDispersionPlaneDistance": 0.0,
+                "dispersionPlaneSize": [
+                    0.6,
+                    0.26
+                ],
+                "sourceOffset": [
+                    0.0,
+                    0.0,
+                    -0.127
+                ]
+            },
             "links": [
                 {
                     "posdir": [
@@ -37,6 +58,35 @@
                     "allowrotations": "none"
                 }
             ]
+        },
+        {
+            "name": "vio S218",
+            "uniqueId": 68,
+            "mesh3d": "Models/Audio/vio_s218",
+            "tags": [
+                "audiosource"
+            ],
+            "audio": {
+                "splAtOneMeter": 143.0,
+                "delayMeters": 0.0,
+                "reversePolarity": false,
+                "muted": false,
+                "attenuation": 0.0,
+                "omnidirectional": true,
+                "horizontalDispersion": 100.0,
+                "verticalDispersion": 15.0,
+                "nearDispersionPlaneDistance": 0.0,
+                "dispersionPlaneSize": [
+                    1.304,
+                    0.52
+                ],
+                "sourceOffset": [
+                    0.0,
+                    0.402,
+                    0.26
+                ]
+            },
+            "links": []
         },
         {
             "name": "litecQX30-29cm",

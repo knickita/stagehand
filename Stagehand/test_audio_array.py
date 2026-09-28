@@ -44,6 +44,7 @@ class AudioArrayTests(unittest.TestCase):
             [0.0, 0.0, -0.26],
         )
         self.assertIn("audioarray", self.vio["tags"])
+        self.assertIn("audiosource", self.vio["tags"])
 
     def test_vio_links_are_compatible_without_roll(self):
         self.assertTrue(are_link_types_compatible(48, 49))

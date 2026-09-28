@@ -20,6 +20,21 @@ class Stagehand_MT_menu(bpy.types.Menu):
         self.layout.operator("stagehand.generate_pdf_power", text="Generate PDF Power")
         self.layout.operator("stagehand.export_rentman_csv", text="Export Rentman CSV")
         self.layout.separator()
+        audio_enabled = getattr(
+            context.scene,
+            "stagehand_audio_visualization_enabled",
+            False,
+        )
+        self.layout.operator(
+            "stagehand.toggle_audio_visualization",
+            text=(
+                "Disable Audio Visualization"
+                if audio_enabled
+                else "Enable Audio Visualization"
+            ),
+            icon='HIDE_OFF' if audio_enabled else 'HIDE_ON',
+        )
+        self.layout.separator()
         self.layout.operator("stagehand.repair_all_connections", text="Repair All Links")
         self.layout.separator()
         self.layout.operator("stagehand.reload_catalogue", text="Reload Catalogue")

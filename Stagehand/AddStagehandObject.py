@@ -13,6 +13,76 @@ from .RegistrationUtils import (
 
 addon_keymaps = []
 RECIPE_EXTRA_LINKS_KEY = "stagehand_recipe_extra_link_indices"
+AUDIO_SOURCE_TAG = "audiosource"
+_audio_multi_edit_suppression = 0
+
+
+def _stagehand_has_tag(stagehand, tag):
+    normalized_tag = str(tag).strip().lower()
+    return any(
+        str(tag_item.value).strip().lower() == normalized_tag
+        for tag_item in stagehand.tags
+    )
+
+
+def _selected_audio_source_objects(context):
+    if context is None:
+        return []
+    return [
+        obj
+        for obj in getattr(context, "selected_objects", ())
+        if getattr(obj, "stagehand", None) is not None
+        and obj.stagehand.is_stagehand_object
+        and _stagehand_has_tag(obj.stagehand, AUDIO_SOURCE_TAG)
+    ]
+
+
+def _tag_view3d_redraw(context):
+    window_manager = getattr(context, "window_manager", None)
+    if window_manager is None:
+        return
+    for window in window_manager.windows:
+        screen = window.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type in {'VIEW_3D', 'PROPERTIES'}:
+                area.tag_redraw()
+
+
+def _make_audio_multi_edit_update(property_name):
+    def update(stagehand, context):
+        global _audio_multi_edit_suppression
+
+        if _audio_multi_edit_suppression or context is None:
+            return
+        owner = getattr(stagehand, "id_data", None)
+        if (
+            owner is None
+            or owner != getattr(context, "active_object", None)
+            or not _stagehand_has_tag(stagehand, AUDIO_SOURCE_TAG)
+        ):
+            return
+
+        value = getattr(stagehand, property_name)
+        if hasattr(value, "to_list") or not isinstance(value, (bool, int, float, str)):
+            try:
+                value = tuple(value)
+            except TypeError:
+                pass
+
+        _audio_multi_edit_suppression += 1
+        try:
+            for target in _selected_audio_source_objects(context):
+                if target == owner:
+                    continue
+                setattr(target.stagehand, property_name, value)
+        finally:
+            _audio_multi_edit_suppression -= 1
+
+        _tag_view3d_redraw(context)
+
+    return update
 
 
 class StagehandTagItem(bpy.types.PropertyGroup):
@@ -123,6 +193,93 @@ class StagehandObject(bpy.types.PropertyGroup):
         description="Power draw for this Stagehand object",
         default=0.0,
         min=0.0,
+    )
+
+    audioSplAtOneMeter: bpy.props.FloatProperty(
+        name="SPL at 1 m",
+        description="Sound pressure level produced at one metre",
+        default=100.0,
+        min=0.0,
+        max=220.0,
+        unit='NONE',
+        update=_make_audio_multi_edit_update("audioSplAtOneMeter"),
+    )
+
+    audioDelayMeters: bpy.props.FloatProperty(
+        name="Delay",
+        description="Acoustic delay expressed as an equivalent distance in metres",
+        default=0.0,
+        min=0.0,
+        unit='LENGTH',
+        update=_make_audio_multi_edit_update("audioDelayMeters"),
+    )
+
+    audioReversePolarity: bpy.props.BoolProperty(
+        name="Reverse Polarity",
+        default=False,
+        update=_make_audio_multi_edit_update("audioReversePolarity"),
+    )
+
+    audioMuted: bpy.props.BoolProperty(
+        name="Muted",
+        default=False,
+        update=_make_audio_multi_edit_update("audioMuted"),
+    )
+
+    audioAttenuation: bpy.props.FloatProperty(
+        name="Attenuation",
+        description="Gain or attenuation applied to this source in dB",
+        default=0.0,
+        min=-120.0,
+        max=0.0,
+        update=_make_audio_multi_edit_update("audioAttenuation"),
+    )
+
+    audioOmnidirectional: bpy.props.BoolProperty(
+        name="Omnidirectional",
+        default=False,
+        update=_make_audio_multi_edit_update("audioOmnidirectional"),
+    )
+
+    audioHorizontalDispersion: bpy.props.FloatProperty(
+        name="Horizontal Dispersion (deg)",
+        default=100.0,
+        min=0.1,
+        max=360.0,
+        update=_make_audio_multi_edit_update("audioHorizontalDispersion"),
+    )
+
+    audioVerticalDispersion: bpy.props.FloatProperty(
+        name="Vertical Dispersion (deg)",
+        default=15.0,
+        min=0.1,
+        max=180.0,
+        update=_make_audio_multi_edit_update("audioVerticalDispersion"),
+    )
+
+    audioNearDispersionDistance: bpy.props.FloatProperty(
+        name="Near Plane Distance",
+        default=0.0,
+        min=0.0,
+        unit='LENGTH',
+        update=_make_audio_multi_edit_update("audioNearDispersionDistance"),
+    )
+
+    audioDispersionPlaneSize: bpy.props.FloatVectorProperty(
+        name="Near Plane Size",
+        size=2,
+        default=(0.6, 0.26),
+        min=0.0,
+        unit='LENGTH',
+        update=_make_audio_multi_edit_update("audioDispersionPlaneSize"),
+    )
+
+    audioSourceOffset: bpy.props.FloatVectorProperty(
+        name="Acoustic Origin",
+        size=3,
+        default=(0.0, 0.0, -0.127),
+        unit='LENGTH',
+        update=_make_audio_multi_edit_update("audioSourceOffset"),
     )
 
     tags: bpy.props.CollectionProperty(type=StagehandTagItem)
@@ -273,7 +430,7 @@ def _apply_stagehand_link_data(link_item, link_data, preserved_state=None):
     link_item.connectedLinkIndex = preserved_state["connectedLinkIndex"]
 
 
-def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
+def _apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
     stagehand = obj.stagehand
     stagehand.is_stagehand_object = True
     ensure_stagehand_uid(obj)
@@ -297,6 +454,17 @@ def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
         stagehand.asset_id = 0
         stagehand.catalogueName = ""
         stagehand.watt = 0.0
+        stagehand.audioSplAtOneMeter = 100.0
+        stagehand.audioDelayMeters = 0.0
+        stagehand.audioReversePolarity = False
+        stagehand.audioMuted = False
+        stagehand.audioAttenuation = 0.0
+        stagehand.audioOmnidirectional = False
+        stagehand.audioHorizontalDispersion = 100.0
+        stagehand.audioVerticalDispersion = 15.0
+        stagehand.audioNearDispersionDistance = 0.0
+        stagehand.audioDispersionPlaneSize = (0.6, 0.26)
+        stagehand.audioSourceOffset = (0.0, 0.0, -0.127)
         _clear_collection(stagehand.tags)
         _clear_collection(stagehand.links)
         return
@@ -304,6 +472,33 @@ def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
     stagehand.asset_id = int(asset_data["uniqueId"])
     stagehand.catalogueName = asset_data.get("name", "")
     stagehand.watt = float(asset_data.get("watt", 0.0))
+
+    audio_data = asset_data.get("audio", {})
+    stagehand.audioSplAtOneMeter = float(audio_data.get("splAtOneMeter", 100.0))
+    stagehand.audioDelayMeters = float(audio_data.get("delayMeters", 0.0))
+    stagehand.audioReversePolarity = bool(audio_data.get("reversePolarity", False))
+    stagehand.audioMuted = bool(audio_data.get("muted", False))
+    stagehand.audioAttenuation = float(audio_data.get("attenuation", 0.0))
+    stagehand.audioOmnidirectional = bool(audio_data.get("omnidirectional", False))
+    stagehand.audioHorizontalDispersion = float(
+        audio_data.get("horizontalDispersion", 100.0)
+    )
+    stagehand.audioVerticalDispersion = float(
+        audio_data.get("verticalDispersion", 15.0)
+    )
+    stagehand.audioNearDispersionDistance = float(
+        audio_data.get("nearDispersionPlaneDistance", 0.0)
+    )
+    dispersion_size = tuple(
+        float(value) for value in audio_data.get("dispersionPlaneSize", (0.6, 0.26))
+    )
+    if len(dispersion_size) == 2:
+        stagehand.audioDispersionPlaneSize = dispersion_size
+    source_offset = tuple(
+        float(value) for value in audio_data.get("sourceOffset", (0.0, 0.0, -0.127))
+    )
+    if len(source_offset) == 3:
+        stagehand.audioSourceOffset = source_offset
 
     _clear_collection(stagehand.tags)
     for tag_value in asset_data.get("tags", []):
@@ -332,6 +527,20 @@ def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
         ensure_stagehand_link_uid(link_item)
     if extra_indices:
         obj[RECIPE_EXTRA_LINKS_KEY] = extra_indices
+
+
+def apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
+    global _audio_multi_edit_suppression
+
+    _audio_multi_edit_suppression += 1
+    try:
+        return _apply_stagehand_catalogue_data(
+            obj,
+            asset_data=asset_data,
+            preserve_links=preserve_links,
+        )
+    finally:
+        _audio_multi_edit_suppression -= 1
 
 
 def prevent_stagehand_edit_mode():
@@ -451,6 +660,28 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
                     connected_object_uid = Connections.get_link_parent_object_uid(connected_link_uid)
                     item_box.label(text=f"Connected UID: {connected_object_uid}")
                     item_box.label(text=f"Connected Link UID: {connected_link_uid}")
+
+        if _stagehand_has_tag(stagehand, AUDIO_SOURCE_TAG):
+            audio_box = layout.box()
+            audio_box.label(text="Audio Source")
+            selected_audio_count = len(_selected_audio_source_objects(context))
+            if selected_audio_count > 1:
+                audio_box.label(
+                    text=f"Editing {selected_audio_count} selected sources",
+                    icon='INFO',
+                )
+            audio_box.prop(stagehand, "audioMuted")
+            audio_box.prop(stagehand, "audioSplAtOneMeter")
+            audio_box.prop(stagehand, "audioAttenuation")
+            audio_box.prop(stagehand, "audioDelayMeters")
+            audio_box.prop(stagehand, "audioReversePolarity")
+            audio_box.prop(stagehand, "audioOmnidirectional")
+            if not stagehand.audioOmnidirectional:
+                audio_box.prop(stagehand, "audioHorizontalDispersion")
+                audio_box.prop(stagehand, "audioVerticalDispersion")
+                audio_box.prop(stagehand, "audioNearDispersionDistance")
+                audio_box.prop(stagehand, "audioDispersionPlaneSize")
+            audio_box.prop(stagehand, "audioSourceOffset")
 
 
 classes = (

@@ -11,6 +11,7 @@ bl_info = {
 import bpy
 
 from . import Alerts
+from . import AudioVisualization
 from . import UpdateAddon
 from .RegistrationUtils import (
     safe_define_property,
@@ -56,6 +57,39 @@ class StageHandOptionsPanel(bpy.types.Panel):
             else "Show Anchor Points"
         )
         box.operator("stagehand.toggle_cable_anchor_points", text=anchor_text)
+
+        box = layout.box()
+        box.label(text="Sound Pressure")
+        active_source_count, total_source_count = (
+            AudioVisualization.audio_source_counts(context)
+        )
+        box.label(
+            text=(
+                f"Active sources: {active_source_count} / {total_source_count}"
+            )
+        )
+        audio_enabled = getattr(
+            context.scene,
+            "stagehand_audio_visualization_enabled",
+            False,
+        )
+        box.operator(
+            "stagehand.toggle_audio_visualization",
+            text=(
+                "Disable Visualization"
+                if audio_enabled
+                else "Enable Visualization"
+            ),
+            icon='HIDE_OFF' if audio_enabled else 'HIDE_ON',
+        )
+        settings = box.column(align=True)
+        settings.enabled = audio_enabled
+        settings.prop(context.scene, "stagehand_audio_frequency", text="Frequency (Hz)")
+        settings.prop(context.scene, "stagehand_audio_max_spl", text="Maximum SPL (dB)")
+        settings.prop(context.scene, "stagehand_audio_gradient_step", text="Color Step (dB)")
+        settings.prop(context.scene, "stagehand_audio_smooth_gradient", text="Smooth Gradient")
+        settings.prop(context.scene, "stagehand_audio_overlay_opacity", text="Opacity")
+        settings.prop(context.scene, "stagehand_audio_sound_speed", text="Sound Speed (m/s)")
 
         box = layout.box()
         box.label(text="Addon")
