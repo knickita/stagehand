@@ -57,6 +57,29 @@
     },
     "items": [
         {
+            "id": "vio_array",
+            "name": "vio array",
+            "description": "Crea un array verticale di casse dBTechnologies VIO L208 collegate una sotto l'altra",
+            "builder": "linked_array",
+            "assetId": 1,
+            "parameters": {
+                "count": {
+                    "type": "INT",
+                    "label": "Numero di casse",
+                    "description": "Numero di VIO L208 da montare una sotto l'altra",
+                    "default": 4,
+                    "min": 1,
+                    "max": 24
+                }
+            },
+            "settings": {
+                "countParameter": "count",
+                "incomingLink": 0,
+                "outgoingLink": 1,
+                "maxItems": 24
+            }
+        },
+        {
             "id": "infiled_ledwall",
             "name": "Ledwall Infiled",
             "description": "Build a rectangular ledwall using compatible 50x50cm and 50x100cm panels",

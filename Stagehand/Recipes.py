@@ -981,6 +981,119 @@ def _remove_imported_objects(objects):
     Connections.prune_stale_connections()
 
 
+def _linked_array_settings(definition, parameters):
+    settings = definition.get("settings", {})
+    count_parameter = str(settings.get("countParameter", "count"))
+
+    try:
+        asset_id = int(definition["assetId"])
+        incoming_link = int(settings["incomingLink"])
+        outgoing_link = int(settings["outgoingLink"])
+        count = int(parameters[count_parameter])
+        max_items = int(settings.get("maxItems", 100))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Invalid linked array recipe configuration") from exc
+
+    if count <= 0:
+        raise ValueError("The linked array item count must be positive")
+    if max_items <= 0:
+        raise ValueError("The linked array maxItems setting must be positive")
+    if count > max_items:
+        raise ValueError(
+            f"This array needs {count} items; the recipe limit is {max_items}"
+        )
+
+    asset_data = LoadCatalogue.CATALOGUE_BY_ID.get(asset_id)
+    if asset_data is None:
+        raise ValueError(f"Catalogue asset ID {asset_id} was not found")
+
+    links = asset_data.get("links", [])
+    if incoming_link == outgoing_link:
+        raise ValueError("Linked array incomingLink and outgoingLink must be different")
+    if not 0 <= incoming_link < len(links):
+        raise ValueError(
+            f"Linked array incoming link {incoming_link} is invalid for asset {asset_id}"
+        )
+    if not 0 <= outgoing_link < len(links):
+        raise ValueError(
+            f"Linked array outgoing link {outgoing_link} is invalid for asset {asset_id}"
+        )
+    if not are_link_types_compatible(
+        links[outgoing_link].get("type", -1),
+        links[incoming_link].get("type", -1),
+    ):
+        raise ValueError(
+            f"Linked array links {outgoing_link} and {incoming_link} are not compatible"
+        )
+
+    return asset_id, incoming_link, outgoing_link, count
+
+
+def build_linked_array(context, definition, parameters):
+    """Build a linear chain by joining each module to the previous one."""
+    asset_id, incoming_link, outgoing_link, count = _linked_array_settings(
+        definition,
+        parameters,
+    )
+    imported_objects = []
+    modules = []
+    current_obj = None
+
+    try:
+        for _index in range(count):
+            imported = LoadCatalogue.import_catalogue_asset(asset_id)
+            imported_objects.extend(imported)
+            module = _single_stagehand_object(imported, asset_id)
+            modules.append(module)
+
+            if current_obj is None:
+                matrix_world = module.matrix_world.copy()
+                matrix_world.translation = context.scene.cursor.location
+                module.matrix_world = matrix_world
+            else:
+                if not Connections.align_object_link_to_target(
+                    module,
+                    incoming_link,
+                    current_obj,
+                    outgoing_link,
+                ):
+                    raise RuntimeError("Unable to position a linked array module")
+                if not Connections.links_are_aligned(
+                    module,
+                    incoming_link,
+                    current_obj,
+                    outgoing_link,
+                ):
+                    raise RuntimeError("Unable to align a linked array module exactly")
+                if not Connections.connect_links(
+                    module,
+                    incoming_link,
+                    current_obj,
+                    outgoing_link,
+                ):
+                    raise RuntimeError("Unable to connect a linked array module")
+
+            current_obj = module
+    except Exception:
+        _remove_imported_objects(imported_objects)
+        raise
+
+    for selected in context.selected_objects:
+        selected.select_set(False)
+    for obj in imported_objects:
+        obj.select_set(True)
+    context.view_layer.objects.active = modules[0]
+
+    definition_name = str(definition.get("name", "linked array"))
+    return (
+        imported_objects,
+        f"Added {definition_name} with {count} items ({count - 1} connections)",
+    )
+
+
+register_builder("linked_array", build_linked_array)
+
+
 def build_grid(context, definition, parameters):
     """Pack compatible modules into a rectangle and connect adjacent sides."""
     settings = definition.get("settings", {})

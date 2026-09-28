@@ -1,4 +1,13 @@
 from enum import IntEnum
+from math import floor
+from typing import NamedTuple
+
+
+class LinkRotationConstraint(NamedTuple):
+    axis: str
+    min_degrees: float
+    max_degrees: float
+    step_degrees: float
 
 
 class StagehandLinkType(IntEnum):
@@ -48,6 +57,8 @@ class StagehandLinkType(IntEnum):
     SELVOLINE_MANCORRENTE = 43
     SELVOLINE_SEDE_DIAGONALE = 46
     SELVOLINE_DIAGONALE = 47
+    VIO_208_UP = 48
+    VIO_208_DOWN = 49
 
 
 LINK_COMPATIBILITY = {
@@ -110,6 +121,23 @@ LINK_COMPATIBILITY = {
     StagehandLinkType.SELVOLINE_MANCORRENTE: (StagehandLinkType.SELVOLINE_SEDE_MANCORRENTE,),
     StagehandLinkType.SELVOLINE_SEDE_DIAGONALE: (StagehandLinkType.SELVOLINE_DIAGONALE,),
     StagehandLinkType.SELVOLINE_DIAGONALE: (StagehandLinkType.SELVOLINE_SEDE_DIAGONALE,),
+    StagehandLinkType.VIO_208_UP: (StagehandLinkType.VIO_208_DOWN,),
+    StagehandLinkType.VIO_208_DOWN: (StagehandLinkType.VIO_208_UP,),
+}
+
+
+# The key order is (parent/outgoing link type, child/incoming link type).
+# Add future cabinet/link families here without changing transform logic.
+CHILD_LINK_ROTATION_CONSTRAINTS = {
+    (
+        StagehandLinkType.VIO_208_DOWN,
+        StagehandLinkType.VIO_208_UP,
+    ): LinkRotationConstraint(
+        axis="X",
+        min_degrees=0.0,
+        max_degrees=10.0,
+        step_degrees=1.0,
+    ),
 }
 
 
@@ -168,6 +196,39 @@ def coerce_link_type(value):
         return value
 
     return StagehandLinkType(int(value))
+
+
+def get_child_link_rotation_constraint(parent_link_type, child_link_type):
+    """Return the allowed local hinge rotation for a parent/child link pair."""
+    key = (
+        coerce_link_type(parent_link_type),
+        coerce_link_type(child_link_type),
+    )
+    return CHILD_LINK_ROTATION_CONSTRAINTS.get(key)
+
+
+def snap_child_link_rotation_degrees(
+    parent_link_type,
+    child_link_type,
+    angle_degrees,
+):
+    """Clamp and snap a configured child-link angle, or return None."""
+    constraint = get_child_link_rotation_constraint(
+        parent_link_type,
+        child_link_type,
+    )
+    if constraint is None:
+        return None
+
+    clamped = min(
+        constraint.max_degrees,
+        max(constraint.min_degrees, float(angle_degrees)),
+    )
+    step_index = floor(
+        ((clamped - constraint.min_degrees) / constraint.step_degrees) + 0.5
+    )
+    snapped = constraint.min_degrees + (step_index * constraint.step_degrees)
+    return min(constraint.max_degrees, max(constraint.min_degrees, snapped))
 
 
 def get_compatible_link_types(link_type):

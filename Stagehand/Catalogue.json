@@ -1,11 +1,42 @@
 {
     "items": [
         {
-            "name": "array",
+            "name": "vio L208",
             "uniqueId": 1,
-            "mesh3d": "Models/array",
-            "tags": [],
-            "links": []
+            "mesh3d": "Models/Audio/vio_l208",
+            "tags": [
+                "audioarray"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.05,
+                    "type": 48,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        -0.26,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.05,
+                    "type": 49,
+                    "allowrotations": "none"
+                }
+            ]
         },
         {
             "name": "litecQX30-29cm",

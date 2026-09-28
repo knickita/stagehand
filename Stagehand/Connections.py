@@ -2,7 +2,7 @@ import uuid
 import time
 from collections import defaultdict, namedtuple
 from contextlib import contextmanager
-from math import floor, pi, radians
+from math import degrees, floor, pi, radians
 
 import bpy
 from bpy.app.handlers import persistent
@@ -10,7 +10,13 @@ from bpy_extras import view3d_utils
 from mathutils import Matrix, Quaternion, Vector
 
 from .AddStagehandObject import ensure_stagehand_link_uid, ensure_stagehand_uid
-from .LinkTypes import StagehandLinkType, are_link_types_compatible, default_link_allow_rotations
+from .LinkTypes import (
+    StagehandLinkType,
+    are_link_types_compatible,
+    default_link_allow_rotations,
+    get_child_link_rotation_constraint,
+    snap_child_link_rotation_degrees,
+)
 from . import ProjectDatabase
 from .RegistrationUtils import (
     safe_add_handler,
@@ -35,6 +41,16 @@ LINK_ROTATION_MODES = {
     LINK_ROTATION_MODE_90,
     LINK_ROTATION_MODE_FREE,
 }
+AUDIO_ARRAY_TAG = "audioarray"
+AUDIO_ARRAY_PARENT_UID_KEY = "stagehand_audioarray_parent_uid"
+AUDIO_ARRAY_PARENT_LINK_KEY = "stagehand_audioarray_parent_link"
+AUDIO_ARRAY_CHILD_LINK_KEY = "stagehand_audioarray_child_link"
+AUDIO_ARRAY_REST_LOCATION_KEY = "stagehand_audioarray_rest_location"
+AUDIO_ARRAY_REST_ROTATION_KEY = "stagehand_audioarray_rest_rotation"
+AUDIO_ARRAY_REST_SCALE_KEY = "stagehand_audioarray_rest_scale"
+AUDIO_ARRAY_PREVIOUS_LOCKS_KEY = "stagehand_audioarray_previous_locks"
+AUDIO_ARRAY_LIMIT_CONSTRAINT_NAME = "Stagehand Audio Array Rotation"
+_AUDIO_ARRAY_UPDATE_ACTIVE = False
 LinkSearchItem = namedtuple(
     "LinkSearchItem",
     (
@@ -485,6 +501,59 @@ def _quarter_turn_roll_error(rotation, desired_rotation, forward):
     )
 
 
+def _child_link_constraint_components(link, rotation, other_link, other_rotation):
+    constraint = get_child_link_rotation_constraint(other_link.type, link.type)
+    if constraint is not None:
+        child_rotation = rotation
+        parent_rotation = other_rotation
+        parent_link_type = other_link.type
+        child_link_type = link.type
+    else:
+        constraint = get_child_link_rotation_constraint(link.type, other_link.type)
+        if constraint is None:
+            return None
+        child_rotation = other_rotation
+        parent_rotation = rotation
+        parent_link_type = link.type
+        child_link_type = other_link.type
+
+    desired_child_rotation = parent_rotation @ LINK_ALIGNMENT_FLIP
+    relative_rotation = desired_child_rotation.inverted() @ child_rotation
+    relative_euler = relative_rotation.to_euler('XYZ')
+    axis_index = {"X": 0, "Y": 1, "Z": 2}[constraint.axis]
+    angle_degrees = degrees(relative_euler[axis_index])
+    off_axis_error = max(
+        abs(relative_euler[index])
+        for index in range(3)
+        if index != axis_index
+    )
+    snapped_degrees = snap_child_link_rotation_degrees(
+        parent_link_type,
+        child_link_type,
+        angle_degrees,
+    )
+    step_error = radians(abs(angle_degrees - snapped_degrees))
+    return constraint, angle_degrees, off_axis_error, step_error
+
+
+def _child_link_constraint_alignment_error(
+    link,
+    rotation,
+    other_link,
+    other_rotation,
+):
+    components = _child_link_constraint_components(
+        link,
+        rotation,
+        other_link,
+        other_rotation,
+    )
+    if components is None:
+        return None
+    _constraint, _angle_degrees, off_axis_error, step_error = components
+    return max(off_axis_error, step_error)
+
+
 def link_alignment_rotation_delta(link_rotation, target_rotation):
     desired_link_rotation = target_rotation @ LINK_ALIGNMENT_FLIP
     return desired_link_rotation @ link_rotation.inverted()
@@ -495,6 +564,15 @@ def _link_alignment_angle(link, rotation, other_link, other_rotation):
         return 0.0
     if link.cylindricalType or other_link.cylindricalType:
         return _link_forward(rotation).angle(-_link_forward(other_rotation), 0.0)
+
+    constrained_error = _child_link_constraint_alignment_error(
+        link,
+        rotation,
+        other_link,
+        other_rotation,
+    )
+    if constrained_error is not None:
+        return constrained_error
 
     mode = _combined_link_rotation_mode(link, other_link)
     if mode != LINK_ROTATION_MODE_NONE:
@@ -641,12 +719,23 @@ def disconnect_link(obj, link_index):
         return
 
     other_obj = find_object_by_uid(_get_database_link_parents(create=False).get(other_link_uid, ""))
+    other_link = None
+    other_link_index = -1
+    if other_obj is not None:
+        other_link, other_link_index = find_link_by_uid(other_obj, other_link_uid)
+        if other_link is not None:
+            _clear_constrained_connection_parenting(
+                obj,
+                link_index,
+                other_obj,
+                other_link_index,
+            )
+
     clear_link_connection(obj, link_index)
 
     if other_obj is None:
         return
 
-    other_link, _other_link_index = find_link_by_uid(other_obj, other_link_uid)
     if other_link is not None:
         _clear_legacy_link_connection(other_link)
 
@@ -675,6 +764,12 @@ def connect_links(obj_a, link_index_a, obj_b, link_index_b):
     _set_database_connection_pair(link_uid_a, link_uid_b)
     _clear_legacy_link_connection(link_a)
     _clear_legacy_link_connection(link_b)
+    _sync_constrained_connection_parenting(
+        obj_a,
+        link_index_a,
+        obj_b,
+        link_index_b,
+    )
     return True
 
 
@@ -699,6 +794,295 @@ def get_connected_link(obj, link_index):
         return other_obj, None, -1
 
     return other_obj, other_link, other_link_index
+
+
+def _stagehand_object_has_tag(obj, tag):
+    if not is_stagehand_object(obj):
+        return False
+    target = str(tag).strip().lower()
+    return any(
+        str(tag_item.value).strip().lower() == target
+        for tag_item in obj.stagehand.tags
+    )
+
+
+def _constrained_connection_pair(obj_a, link_index_a, obj_b, link_index_b):
+    link_a = get_link(obj_a, link_index_a)
+    link_b = get_link(obj_b, link_index_b)
+    if link_a is None or link_b is None:
+        return None
+
+    constraint = get_child_link_rotation_constraint(link_a.type, link_b.type)
+    if constraint is not None:
+        return obj_a, link_index_a, link_a, obj_b, link_index_b, link_b, constraint
+
+    constraint = get_child_link_rotation_constraint(link_b.type, link_a.type)
+    if constraint is not None:
+        return obj_b, link_index_b, link_b, obj_a, link_index_a, link_a, constraint
+    return None
+
+
+def _set_constrained_child_locks(child_obj):
+    child_obj.lock_location = (True, True, True)
+    child_obj.lock_rotation = (False, True, True)
+    child_obj.lock_scale = (True, True, True)
+
+
+def _ensure_constrained_child_rotation_limit(
+    child_obj,
+    constraint,
+    rest_rotation,
+):
+    rotation_limit = child_obj.constraints.get(AUDIO_ARRAY_LIMIT_CONSTRAINT_NAME)
+    if rotation_limit is not None and rotation_limit.type != 'LIMIT_ROTATION':
+        child_obj.constraints.remove(rotation_limit)
+        rotation_limit = None
+    if rotation_limit is None:
+        rotation_limit = child_obj.constraints.new(type='LIMIT_ROTATION')
+        rotation_limit.name = AUDIO_ARRAY_LIMIT_CONSTRAINT_NAME
+
+    rotation_limit.owner_space = 'LOCAL'
+    rotation_limit.influence = 1.0
+    if hasattr(rotation_limit, "use_transform_limit"):
+        rotation_limit.use_transform_limit = True
+
+    axis_index = {"X": 0, "Y": 1, "Z": 2}[constraint.axis]
+    for index, axis_name in enumerate(("x", "y", "z")):
+        setattr(rotation_limit, f"use_limit_{axis_name}", True)
+        if index == axis_index:
+            minimum = rest_rotation[index] + radians(constraint.min_degrees)
+            maximum = rest_rotation[index] + radians(constraint.max_degrees)
+        else:
+            minimum = rest_rotation[index]
+            maximum = rest_rotation[index]
+        setattr(rotation_limit, f"min_{axis_name}", minimum)
+        setattr(rotation_limit, f"max_{axis_name}", maximum)
+
+
+def _clear_constrained_child_parent(child_obj, expected_parent=None):
+    stored_parent_uid = str(child_obj.get(AUDIO_ARRAY_PARENT_UID_KEY, ""))
+    if not stored_parent_uid:
+        return False
+    if (
+        expected_parent is not None
+        and stored_parent_uid != get_object_uid(expected_parent)
+    ):
+        return False
+
+    world_matrix = child_obj.matrix_world.copy()
+    if expected_parent is None or child_obj.parent == expected_parent:
+        child_obj.parent = None
+        child_obj.matrix_world = world_matrix
+
+    previous_locks = child_obj.get(AUDIO_ARRAY_PREVIOUS_LOCKS_KEY, ())
+    if len(previous_locks) == 9:
+        child_obj.lock_location = tuple(bool(value) for value in previous_locks[:3])
+        child_obj.lock_rotation = tuple(bool(value) for value in previous_locks[3:6])
+        child_obj.lock_scale = tuple(bool(value) for value in previous_locks[6:9])
+    else:
+        child_obj.lock_location = (False, False, False)
+        child_obj.lock_rotation = (False, False, False)
+        child_obj.lock_scale = (False, False, False)
+
+    rotation_limit = child_obj.constraints.get(AUDIO_ARRAY_LIMIT_CONSTRAINT_NAME)
+    if rotation_limit is not None:
+        child_obj.constraints.remove(rotation_limit)
+
+    for key in (
+        AUDIO_ARRAY_PARENT_UID_KEY,
+        AUDIO_ARRAY_PARENT_LINK_KEY,
+        AUDIO_ARRAY_CHILD_LINK_KEY,
+        AUDIO_ARRAY_REST_LOCATION_KEY,
+        AUDIO_ARRAY_REST_ROTATION_KEY,
+        AUDIO_ARRAY_REST_SCALE_KEY,
+        AUDIO_ARRAY_PREVIOUS_LOCKS_KEY,
+    ):
+        if key in child_obj:
+            del child_obj[key]
+    return True
+
+
+def _sync_constrained_connection_parenting(
+    obj_a,
+    link_index_a,
+    obj_b,
+    link_index_b,
+):
+    pair = _constrained_connection_pair(
+        obj_a,
+        link_index_a,
+        obj_b,
+        link_index_b,
+    )
+    if pair is None:
+        return False
+
+    (
+        parent_obj,
+        parent_link_index,
+        parent_link,
+        child_obj,
+        child_link_index,
+        child_link,
+        constraint,
+    ) = pair
+    if not _stagehand_object_has_tag(child_obj, AUDIO_ARRAY_TAG):
+        return False
+
+    parent_uid = get_object_uid(parent_obj)
+    if (
+        str(child_obj.get(AUDIO_ARRAY_PARENT_UID_KEY, "")) == parent_uid
+        and child_obj.parent == parent_obj
+    ):
+        _enforce_constrained_child_transform(child_obj)
+        return True
+
+    if child_obj.get(AUDIO_ARRAY_PARENT_UID_KEY, ""):
+        _clear_constrained_child_parent(child_obj)
+
+    child_center, child_rotation = _link_transform(child_obj, child_link)
+    parent_center, parent_rotation = _link_transform(parent_obj, parent_link)
+    del child_center, parent_center
+    components = _child_link_constraint_components(
+        child_link,
+        child_rotation,
+        parent_link,
+        parent_rotation,
+    )
+    angle_degrees = components[1] if components is not None else 0.0
+
+    previous_locks = (
+        *tuple(child_obj.lock_location),
+        *tuple(child_obj.lock_rotation),
+        *tuple(child_obj.lock_scale),
+    )
+    world_matrix = child_obj.matrix_world.copy()
+    child_obj.parent = parent_obj
+    child_obj.matrix_world = world_matrix
+    child_obj.rotation_mode = 'XYZ'
+
+    axis_index = {"X": 0, "Y": 1, "Z": 2}[constraint.axis]
+    rest_rotation = list(child_obj.rotation_euler)
+    rest_rotation[axis_index] -= radians(angle_degrees)
+    child_obj[AUDIO_ARRAY_PARENT_UID_KEY] = parent_uid
+    child_obj[AUDIO_ARRAY_PARENT_LINK_KEY] = int(parent_link_index)
+    child_obj[AUDIO_ARRAY_CHILD_LINK_KEY] = int(child_link_index)
+    child_obj[AUDIO_ARRAY_REST_LOCATION_KEY] = list(child_obj.location)
+    child_obj[AUDIO_ARRAY_REST_ROTATION_KEY] = rest_rotation
+    child_obj[AUDIO_ARRAY_REST_SCALE_KEY] = list(child_obj.scale)
+    child_obj[AUDIO_ARRAY_PREVIOUS_LOCKS_KEY] = [
+        int(value) for value in previous_locks
+    ]
+    _set_constrained_child_locks(child_obj)
+    _ensure_constrained_child_rotation_limit(
+        child_obj,
+        constraint,
+        rest_rotation,
+    )
+    _enforce_constrained_child_transform(child_obj)
+    return True
+
+
+def _clear_constrained_connection_parenting(
+    obj_a,
+    link_index_a,
+    obj_b,
+    link_index_b,
+):
+    pair = _constrained_connection_pair(
+        obj_a,
+        link_index_a,
+        obj_b,
+        link_index_b,
+    )
+    if pair is None:
+        return False
+    parent_obj, _parent_index, _parent_link, child_obj, *_rest = pair
+    return _clear_constrained_child_parent(child_obj, expected_parent=parent_obj)
+
+
+def _enforce_constrained_child_transform(child_obj):
+    parent_uid = str(child_obj.get(AUDIO_ARRAY_PARENT_UID_KEY, ""))
+    parent_obj = child_obj.parent
+    if not parent_uid or parent_obj is None:
+        return False
+    if get_object_uid(parent_obj) != parent_uid:
+        return False
+
+    try:
+        parent_link_index = int(child_obj[AUDIO_ARRAY_PARENT_LINK_KEY])
+        child_link_index = int(child_obj[AUDIO_ARRAY_CHILD_LINK_KEY])
+        rest_location = tuple(child_obj[AUDIO_ARRAY_REST_LOCATION_KEY])
+        rest_rotation = tuple(child_obj[AUDIO_ARRAY_REST_ROTATION_KEY])
+        rest_scale = tuple(child_obj[AUDIO_ARRAY_REST_SCALE_KEY])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not all(len(values) == 3 for values in (rest_location, rest_rotation, rest_scale)):
+        return False
+
+    parent_link = get_link(parent_obj, parent_link_index)
+    child_link = get_link(child_obj, child_link_index)
+    if parent_link is None or child_link is None:
+        return False
+    constraint = get_child_link_rotation_constraint(
+        parent_link.type,
+        child_link.type,
+    )
+    if constraint is None:
+        return False
+
+    child_obj.rotation_mode = 'XYZ'
+    axis_index = {"X": 0, "Y": 1, "Z": 2}[constraint.axis]
+    rotation = list(child_obj.rotation_euler)
+    requested_degrees = degrees(rotation[axis_index] - rest_rotation[axis_index])
+    snapped_degrees = snap_child_link_rotation_degrees(
+        parent_link.type,
+        child_link.type,
+        requested_degrees,
+    )
+    for index in range(3):
+        rotation[index] = rest_rotation[index]
+    rotation[axis_index] += radians(snapped_degrees)
+
+    child_obj.location = rest_location
+    child_obj.rotation_euler = rotation
+    child_obj.scale = rest_scale
+    _set_constrained_child_locks(child_obj)
+    _ensure_constrained_child_rotation_limit(
+        child_obj,
+        constraint,
+        rest_rotation,
+    )
+    return True
+
+
+def sync_constrained_link_hierarchy():
+    constrained_child_uids = set()
+    for child_obj in list(iter_stagehand_objects()):
+        if not _stagehand_object_has_tag(child_obj, AUDIO_ARRAY_TAG):
+            continue
+        for child_link_index, child_link in iter_object_links(child_obj):
+            parent_obj, parent_link, parent_link_index = get_connected_link(
+                child_obj,
+                child_link_index,
+            )
+            if parent_obj is None or parent_link is None:
+                continue
+            if get_child_link_rotation_constraint(parent_link.type, child_link.type) is None:
+                continue
+            if _sync_constrained_connection_parenting(
+                parent_obj,
+                parent_link_index,
+                child_obj,
+                child_link_index,
+            ):
+                constrained_child_uids.add(get_object_uid(child_obj))
+
+    for obj in list(iter_stagehand_objects()):
+        if not obj.get(AUDIO_ARRAY_PARENT_UID_KEY, ""):
+            continue
+        if get_object_uid(obj) not in constrained_child_uids:
+            _clear_constrained_child_parent(obj)
 
 
 def iter_connected_links(obj):
@@ -1051,6 +1435,7 @@ def prune_stale_connections():
     context = ConnectionContext()
     _prune_orphan_database_connections(context=context)
     _remove_connections_not_working(iter_stagehand_objects(), context=context)
+    sync_constrained_link_hierarchy()
 
 
 def _iter_compatible_unconnected_links(obj, connections=None):
@@ -1697,6 +2082,7 @@ def _clear_generated_powerlines_for_dirty_objects():
 def _process_dirty_connection_refresh():
     global _ALL_CONNECTIONS_DIRTY, _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT
 
+    sync_constrained_link_hierarchy()
     processed_all_objects = _ALL_CONNECTIONS_DIRTY
     membership_autoconnect = _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT
     _MEMBERSHIP_REFRESH_NEEDS_AUTOCONNECT = False
@@ -1794,6 +2180,8 @@ def initial_connection_refresh_timer():
 
 @persistent
 def stagehand_depsgraph_update_post(_scene, depsgraph):
+    global _AUDIO_ARRAY_UPDATE_ACTIVE
+
     handler_start = time.perf_counter()
     dirty_objects = []
     for update in getattr(depsgraph, "updates", ()):
@@ -1806,6 +2194,13 @@ def stagehand_depsgraph_update_post(_scene, depsgraph):
             dirty_objects.append(updated_id)
 
     if dirty_objects:
+        if not _AUDIO_ARRAY_UPDATE_ACTIVE:
+            _AUDIO_ARRAY_UPDATE_ACTIVE = True
+            try:
+                for dirty_obj in dirty_objects:
+                    _enforce_constrained_child_transform(dirty_obj)
+            finally:
+                _AUDIO_ARRAY_UPDATE_ACTIVE = False
         _mark_generated_powerlines_dirty(dirty_objects)
         mark_objects_dirty(dirty_objects)
     membership_changed = _mark_stagehand_object_membership_changes()
