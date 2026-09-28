@@ -39,7 +39,11 @@ void main()
 {
     vec4 world = modelMatrix * vec4(position, 1.0);
     worldPosition = world.xyz;
-    gl_Position = viewProjectionMatrix * world;
+    vec4 clipPosition = viewProjectionMatrix * world;
+    // Keep the overlay just in front of the original surface in depth-space.
+    // This avoids z-fighting without moving or modifying the actual mesh.
+    clipPosition.z -= 0.00001 * clipPosition.w;
+    gl_Position = clipPosition;
 }
 '''
 
@@ -437,6 +441,8 @@ def _draw_audio_visualization():
         gpu.state.face_culling_set('NONE')
         for obj in scene.objects:
             if obj.type != 'MESH' or obj.hide_viewport or obj.hide_get():
+                continue
+            if _has_audio_source_tag(obj):
                 continue
             if not obj.visible_get(view_layer=context.view_layer):
                 continue

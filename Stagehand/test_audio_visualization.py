@@ -77,6 +77,8 @@ class AudioVisualizationTests(unittest.TestCase):
         self.assertIn("distanceMeters + audio.x", source)
         self.assertIn("pressureReal * pressureReal", source)
         self.assertIn("directivityFactor", source)
+        self.assertIn("clipPosition.z -= 0.00001 * clipPosition.w", source)
+        self.assertIn("if _has_audio_source_tag(obj):", source)
 
     def test_addon_registers_audio_module_before_the_ui(self):
         source = (ROOT / "__init__.py").read_text(encoding="utf-8")
