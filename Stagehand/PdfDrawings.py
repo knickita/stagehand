@@ -1154,6 +1154,17 @@ def _build_dimension_candidates(structure_segments, structure_rotation):
     return candidates
 
 
+def _build_general_dimension_candidates(objects):
+    if not objects:
+        return []
+
+    general_segments = [
+        _StructureSegment(objects, quote_axis=axis)
+        for axis in ("X", "Y", "Z")
+    ]
+    return _build_dimension_candidates(general_segments, Matrix.Identity(3))
+
+
 def _project_dimension_candidate(dimension_candidate, camera_rotation, center, structure_rotation, assembly_projected_center):
     axis = dimension_candidate["axis"]
     local_box = _segment_local_box(dimension_candidate["segment"], structure_rotation)
@@ -2703,8 +2714,13 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
     )
     include_general_view: bpy.props.BoolProperty(
         name="Vista generale",
-        description="Include le quattro viste non quotate dell'intera scena",
+        description="Include le quattro viste generali dell'intera scena",
         default=True,
+    )
+    include_general_dimensions: bpy.props.BoolProperty(
+        name="Disegna quote sulla vista generale",
+        description="Disegna le quote di ingombro complessivo nelle quattro viste generali",
+        default=False,
     )
     include_dimensioned_views: bpy.props.BoolProperty(
         name="Viste quotate",
@@ -2720,6 +2736,9 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         column.prop(self, "include_material_list")
         column.prop(self, "include_truss_details")
         column.prop(self, "include_general_view")
+        general_dimensions_row = column.row()
+        general_dimensions_row.enabled = self.include_general_view
+        general_dimensions_row.prop(self, "include_general_dimensions")
         column.prop(self, "include_dimensioned_views")
 
     def invoke(self, context, event):
@@ -2964,7 +2983,13 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
 
                     general_center, _general_dimensions = _object_bounds(visible_objects)
                     general_rotation = Matrix.Identity(3)
+                    general_dimension_candidates = (
+                        _build_general_dimension_candidates(visible_objects)
+                        if self.include_general_dimensions
+                        else []
+                    )
                     general_rendered_views = {}
+                    general_non_iso_dimension_candidate_indices = set()
 
                     try:
                         for view_name in ("Front", "Left", "Top", "Iso"):
@@ -2974,12 +2999,22 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                                 view_name,
                                 general_center,
                                 visible_objects,
-                                [],
+                                general_dimension_candidates,
                                 general_rotation,
                                 general_temp_directory,
                                 profiler=profiler,
                                 conversion_executor=conversion_executor,
                                 profile_label=f"general {view_name}",
+                                allowed_dimension_candidate_indices=(
+                                    general_non_iso_dimension_candidate_indices
+                                    if view_name == "Iso"
+                                    else None
+                                ),
+                                visible_dimension_candidate_indices=(
+                                    None
+                                    if view_name == "Iso"
+                                    else general_non_iso_dimension_candidate_indices
+                                ),
                             )
                             progress.advance(message=f"Rendered general view: {view_name}")
                     finally:
