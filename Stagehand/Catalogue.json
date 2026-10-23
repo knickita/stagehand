@@ -6205,6 +6205,466 @@
                     "allowrotations": "90"
                 }
             ]
+        },
+        {
+            "name": "litecPipe-50cm",
+            "uniqueId": 69,
+            "mesh3d": "Models/litecPipe-50cm",
+            "tags": [
+                "structure",
+                "truss"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.5,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0,
+                        0,
+                        0,
+                        0.2705981135368347,
+                        0.6532815098762512,
+                        0.6532814502716064,
+                        0.27059805393218994
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 0.5
+                }
+            ]
+        },
+        {
+            "name": "litecPipe-75cm",
+            "uniqueId": 70,
+            "mesh3d": "Models/litecPipe-75cm",
+            "tags": [
+                "structure",
+                "truss"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.75,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0,
+                        0,
+                        0,
+                        0.2705981135368347,
+                        0.6532815098762512,
+                        0.6532814502716064,
+                        0.27059805393218994
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 0.75
+                }
+            ]
+        },
+        {
+            "name": "litecPipe-100cm",
+            "uniqueId": 71,
+            "mesh3d": "Models/litecPipe-100cm",
+            "tags": [
+                "structure",
+                "truss"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0,
+                        0,
+                        0,
+                        0.2705981135368347,
+                        0.6532815098762512,
+                        0.6532814502716064,
+                        0.27059805393218994
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 1
+                }
+            ]
+        },
+        {
+            "name": "litecPipe-200cm",
+            "uniqueId": 72,
+            "mesh3d": "Models/litecPipe-200cm",
+            "tags": [
+                "structure",
+                "truss"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        2.0,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0,
+                        0,
+                        0,
+                        0.2705981135368347,
+                        0.6532815098762512,
+                        0.6532814502716064,
+                        0.27059805393218994
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 2
+                }
+            ]
+        },
+        {
+            "name": "litecPipe-300cm",
+            "uniqueId": 73,
+            "mesh3d": "Models/litecPipe-300cm",
+            "tags": [
+                "structure",
+                "truss"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        3.0,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071068286895752
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0,
+                        0,
+                        0,
+                        0.2705981135368347,
+                        0.6532815098762512,
+                        0.6532814502716064,
+                        0.27059805393218994
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 3
+                }
+            ]
+        },
+        {
+            "name": "Robe@Tetra2",
+            "uniqueId": 74,
+            "mesh3d": "Models/Lights/robetetra2",
+            "tags": [
+                "movinghead"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        -0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.10999999940395355,
+                        0.05000000074505806,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.015,
+                    "type": 9,
+                    "allowrotations": "none"
+                }
+            ],
+            "watt": 600.0
+        },
+        {
+            "name": "Showtec@Spectra Wash",
+            "uniqueId": 75,
+            "mesh3d": "Models/Lights/showtecspectrawash",
+            "tags": [
+                "movinghead"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        -0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.10999999940395355,
+                        0.05000000074505806,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.015,
+                    "type": 9,
+                    "allowrotations": "none"
+                }
+            ],
+            "watt": 345.0
+        },
+        {
+            "name": "Showtec@Helix S5000 Q4",
+            "uniqueId": 76,
+            "mesh3d": "Models/Lights/showtechelixs5000q4",
+            "tags": [
+                "movinghead"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        -0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.10999999940395355,
+                        0.05000000074505806,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.015,
+                    "type": 9,
+                    "allowrotations": "none"
+                }
+            ],
+            "watt": 415.0
+        },
+        {
+            "name": "Aliscaff",
+            "uniqueId": 77,
+            "mesh3d": "Models/aliscaff",
+            "tags": [
+                "structure"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 50
+                },
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.031,
+                        0.0,
+                        -0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1
+                }
+            ]
         }
     ],
     "variants": [

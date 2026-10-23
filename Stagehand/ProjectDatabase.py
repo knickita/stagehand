@@ -1,9 +1,12 @@
+import json
+
 import bpy
 
 
 DATABASE_OBJECT_NAME = "database"
 DATABASE_MARKER_KEY = "stagehand_is_database"
 DATABASE_VERSION_KEY = "stagehand_database_version"
+DATABASE_VERSION = 3
 CONNECTIONS_KEY = "stagehand_connections"
 LINK_PARENTS_KEY = "stagehand_link_parents"
 OBJECT_NAMES_KEY = "stagehand_object_names"
@@ -63,6 +66,37 @@ def _coerce_string_dict(value):
     return {str(key): str(item) for key, item in items()}
 
 
+def _coerce_connection_graph(value):
+    """Return a symmetric link UID adjacency map from v2 or v3 storage."""
+    raw_connections = _coerce_string_dict(value)
+    connections = {}
+
+    for raw_link_uid, raw_neighbors in raw_connections.items():
+        link_uid = str(raw_link_uid or "")
+        if not link_uid:
+            continue
+
+        neighbors = None
+        try:
+            decoded = json.loads(raw_neighbors)
+            if isinstance(decoded, list):
+                neighbors = decoded
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+
+        if neighbors is None:
+            neighbors = [raw_neighbors]
+
+        for raw_neighbor_uid in neighbors:
+            neighbor_uid = str(raw_neighbor_uid or "")
+            if not neighbor_uid or neighbor_uid == link_uid:
+                continue
+            connections.setdefault(link_uid, set()).add(neighbor_uid)
+            connections.setdefault(neighbor_uid, set()).add(link_uid)
+
+    return connections
+
+
 def _coerce_object_dict(value):
     if value is None:
         return {}
@@ -91,16 +125,45 @@ def _set_mapping_value(obj, key, mapping):
     obj[key] = normalized
 
 
+def _set_connection_graph_value(obj, connections):
+    graph = {}
+    for raw_link_uid, raw_neighbor_uids in dict(connections).items():
+        link_uid = str(raw_link_uid or "")
+        if not link_uid:
+            continue
+        if isinstance(raw_neighbor_uids, str):
+            raw_neighbor_uids = (raw_neighbor_uids,)
+        for raw_neighbor_uid in raw_neighbor_uids:
+            neighbor_uid = str(raw_neighbor_uid or "")
+            if not neighbor_uid or neighbor_uid == link_uid:
+                continue
+            graph.setdefault(link_uid, set()).add(neighbor_uid)
+            graph.setdefault(neighbor_uid, set()).add(link_uid)
+
+    normalized = {
+        str(link_uid): json.dumps(
+            sorted(neighbor_uids),
+            separators=(",", ":"),
+        )
+        for link_uid, neighbor_uids in graph.items()
+        if link_uid and neighbor_uids
+    }
+    obj[CONNECTIONS_KEY] = normalized
+
+
 def _ensure_database_shape(obj):
     obj[DATABASE_MARKER_KEY] = True
-    obj[DATABASE_VERSION_KEY] = 2
+    obj[DATABASE_VERSION_KEY] = DATABASE_VERSION
     obj.hide_select = True
     obj.hide_viewport = True
     obj.hide_render = True
     obj.empty_display_type = 'PLAIN_AXES'
     obj.empty_display_size = 0.25
 
-    for key in (CONNECTIONS_KEY, LINK_PARENTS_KEY, OBJECT_NAMES_KEY, GENERATED_POWERLINES_KEY):
+    connections = _coerce_connection_graph(obj.get(CONNECTIONS_KEY))
+    _set_connection_graph_value(obj, connections)
+
+    for key in (LINK_PARENTS_KEY, OBJECT_NAMES_KEY, GENERATED_POWERLINES_KEY):
         current_value = _coerce_string_dict(obj.get(key))
         if key not in obj or dict(current_value) != current_value:
             _set_mapping_value(obj, key, current_value)
@@ -164,14 +227,14 @@ def get_connections(create=False):
     database_object = get_database_object(create=create)
     if database_object is None:
         return {}
-    return _coerce_string_dict(database_object.get(CONNECTIONS_KEY))
+    return _coerce_connection_graph(database_object.get(CONNECTIONS_KEY))
 
 
 def set_connections(connections):
     database_object = get_database_object(create=True)
     if database_object is None:
         return
-    _set_mapping_value(database_object, CONNECTIONS_KEY, connections)
+    _set_connection_graph_value(database_object, connections)
 
 
 def get_link_parents(create=False):

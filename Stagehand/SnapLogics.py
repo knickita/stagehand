@@ -1,12 +1,14 @@
 import bpy
+import bmesh
+import gpu
 from collections import defaultdict
 import time
-from math import floor
+from math import cos, floor, tau
 from bpy_extras import view3d_utils
-from mathutils import Quaternion
-from mathutils import Vector
+from gpu_extras.batch import batch_for_shader
+from mathutils import Matrix, Quaternion, Vector
 
-from . import Connections, ProjectDatabase
+from . import Connections, LinkMode, ProjectDatabase
 from .LinkTypes import get_compatible_link_types
 from .RegistrationUtils import safe_register_class, safe_remove_keymaps, safe_unregister_class
 
@@ -15,6 +17,10 @@ addon_keymaps = []
 SNAP_INDEX_CELL_SIZE = 96.0
 SNAP_PROFILE = True
 SNAP_PROFILE_INTERVAL = 0.5
+SNAP_SOURCE_COLOR = (0.1, 0.75, 1.0)
+SNAP_TARGET_COLOR = (1.0, 0.1, 0.1)
+SNAP_PULSE_PERIOD = 1.0
+_active_move_operators = []
 
 
 def _profile_ms(started_at):
@@ -93,16 +99,14 @@ def _selected_stagehand_objects(context):
     return [obj for obj in context.selected_objects if _is_stagehand_object(obj)]
 
 
-def _connected_link_uids_from_database():
-    return set(ProjectDatabase.get_connections(create=False).keys())
+def _connection_graph_from_database():
+    return ProjectDatabase.get_connections(create=False)
 
 
-def _is_link_connected_cached(link, connected_link_uids):
-    if connected_link_uids is None:
-        return Connections.is_link_connected(link)
-
-    link_uid = str(getattr(link, "uid", "") or "")
-    return bool(link_uid and link_uid in connected_link_uids)
+def _is_link_available_cached(link, connections):
+    if connections is None:
+        return Connections.is_link_available(link)
+    return Connections.is_link_available_in_connections(link, connections)
 
 def _link_transform(obj, link):
     local_position = Vector(link.posDir[:3])
@@ -118,13 +122,15 @@ def _link_transform(obj, link):
     return center, rotation
 
 
-def _iter_available_links(obj, profile=None, profile_prefix="", connected_link_uids=None):
+def _iter_available_links(obj, profile=None, profile_prefix="", connections=None, link_types=None):
     for index, link in enumerate(obj.stagehand.links):
         _profile_count(profile, f"{profile_prefix}links_seen")
+        if link_types is not None and int(link.type) not in link_types:
+            continue
         connected_started_at = time.perf_counter()
-        is_connected = _is_link_connected_cached(link, connected_link_uids)
+        is_available = _is_link_available_cached(link, connections)
         _profile_elapsed(profile, f"{profile_prefix}connected_ms", connected_started_at)
-        if is_connected:
+        if not is_available:
             _profile_count(profile, f"{profile_prefix}connected_skips")
             continue
 
@@ -146,14 +152,49 @@ def _cylindrical_link_length(link):
     return float(link.displayRadius if link.displayRadius > 0.0 else 0.0)
 
 
+def _pick_source_link(context, event, moving_objects):
+    mouse = Vector((event.mouse_region_x, event.mouse_region_y))
+    best_source = None
+    best_distance = float('inf')
+    for obj in moving_objects:
+        for link_index, link in enumerate(obj.stagehand.links):
+            center, rotation = _link_transform(obj, link)
+            screen_point = view3d_utils.location_3d_to_region_2d(
+                context.region, context.region_data, center,
+            )
+            if link.cylindricalType:
+                end = center + (rotation @ Vector((0, _cylindrical_link_length(link), 0)))
+                end_screen = view3d_utils.location_3d_to_region_2d(
+                    context.region, context.region_data, end,
+                )
+                if screen_point is None:
+                    screen_point = end_screen
+                elif end_screen is not None:
+                    segment = end_screen - screen_point
+                    if segment.length_squared > 0.0:
+                        factor = (mouse - screen_point).dot(segment) / segment.length_squared
+                        screen_point = screen_point + segment * max(0.0, min(1.0, factor))
+            if screen_point is None:
+                continue
+            distance = (screen_point - mouse).length_squared
+            if distance < best_distance:
+                best_distance = distance
+                best_source = (obj, link_index)
+    return best_source
+
+
 class _ScreenLinkSpatialIndex:
-    def __init__(self, context, moving_objects, profile=None, connected_link_uids=None):
+    def __init__(self, context, moving_objects, profile=None, connections=None, source_link=None):
         self.region = context.region
         self.region_data = context.region_data
         self.cells_by_type = defaultdict(lambda: defaultdict(list))
         self.cell_keys_by_type = defaultdict(set)
         self.target_count = 0
         moving_names = {obj.name_full for obj in moving_objects}
+        link_types = (
+            {int(link_type) for link_type in get_compatible_link_types(source_link.type)}
+            if source_link is not None else None
+        )
 
         if self.region is None or self.region_data is None:
             return
@@ -168,7 +209,9 @@ class _ScreenLinkSpatialIndex:
                 continue
 
             _profile_count(profile, "index_stagehand_objects")
-            for target_link_index, target_link, target_center, target_rotation in _iter_available_links(target_obj, profile, "index_", connected_link_uids):
+            for target_link_index, target_link, target_center, target_rotation in _iter_available_links(
+                target_obj, profile, "index_", connections, link_types,
+            ):
                 item = (target_obj, target_link_index, target_link, target_center, target_rotation)
                 target_type = int(target_link.type)
                 add_started_at = time.perf_counter()
@@ -294,42 +337,35 @@ class _ScreenLinkSpatialIndex:
                         _profile_count(profile, "candidate_yields")
                         yield ring, item
 
-def _find_best_snap_pair(context, moving_objects, target_index=None, profile=None, connected_link_uids=None):
+def _find_best_snap_pair(context, source_link, target_index, profile=None):
     find_started_at = time.perf_counter()
     best_pair = None
     best_screen_distance = float('inf')
     best_distance = float('inf')
     best_angle = float('inf')
 
-    if target_index is None:
-        if connected_link_uids is None:
-            connected_link_uids = _connected_link_uids_from_database()
-        target_index = _ScreenLinkSpatialIndex(
-            context,
-            moving_objects,
-            profile,
-            connected_link_uids,
-        )
     if target_index.target_count <= 0:
         _profile_elapsed(profile, "find_total_ms", find_started_at)
         return None
 
     moving_started_at = time.perf_counter()
+    obj, link_index = source_link
+    link = obj.stagehand.links[link_index]
+    _profile_count(profile, "moving_links_seen")
+    _profile_count(profile, "moving_link_candidates")
+    transform_started_at = time.perf_counter()
+    center, rotation = _link_transform(obj, link)
+    _profile_elapsed(profile, "moving_transform_ms", transform_started_at)
+    moving_project_started_at = time.perf_counter()
+    moving_screen = view3d_utils.location_3d_to_region_2d(
+        context.region, context.region_data, center,
+    )
+    _profile_elapsed(profile, "moving_project_ms", moving_project_started_at)
     moving_links = []
-    for obj in moving_objects:
-        for link_index, link, center, rotation in _iter_available_links(obj, profile, "moving_", connected_link_uids):
-            _profile_count(profile, "moving_link_candidates")
-            moving_project_started_at = time.perf_counter()
-            moving_screen = view3d_utils.location_3d_to_region_2d(
-                context.region,
-                context.region_data,
-                center,
-            )
-            _profile_elapsed(profile, "moving_project_ms", moving_project_started_at)
-            if moving_screen is None:
-                _profile_count(profile, "moving_project_rejects")
-                continue
-            moving_links.append((obj, link_index, link, center, rotation, moving_screen))
+    if moving_screen is None:
+        _profile_count(profile, "moving_project_rejects")
+    else:
+        moving_links.append((obj, link_index, link, center, rotation, moving_screen))
     _profile_elapsed(profile, "moving_collect_ms", moving_started_at)
     if profile is not None:
         profile["moving_links"] = len(moving_links)
@@ -423,11 +459,15 @@ def _screen_to_plane_point(context, event, plane_origin, plane_normal):
 class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
     bl_idname = "stagehand.link_move_mode"
     bl_label = "Stagehand Link Move"
-    bl_description = "Move selected Stagehand objects with continuous link snapping and update links on confirm"
+    bl_description = "Hold L to choose a link, then release L to move with link snapping"
     bl_options = {'REGISTER', 'UNDO'}
 
     def invoke(self, context, event):
-        if context.area is None or context.area.type != 'VIEW_3D':
+        if (
+            context.area is None or context.area.type != 'VIEW_3D'
+            or context.region is None or context.region.type != 'WINDOW'
+            or context.region_data is None
+        ):
             return {'CANCELLED'}
 
         moving_objects = _selected_stagehand_objects(context)
@@ -435,47 +475,250 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
             self.report({'WARNING'}, "Select at least one Stagehand object")
             return {'CANCELLED'}
 
-        invoke_started_at = time.perf_counter()
+        self.source_link = _pick_source_link(context, event, moving_objects)
+        if self.source_link is None:
+            self.report({'WARNING'}, "No Stagehand link is visible in this view")
+            return {'CANCELLED'}
+
+        self.moving_objects = moving_objects
+        self.initial_matrices = {obj.name_full: obj.matrix_world.copy() for obj in moving_objects}
+        self._selecting_source = True
+        self.target_index = None
+        try:
+            self._start_preview(context)
+            if event.type != 'L':
+                self._begin_snap_move(context, event)
+            context.window_manager.modal_handler_add(self)
+        except Exception:
+            self._stop_preview()
+            raise
+        return {'RUNNING_MODAL'}
+
+    def _select_source_link(self, context, event):
+        source_link = _pick_source_link(context, event, self.moving_objects)
+        if source_link is not None:
+            self.source_link = source_link
+
+    def _begin_snap_move(self, context, event):
+        self._snap_target = None
+        move_started_at = time.perf_counter()
         prune_started_at = time.perf_counter()
         Connections.prune_stale_connections()
         prune_ms = _profile_ms(prune_started_at)
-        self.moving_objects = moving_objects
-        self.initial_matrices = {obj.name_full: obj.matrix_world.copy() for obj in moving_objects}
-        active_object = context.active_object
-        if active_object is not None:
-            self.plane_origin = active_object.matrix_world.to_translation().copy()
-        else:
-            self.plane_origin = sum(
-                (obj.matrix_world.to_translation() for obj in moving_objects),
-                Vector((0.0, 0.0, 0.0)),
-            ) / len(moving_objects)
+        self.movement_matrices = {
+            obj.name_full: obj.matrix_world.copy() for obj in self.moving_objects
+        }
+        source_object, source_index = self.source_link
+        source_link = source_object.stagehand.links[source_index]
+        self.plane_origin, _source_rotation = _link_transform(source_object, source_link)
         self.plane_normal = context.region_data.view_rotation @ Vector((0, 0, -1))
         screen_started_at = time.perf_counter()
         self.start_plane_point = _screen_to_plane_point(context, event, self.plane_origin, self.plane_normal)
         screen_ms = _profile_ms(screen_started_at)
         connections_started_at = time.perf_counter()
-        self.connected_link_uids = _connected_link_uids_from_database()
+        self.connections = _connection_graph_from_database()
         connections_ms = _profile_ms(connections_started_at)
         index_started_at = time.perf_counter()
         index_profile = {} if SNAP_PROFILE else None
         self.target_index = _ScreenLinkSpatialIndex(
             context,
-            moving_objects,
+            self.moving_objects,
             index_profile,
-            self.connected_link_uids,
+            self.connections,
+            source_link,
         )
         index_ms = _profile_ms(index_started_at)
         self.last_profile_report_at = 0.0
         cell_count = sum(len(cells) for cells in self.target_index.cells_by_type.values())
         _profile_log(
-            f"invoke total={_profile_ms(invoke_started_at):.2f}ms prune={prune_ms:.2f}ms "
+            f"start move total={_profile_ms(move_started_at):.2f}ms prune={prune_ms:.2f}ms "
             f"start_point={screen_ms:.2f}ms connections={connections_ms:.2f}ms index={index_ms:.2f}ms "
-            f"connected_links={len(self.connected_link_uids)} targets={self.target_index.target_count} cells={cell_count}"
+            f"connected_links={len(self.connections)} targets={self.target_index.target_count} cells={cell_count}"
         )
         _profile_index_detail_log(index_profile)
+        self._selecting_source = False
+        self._selection_batch = None
+        self._selection_preview_source = None
 
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
+    def _start_preview(self, context):
+        self._area = context.area
+        self._region = context.region
+        self._window_manager = context.window_manager
+        self._draw_handle = None
+        self._pulse_timer = None
+        self._snap_target = None
+        self._target_outline_batch = None
+        self._target_geometry_key = None
+        self._preview_started_at = time.perf_counter()
+        self._shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+
+        radius = 1.0
+        center = Vector((0.0, 0.0, 0.0))
+        axis_x = Vector((1.0, 0.0, 0.0))
+        axis_y = Vector((0.0, 1.0, 0.0))
+        axis_z = Vector((0.0, 0.0, 1.0))
+        segments = LinkMode._circle_points(center, radius, axis_x, axis_z)
+        segments.extend(LinkMode._circle_points(center, radius, axis_x, axis_y))
+        segments.extend(LinkMode._circle_points(center, radius, axis_y, axis_z))
+        self._sphere_outline_vertices = segments
+        self._selection_batch = None
+        self._selection_preview_source = None
+        sphere = bmesh.new()
+        try:
+            bmesh.ops.create_uvsphere(sphere, u_segments=24, v_segments=12, radius=radius)
+            bmesh.ops.triangulate(sphere, faces=list(sphere.faces))
+            triangles = [vertex.co.copy() for face in sphere.faces for vertex in face.verts]
+        finally:
+            sphere.free()
+        self._outline_batch = batch_for_shader(self._shader, 'LINES', {"pos": segments})
+        self._fill_batch = (
+            batch_for_shader(self._shader, 'TRIS', {"pos": triangles})
+            if triangles else None
+        )
+        self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw_source_link, (), 'WINDOW', 'POST_VIEW',
+        )
+        self._pulse_timer = context.window_manager.event_timer_add(
+            1.0 / 30.0, window=context.window,
+        )
+        _active_move_operators.append(self)
+        self._area.tag_redraw()
+
+    def _build_selection_preview(self):
+        source_object, source_index = self.source_link
+        vertices = []
+        for obj in self.moving_objects:
+            for link_index, link in enumerate(obj.stagehand.links):
+                if obj == source_object and link_index == source_index:
+                    continue
+                center, rotation = _link_transform(obj, link)
+                radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
+                transform = Matrix.Translation(center) @ rotation.to_matrix().to_4x4() @ Matrix.Scale(radius, 4)
+                vertices.extend(transform @ vertex for vertex in self._sphere_outline_vertices)
+        self._selection_batch = (
+            batch_for_shader(self._shader, 'LINES', {"pos": vertices}) if vertices else None
+        )
+        self._selection_preview_source = self.source_link
+
+    def _draw_source_link(self):
+        context = bpy.context
+        if context.area != self._area or context.region != self._region:
+            return
+        try:
+            obj, link_index = self.source_link
+            link = obj.stagehand.links[link_index]
+            center, rotation = _link_transform(obj, link)
+            radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
+        except (ReferenceError, IndexError):
+            return
+        elapsed = time.perf_counter() - self._preview_started_at
+        alpha = 0.35 + 0.65 * (0.5 + 0.5 * cos(tau * elapsed / SNAP_PULSE_PERIOD))
+        previous_blend = gpu.state.blend_get()
+        previous_depth = gpu.state.depth_test_get()
+        previous_depth_mask = gpu.state.depth_mask_get()
+        previous_width = gpu.state.line_width_get()
+        try:
+            gpu.state.blend_set('ALPHA')
+            # Keep the anchor visible through scene geometry without changing its depth buffer.
+            gpu.state.depth_test_set('NONE')
+            gpu.state.depth_mask_set(False)
+            gpu.state.line_width_set(2.0)
+            if self._selecting_source:
+                if self._selection_preview_source != self.source_link:
+                    self._build_selection_preview()
+                if self._selection_batch is not None:
+                    self._shader.bind()
+                    self._shader.uniform_float('color', (*LinkMode.SPHERE_COLOR[:3], 0.65))
+                    self._selection_batch.draw(self._shader)
+            with gpu.matrix.push_pop():
+                gpu.matrix.multiply_matrix(
+                    Matrix.Translation(center) @ rotation.to_matrix().to_4x4() @ Matrix.Scale(radius, 4)
+                )
+                self._shader.bind()
+                if self._fill_batch is not None:
+                    self._shader.uniform_float('color', (*SNAP_SOURCE_COLOR, alpha * 0.25))
+                    self._fill_batch.draw(self._shader)
+                self._shader.uniform_float('color', (*SNAP_SOURCE_COLOR, alpha))
+                self._outline_batch.draw(self._shader)
+            if not self._selecting_source and self._snap_target is not None:
+                self._draw_snap_target()
+        finally:
+            gpu.state.line_width_set(previous_width)
+            gpu.state.depth_mask_set(previous_depth_mask)
+            gpu.state.depth_test_set(previous_depth)
+            gpu.state.blend_set(previous_blend)
+
+    def _draw_snap_target(self):
+        obj, link_index = self._snap_target
+        if any(obj == moving_object for moving_object in self.moving_objects):
+            self._snap_target = None
+            return
+        try:
+            link = obj.stagehand.links[link_index]
+            center, rotation = _link_transform(obj, link)
+            radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
+        except (ReferenceError, IndexError):
+            self._snap_target = None
+            return
+        with gpu.matrix.push_pop():
+            gpu.matrix.multiply_matrix(Matrix.Translation(center) @ rotation.to_matrix().to_4x4())
+            self._shader.bind()
+            if link.cylindricalType:
+                length = _cylindrical_link_length(link)
+                key = (obj.name_full, link_index, radius, length)
+                if key != self._target_geometry_key:
+                    vertices = LinkMode._cylinder_segments(Vector((0, 0, 0)), Quaternion(), radius, length)
+                    self._target_outline_batch = batch_for_shader(self._shader, 'LINES', {"pos": vertices})
+                    self._target_geometry_key = key
+                previous_width = gpu.state.line_width_get()
+                try:
+                    for width, opacity in ((8.0, 0.06), (5.0, 0.2), (2.0, 1.0)):
+                        gpu.state.line_width_set(width)
+                        self._shader.uniform_float('color', (*SNAP_TARGET_COLOR, opacity))
+                        self._target_outline_batch.draw(self._shader)
+                finally:
+                    gpu.state.line_width_set(previous_width)
+                return
+            for size, opacity in ((1.4, 0.035), (1.2, 0.08), (1.0, 0.18)):
+                with gpu.matrix.push_pop():
+                    gpu.matrix.multiply_matrix(Matrix.Scale(radius * size, 4))
+                    self._shader.uniform_float('color', (*SNAP_TARGET_COLOR, opacity))
+                    self._fill_batch.draw(self._shader)
+            gpu.matrix.multiply_matrix(Matrix.Scale(radius, 4))
+            self._shader.uniform_float('color', (*SNAP_TARGET_COLOR, 1.0))
+            self._outline_batch.draw(self._shader)
+
+    def _stop_preview(self):
+        draw_handle = getattr(self, '_draw_handle', None)
+        if draw_handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(draw_handle, 'WINDOW')
+            except (RuntimeError, ValueError):
+                pass
+            self._draw_handle = None
+        timer = getattr(self, '_pulse_timer', None)
+        if timer is not None:
+            try:
+                self._window_manager.event_timer_remove(timer)
+            except (ReferenceError, RuntimeError):
+                pass
+            self._pulse_timer = None
+        self._outline_batch = None
+        self._fill_batch = None
+        self._shader = None
+        self._selection_batch = None
+        self._selection_preview_source = None
+        self._sphere_outline_vertices = ()
+        self._snap_target = None
+        self._target_outline_batch = None
+        self._target_geometry_key = None
+        _active_move_operators[:] = [operator for operator in _active_move_operators if operator is not self]
+        area = getattr(self, '_area', None)
+        if area is not None:
+            try:
+                area.tag_redraw()
+            except ReferenceError:
+                pass
 
     def _restore_initial_transforms(self):
         for obj in self.moving_objects:
@@ -485,7 +728,7 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
 
     def _translate_objects(self, delta):
         for obj in self.moving_objects:
-            initial_matrix = self.initial_matrices.get(obj.name_full)
+            initial_matrix = self.movement_matrices.get(obj.name_full)
             if initial_matrix is None:
                 continue
             matrix_world = initial_matrix.copy()
@@ -493,6 +736,7 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
             obj.matrix_world = matrix_world
 
     def _apply_current_motion(self, context, event):
+        self._snap_target = None
         motion_started_at = time.perf_counter()
         screen_started_at = time.perf_counter()
         current_plane_point = _screen_to_plane_point(context, event, self.plane_origin, self.plane_normal)
@@ -505,10 +749,9 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
         find_profile = {} if SNAP_PROFILE else None
         best_pair = _find_best_snap_pair(
             context,
-            self.moving_objects,
+            self.source_link,
             self.target_index,
             find_profile,
-            self.connected_link_uids,
         )
         find_ms = _profile_ms(find_started_at)
         if best_pair is None:
@@ -531,6 +774,7 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
             _target_link,
             target_snap_point,
         ) = best_pair
+        self._snap_target = (_target_obj, _target_link_index)
 
         snap_started_at = time.perf_counter()
         snap_delta = target_snap_point - moving_center
@@ -547,19 +791,58 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
             _profile_find_detail_log(find_profile)
 
     def modal(self, context, event):
+        try:
+            return self._modal(context, event)
+        except Exception:
+            self.cancel(context)
+            raise
+
+    def _modal(self, context, event):
+        if self._area.type != 'VIEW_3D':
+            self.cancel(context)
+            return {'CANCELLED'}
+
+        if event.type == 'TIMER':
+            self._area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'L':
+            if event.value == 'PRESS':
+                self._snap_target = None
+                if not self._selecting_source:
+                    self._selection_preview_source = None
+                self._selecting_source = True
+                self._select_source_link(context, event)
+            elif event.value == 'RELEASE' and self._selecting_source:
+                self._select_source_link(context, event)
+                self._begin_snap_move(context, event)
+            self._area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
         if event.type == 'MOUSEMOVE':
-            self._apply_current_motion(context, event)
+            if self._selecting_source:
+                self._select_source_link(context, event)
+            else:
+                self._apply_current_motion(context, event)
+            self._area.tag_redraw()
             return {'RUNNING_MODAL'}
 
         if event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            if self._selecting_source:
+                return {'RUNNING_MODAL'}
+            self._stop_preview()
             Connections.refresh_connections_for_objects(self.moving_objects)
             return {'FINISHED'}
 
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
-            self._restore_initial_transforms()
+            self.cancel(context)
             return {'CANCELLED'}
 
         return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        self._stop_preview()
+        self._restore_initial_transforms()
 
 
 def register_keymap():
@@ -588,5 +871,7 @@ def register():
 
 
 def unregister():
+    for operator in list(_active_move_operators):
+        operator.cancel(bpy.context)
     unregister_keymap()
     safe_unregister_class(STAGEHAND_OT_link_move_mode)

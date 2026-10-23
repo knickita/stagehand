@@ -59,6 +59,7 @@ class StagehandLinkType(IntEnum):
     SELVOLINE_DIAGONALE = 47
     VIO_208_UP = 48
     VIO_208_DOWN = 49
+    LITECPIPE = 50
 
 
 LINK_COMPATIBILITY = {
@@ -123,6 +124,7 @@ LINK_COMPATIBILITY = {
     StagehandLinkType.SELVOLINE_DIAGONALE: (StagehandLinkType.SELVOLINE_SEDE_DIAGONALE,),
     StagehandLinkType.VIO_208_UP: (StagehandLinkType.VIO_208_DOWN,),
     StagehandLinkType.VIO_208_DOWN: (StagehandLinkType.VIO_208_UP,),
+    StagehandLinkType.LITECPIPE: (StagehandLinkType.LITECPIPE,),
 }
 
 

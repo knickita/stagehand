@@ -1158,10 +1158,21 @@ def _build_general_dimension_candidates(objects):
     if not objects:
         return []
 
-    general_segments = [
-        _StructureSegment(objects, quote_axis=axis)
-        for axis in ("X", "Y", "Z")
-    ]
+    stage_deck_uids = {
+        _object_uid(obj)
+        for obj in objects
+        if any(_has_tag(obj, tag) for tag in STAGE_DECK_THICKNESS_BY_TAG)
+    }
+    stage_objects = []
+    if stage_deck_uids:
+        structure_objects = [obj for obj in objects if _is_structure_object(obj)]
+        for group in _connected_structure_groups(structure_objects):
+            if any(_object_uid(obj) in stage_deck_uids for obj in group):
+                stage_objects.extend(group)
+
+    general_segments = _build_tagged_axis_segments(stage_objects) if stage_objects else None
+    if general_segments is None:
+        general_segments = [_StructureSegment(objects, quote_axis=axis) for axis in ("X", "Y", "Z")]
     return _build_dimension_candidates(general_segments, Matrix.Identity(3))
 
 

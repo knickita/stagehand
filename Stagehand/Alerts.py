@@ -191,7 +191,10 @@ def _iter_stagehand_link_candidates(connections, generated_powerlines=None):
             link_uid = str(getattr(link, "uid", ""))
             if not link_uid:
                 continue
-            if connections.get(link_uid):
+            if not Connections.is_link_available_in_connections(
+                link,
+                connections,
+            ):
                 continue
             if link_uid in generated_link_uids:
                 continue
@@ -325,7 +328,16 @@ def _analyze_links():
 
                 if item.object_uid == other_item.object_uid:
                     continue
-                if connections.get(item.link_uid) or connections.get(other_item.link_uid):
+                if (
+                    not Connections.is_link_available_in_connections(
+                        item.link,
+                        connections,
+                    )
+                    or not Connections.is_link_available_in_connections(
+                        other_item.link,
+                        connections,
+                    )
+                ):
                     continue
                 if not _link_types_are_compatible(item.link, other_item.link):
                     continue

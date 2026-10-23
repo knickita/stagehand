@@ -497,12 +497,12 @@ def _side_connection_candidates(placement_a, side_a, placement_b, side_b):
 
     for index_a in placement_a["module"]["links"][side_a]:
         link_a = Connections.get_link(obj_a, index_a)
-        if link_a is None or Connections.is_link_connected(link_a):
+        if link_a is None or not Connections.is_link_available(link_a):
             continue
 
         for index_b in placement_b["module"]["links"][side_b]:
             link_b = Connections.get_link(obj_b, index_b)
-            if link_b is None or Connections.is_link_connected(link_b):
+            if link_b is None or not Connections.is_link_available(link_b):
                 continue
             if not are_link_types_compatible(link_a.type, link_b.type):
                 continue
@@ -541,8 +541,8 @@ def _connect_grid_sides(placement_a, side_a, placement_b, side_b):
         if (
             link_a is None
             or link_b is None
-            or Connections.is_link_connected(link_a)
-            or Connections.is_link_connected(link_b)
+            or not Connections.is_link_available(link_a)
+            or not Connections.is_link_available(link_b)
         ):
             continue
         if Connections.connect_links(obj_a, index_a, obj_b, index_b):
@@ -937,7 +937,7 @@ def _add_grid_boundary_accessories(
             deck_link = Connections.get_link(deck_obj, deck_link_index)
             if deck_link is None:
                 raise RuntimeError("Unable to find a boundary deck link")
-            if Connections.is_link_connected(deck_link):
+            if not Connections.is_link_available(deck_link):
                 continue
 
             asset_id = accessory["assetId"]
