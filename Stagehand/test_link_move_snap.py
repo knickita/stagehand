@@ -1,6 +1,7 @@
 """Run with Blender: blender --background --python test_link_move_snap.py."""
 
 from pathlib import Path
+from math import radians
 from types import MethodType, SimpleNamespace
 import sys
 import unittest
@@ -250,6 +251,50 @@ class LinkMoveSnapTests(unittest.TestCase):
                 self.assertFalse(any(11.8 < vertex.x < 12.2 for vertex in vertices))
             finally:
                 operator._stop_preview()
+
+    def test_cylindrical_source_links_keep_their_shape_before_and_after_selection(self):
+        pipe = make_link(2.0, 3.0, link_type=StagehandLinkType.PIPE, cylindrical=True)
+        pipe.length = 2.75
+        pipe.displayRadius = 0.05
+        rotation = Quaternion((0, 0, 1), radians(90.0))
+        pipe.posDir = (2.0, 3.0, 0.0, rotation.x, rotation.y, rotation.z, rotation.w)
+        obj = make_object('source', [make_link(), pipe])
+        obj.matrix_world = Matrix.Translation((10.0, 20.0, 30.0))
+        operator = make_operator(obj)
+        fake_gpu = MagicMock()
+        fake_bpy = SimpleNamespace(context=self.context, types=MagicMock())
+
+        def assert_cylinder_bounds(vertices):
+            for axis, minimum, maximum in ((0, 9.25, 12.0), (1, 22.95, 23.05), (2, 29.95, 30.05)):
+                self.assertAlmostEqual(min(vertex[axis] for vertex in vertices), minimum, places=4)
+                self.assertAlmostEqual(max(vertex[axis] for vertex in vertices), maximum, places=4)
+
+        with (
+            patch.object(snap, 'gpu', fake_gpu),
+            patch.object(snap, 'bpy', fake_bpy),
+            patch.object(snap, 'batch_for_shader', side_effect=lambda *args: MagicMock()) as batch,
+        ):
+            operator._start_preview(self.context)
+            try:
+                operator._draw_source_link()
+                assert_cylinder_bounds(batch.call_args.args[2]['pos'])
+
+                operator.source_link = (obj, 1)
+                operator._fill_batch.draw.reset_mock()
+                alphas = []
+                for elapsed in (0.0, 0.5):
+                    with patch.object(snap.time, 'perf_counter', return_value=operator._preview_started_at + elapsed):
+                        operator._draw_source_link()
+                    alphas.append(operator._shader.uniform_float.call_args.args[1][3])
+                vertices = batch.call_args.args[2]['pos']
+                transform = fake_gpu.matrix.multiply_matrix.call_args.args[0]
+                assert_cylinder_bounds([transform @ vertex for vertex in vertices])
+                self.assertGreater(alphas[0], alphas[1])
+                self.assertEqual(batch.call_count, 5)
+                operator._fill_batch.draw.assert_not_called()
+            finally:
+                operator._stop_preview()
+            self.assertIsNone(operator._source_cylinder_batch)
 
     def test_snap_target_tracks_the_current_match_and_clears_when_lost_or_reselecting(self):
         obj = make_object('source', [make_link()])

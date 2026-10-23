@@ -547,6 +547,8 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
         self._draw_handle = None
         self._pulse_timer = None
         self._snap_target = None
+        self._source_cylinder_batch = None
+        self._source_cylinder_key = None
         self._target_outline_batch = None
         self._target_geometry_key = None
         self._preview_started_at = time.perf_counter()
@@ -593,8 +595,13 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
                     continue
                 center, rotation = _link_transform(obj, link)
                 radius = link.displayRadius if link.displayRadius > 0.0 else 0.1
-                transform = Matrix.Translation(center) @ rotation.to_matrix().to_4x4() @ Matrix.Scale(radius, 4)
-                vertices.extend(transform @ vertex for vertex in self._sphere_outline_vertices)
+                if link.cylindricalType:
+                    vertices.extend(LinkMode._cylinder_segments(
+                        center, rotation, radius, _cylindrical_link_length(link),
+                    ))
+                else:
+                    transform = Matrix.Translation(center) @ rotation.to_matrix().to_4x4() @ Matrix.Scale(radius, 4)
+                    vertices.extend(transform @ vertex for vertex in self._sphere_outline_vertices)
         self._selection_batch = (
             batch_for_shader(self._shader, 'LINES', {"pos": vertices}) if vertices else None
         )
@@ -635,11 +642,23 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
                     Matrix.Translation(center) @ rotation.to_matrix().to_4x4() @ Matrix.Scale(radius, 4)
                 )
                 self._shader.bind()
-                if self._fill_batch is not None:
-                    self._shader.uniform_float('color', (*SNAP_SOURCE_COLOR, alpha * 0.25))
-                    self._fill_batch.draw(self._shader)
-                self._shader.uniform_float('color', (*SNAP_SOURCE_COLOR, alpha))
-                self._outline_batch.draw(self._shader)
+                if link.cylindricalType:
+                    length = _cylindrical_link_length(link)
+                    key = (radius, length)
+                    if key != self._source_cylinder_key:
+                        vertices = LinkMode._cylinder_segments(
+                            Vector((0, 0, 0)), Quaternion(), 1.0, length / radius,
+                        )
+                        self._source_cylinder_batch = batch_for_shader(self._shader, 'LINES', {"pos": vertices})
+                        self._source_cylinder_key = key
+                    self._shader.uniform_float('color', (*SNAP_SOURCE_COLOR, alpha))
+                    self._source_cylinder_batch.draw(self._shader)
+                else:
+                    if self._fill_batch is not None:
+                        self._shader.uniform_float('color', (*SNAP_SOURCE_COLOR, alpha * 0.25))
+                        self._fill_batch.draw(self._shader)
+                    self._shader.uniform_float('color', (*SNAP_SOURCE_COLOR, alpha))
+                    self._outline_batch.draw(self._shader)
             if not self._selecting_source and self._snap_target is not None:
                 self._draw_snap_target()
         finally:
@@ -710,6 +729,8 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
         self._selection_preview_source = None
         self._sphere_outline_vertices = ()
         self._snap_target = None
+        self._source_cylinder_batch = None
+        self._source_cylinder_key = None
         self._target_outline_batch = None
         self._target_geometry_key = None
         _active_move_operators[:] = [operator for operator in _active_move_operators if operator is not self]

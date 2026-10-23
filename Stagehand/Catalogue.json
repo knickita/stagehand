@@ -6226,7 +6226,8 @@
                         0.0
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6239,7 +6240,8 @@
                         0.7071068286895752
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6279,7 +6281,8 @@
                         0.0
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6292,7 +6295,8 @@
                         0.7071068286895752
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6332,7 +6336,8 @@
                         0.0
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6345,7 +6350,8 @@
                         0.7071068286895752
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6385,7 +6391,8 @@
                         0.0
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6398,7 +6405,8 @@
                         0.7071068286895752
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6438,7 +6446,8 @@
                         0.0
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6451,7 +6460,8 @@
                         0.7071068286895752
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [
@@ -6649,7 +6659,8 @@
                         0.0
                     ],
                     "displayradius": 0.025,
-                    "type": 50
+                    "type": 50,
+                    "allowrotations": "free"
                 },
                 {
                     "posdir": [

@@ -257,7 +257,10 @@ def is_threephase_power_link(link_type):
 
 
 def default_link_allow_rotations(link_type):
-    if coerce_link_type(link_type) in QUARTER_TURN_ROTATION_LINK_TYPES:
+    link_type = coerce_link_type(link_type)
+    if link_type == StagehandLinkType.LITECPIPE:
+        return "free"
+    if link_type in QUARTER_TURN_ROTATION_LINK_TYPES:
         return "90"
 
     return "none"
