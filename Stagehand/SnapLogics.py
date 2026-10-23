@@ -301,7 +301,7 @@ class _ScreenLinkSpatialIndex:
             yield min_x, cell_y
             yield max_x, cell_y
 
-    def iter_candidates(self, source_link, moving_screen, profile=None):
+    def iter_candidates(self, source_link, moving_screen, profile=None, moving_end_screen=None):
         type_started_at = time.perf_counter()
         target_types = self._compatible_target_types(source_link)
         _profile_elapsed(profile, "compatible_types_ms", type_started_at)
@@ -311,8 +311,27 @@ class _ScreenLinkSpatialIndex:
             return
 
         source_cell_key = _screen_cell_key(moving_screen)
+        source_end_cell_key = _screen_cell_key(moving_end_screen) if moving_end_screen is not None else None
         max_ring_started_at = time.perf_counter()
-        max_ring = self._max_search_ring(source_cell_key, target_types)
+        if source_end_cell_key is not None:
+            min_x, max_x = sorted((source_cell_key[0], source_end_cell_key[0]))
+            min_y, max_y = sorted((source_cell_key[1], source_end_cell_key[1]))
+            # A long cylinder can cover many empty cells; visit only occupied compatible cells.
+            cell_rings = {}
+            for target_type in target_types:
+                for cell_x, cell_y in self.cell_keys_by_type.get(target_type, ()):
+                    cell_rings[(cell_x, cell_y)] = max(
+                        min_x - cell_x, cell_x - max_x, min_y - cell_y, cell_y - max_y, 0,
+                    )
+            max_ring = max(cell_rings.values(), default=-1)
+            search_cells = sorted((ring, cell_key) for cell_key, ring in cell_rings.items())
+        else:
+            max_ring = self._max_search_ring(source_cell_key, target_types)
+            search_cells = (
+                (ring, cell_key)
+                for ring in range(max_ring + 1)
+                for cell_key in self._ring_cell_keys(source_cell_key, ring)
+            )
         _profile_elapsed(profile, "max_ring_ms", max_ring_started_at)
         if profile is not None:
             profile["max_ring"] = max(profile.get("max_ring", -1), max_ring)
@@ -320,22 +339,24 @@ class _ScreenLinkSpatialIndex:
             return
 
         seen_targets = set()
-        for ring in range(max_ring + 1):
-            _profile_count(profile, "rings_scanned")
-            for cell_key in self._ring_cell_keys(source_cell_key, ring):
-                _profile_count(profile, "cells_visited")
-                for target_type in target_types:
-                    cell_items = self.cells_by_type.get(target_type, {}).get(cell_key, ())
-                    _profile_count(profile, "cell_items_seen", len(cell_items))
-                    for item in cell_items:
-                        target_obj, target_link_index, _target_link, _target_center, _target_rotation = item
-                        target_key = (target_obj.name_full, target_link_index)
-                        if target_key in seen_targets:
-                            _profile_count(profile, "duplicate_candidates")
-                            continue
-                        seen_targets.add(target_key)
-                        _profile_count(profile, "candidate_yields")
-                        yield ring, item
+        last_ring = -1
+        for ring, cell_key in search_cells:
+            if ring != last_ring:
+                _profile_count(profile, "rings_scanned")
+                last_ring = ring
+            _profile_count(profile, "cells_visited")
+            for target_type in target_types:
+                cell_items = self.cells_by_type.get(target_type, {}).get(cell_key, ())
+                _profile_count(profile, "cell_items_seen", len(cell_items))
+                for item in cell_items:
+                    target_obj, target_link_index, _target_link, _target_center, _target_rotation = item
+                    target_key = (target_obj.name_full, target_link_index)
+                    if target_key in seen_targets:
+                        _profile_count(profile, "duplicate_candidates")
+                        continue
+                    seen_targets.add(target_key)
+                    _profile_count(profile, "candidate_yields")
+                    yield ring, item
 
 def _find_best_snap_pair(context, source_link, target_index, profile=None):
     find_started_at = time.perf_counter()
@@ -360,6 +381,12 @@ def _find_best_snap_pair(context, source_link, target_index, profile=None):
     moving_screen = view3d_utils.location_3d_to_region_2d(
         context.region, context.region_data, center,
     )
+    moving_end_screen = None
+    if link.cylindricalType:
+        end = center + (rotation @ Vector((0, _cylindrical_link_length(link), 0)))
+        moving_end_screen = view3d_utils.location_3d_to_region_2d(context.region, context.region_data, end)
+        if moving_screen is None:
+            moving_screen = moving_end_screen
     _profile_elapsed(profile, "moving_project_ms", moving_project_started_at)
     moving_links = []
     if moving_screen is None:
@@ -376,7 +403,9 @@ def _find_best_snap_pair(context, source_link, target_index, profile=None):
 
     for moving_obj, moving_link_index, moving_link, moving_center, moving_rotation, moving_screen in moving_links:
         last_ring = -1
-        for ring, candidate in target_index.iter_candidates(moving_link, moving_screen, profile):
+        for ring, candidate in target_index.iter_candidates(
+            moving_link, moving_screen, profile, moving_end_screen=moving_end_screen,
+        ):
             if ring != last_ring:
                 if last_ring >= 2 and best_screen_distance <= ((last_ring - 1) * SNAP_INDEX_CELL_SIZE):
                     _profile_count(profile, "early_breaks")
@@ -409,6 +438,14 @@ def _find_best_snap_pair(context, source_link, target_index, profile=None):
                 target_center,
                 target_rotation,
             )
+            moving_snap_point = Connections.link_snap_target_point(
+                target_link,
+                target_center,
+                target_rotation,
+                moving_link,
+                moving_center,
+                moving_rotation,
+            )
             _profile_elapsed(profile, "snap_point_ms", snap_point_started_at)
             target_project_started_at = time.perf_counter()
             target_screen = view3d_utils.location_3d_to_region_2d(
@@ -421,7 +458,14 @@ def _find_best_snap_pair(context, source_link, target_index, profile=None):
                 _profile_count(profile, "target_project_rejects")
                 continue
 
-            screen_distance = (target_screen - moving_screen).length
+            moving_snap_screen = moving_screen
+            if moving_link.cylindricalType:
+                moving_snap_screen = view3d_utils.location_3d_to_region_2d(
+                    context.region, context.region_data, moving_snap_point,
+                )
+                if moving_snap_screen is None:
+                    continue
+            screen_distance = (target_screen - moving_snap_screen).length
             if (screen_distance, distance, angle) < (best_screen_distance, best_distance, best_angle):
                 _profile_count(profile, "best_updates")
                 best_screen_distance = screen_distance
@@ -431,7 +475,7 @@ def _find_best_snap_pair(context, source_link, target_index, profile=None):
                     moving_obj,
                     moving_link_index,
                     moving_link,
-                    moving_center,
+                    moving_snap_point,
                     target_obj,
                     target_link_index,
                     target_link,
@@ -482,17 +526,28 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
 
         self.moving_objects = moving_objects
         self.initial_matrices = {obj.name_full: obj.matrix_world.copy() for obj in moving_objects}
+        self._initial_connections = {}
         self._selecting_source = True
         self.target_index = None
         try:
+            self._disconnect_moving_links()
             self._start_preview(context)
             if event.type != 'L':
                 self._begin_snap_move(context, event)
             context.window_manager.modal_handler_add(self)
         except Exception:
-            self._stop_preview()
+            self.cancel(context)
             raise
         return {'RUNNING_MODAL'}
+
+    def _disconnect_moving_links(self):
+        with Connections.database_transaction():
+            for obj in self.moving_objects:
+                for link_index, link in Connections.iter_object_links(obj):
+                    for other_obj, other_link, other_index in Connections.get_connected_links(obj, link_index):
+                        edge_key = tuple(sorted((link.uid, other_link.uid)))
+                        self._initial_connections.setdefault(edge_key, (obj, link_index, other_obj, other_index))
+                    Connections.disconnect_link(obj, link_index)
 
     def _select_source_link(self, context, event):
         source_link = _pick_source_link(context, event, self.moving_objects)
@@ -789,7 +844,7 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
             _moving_obj,
             _moving_link_index,
             _moving_link,
-            moving_center,
+            moving_snap_point,
             _target_obj,
             _target_link_index,
             _target_link,
@@ -798,7 +853,7 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
         self._snap_target = (_target_obj, _target_link_index)
 
         snap_started_at = time.perf_counter()
-        snap_delta = target_snap_point - moving_center
+        snap_delta = target_snap_point - moving_snap_point
         for obj in self.moving_objects:
             obj.matrix_world.translation += snap_delta
         snap_ms = _profile_ms(snap_started_at)
@@ -831,6 +886,7 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
             if event.value == 'PRESS':
                 self._snap_target = None
                 if not self._selecting_source:
+                    self._disconnect_moving_links()
                     self._selection_preview_source = None
                 self._selecting_source = True
                 self._select_source_link(context, event)
@@ -864,6 +920,14 @@ class STAGEHAND_OT_link_move_mode(bpy.types.Operator):
     def cancel(self, context):
         self._stop_preview()
         self._restore_initial_transforms()
+        with Connections.database_transaction():
+            for obj, link_index, other_obj, other_index in self._initial_connections.values():
+                link = Connections.get_link(obj, link_index)
+                other_link = Connections.get_link(other_obj, other_index)
+                if link is None or other_link is None:
+                    continue
+                if Connections.is_link_available(link) and Connections.is_link_available(other_link):
+                    Connections.connect_links(obj, link_index, other_obj, other_index)
 
 
 def register_keymap():

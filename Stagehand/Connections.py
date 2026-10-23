@@ -2159,6 +2159,8 @@ def _pending_operator_ids():
 
 def _transform_operator_active():
     for operator_id in _pending_operator_ids():
+        if operator_id in {"stagehand_ot_link_move_mode", "stagehand.link_move_mode"}:
+            return True
         if operator_id.startswith("transform_ot_"):
             return True
         if operator_id.startswith("object_ot_duplicate"):

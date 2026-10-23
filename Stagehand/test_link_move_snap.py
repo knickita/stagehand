@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from math import radians
+from contextlib import contextmanager
 from types import MethodType, SimpleNamespace
 import sys
 import unittest
@@ -14,12 +15,13 @@ except ImportError:
     raise unittest.SkipTest("Requires Blender's Python runtime")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from Stagehand import SnapLogics as snap
+from Stagehand import AddStagehandObject, ProjectDatabase, SnapLogics as snap
 from Stagehand.LinkTypes import StagehandLinkType
 
 
 def make_link(x=0.0, y=0.0, link_type=StagehandLinkType.LITEC30, cylindrical=False):
     return SimpleNamespace(
+        uid='',
         posDir=(x, y, 0.0, 0.0, 0.0, 0.0, 1.0), type=link_type,
         cylindricalType=cylindrical, length=10.0, displayRadius=0.1,
     )
@@ -38,14 +40,48 @@ def make_operator(obj):
         initial_matrices={obj.name_full: obj.matrix_world.copy()},
         _selecting_source=True,
         _snap_target=None,
+        _initial_connections={},
     )
     for name in (
         '_start_preview', '_stop_preview', '_draw_source_link', '_build_selection_preview', '_draw_snap_target',
         '_restore_initial_transforms', '_modal', 'modal', 'cancel',
         'invoke', '_select_source_link', '_begin_snap_move', '_translate_objects', '_apply_current_motion',
+        '_disconnect_moving_links',
     ):
         setattr(operator, name, MethodType(getattr(snap.STAGEHAND_OT_link_move_mode, name), operator))
     return operator
+
+
+@contextmanager
+def connection_scene():
+    AddStagehandObject.register()
+    objects = []
+    previous_database = ProjectDatabase.get_database_object(create=False)
+
+    def create(name, types):
+        obj = bpy.data.objects.new(name, None)
+        bpy.context.scene.collection.objects.link(obj)
+        objects.append(obj)
+        obj.stagehand.is_stagehand_object = True
+        AddStagehandObject.ensure_stagehand_uid(obj)
+        for link_type in types:
+            link = obj.stagehand.links.add()
+            link.type = link_type
+            link.cylindricalType = link_type == StagehandLinkType.PIPE
+            link.length = 2.0 if link.cylindricalType else 0.0
+            link.posDir = (0, 0, 0, 0, 0, 0, 1)
+            AddStagehandObject.ensure_stagehand_link_uid(link)
+        return obj
+
+    try:
+        yield create
+    finally:
+        for obj in objects:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        database = ProjectDatabase.get_database_object(create=False)
+        if previous_database is None and database is not None:
+            bpy.data.objects.remove(database, do_unlink=True)
+        AddStagehandObject.unregister()
 
 
 class LinkMoveSnapTests(unittest.TestCase):
@@ -96,6 +132,62 @@ class LinkMoveSnapTests(unittest.TestCase):
                 self.assertEqual(operator.source_link, (obj, 1))
             prune.assert_not_called()
             index.assert_not_called()
+
+    def test_pressing_l_disconnects_all_links_in_one_commit_and_cancel_restores_them(self):
+        connections = snap.Connections
+        with connection_scene() as create:
+            source = create('disconnect source', [StagehandLinkType.LITECPIPE, StagehandLinkType.PIPE])
+            partner = create('disconnect partner', [StagehandLinkType.LITECPIPE])
+            hook_a = create('disconnect hook A', [StagehandLinkType.HOOK])
+            hook_b = create('disconnect hook B', [StagehandLinkType.HOOK])
+            other_a = create('unrelated A', [StagehandLinkType.LITECPIPE])
+            other_b = create('unrelated B', [StagehandLinkType.LITECPIPE])
+            for obj, index, other_obj, other_index in (
+                (source, 0, partner, 0), (source, 1, hook_a, 0),
+                (source, 1, hook_b, 0), (other_a, 0, other_b, 0),
+            ):
+                self.assertTrue(connections.connect_links(obj, index, other_obj, other_index))
+            original_graph = ProjectDatabase.get_connections()
+            for selected in ([source], [source, partner]):
+                with self.subTest(selected_count=len(selected)):
+                    operator = make_operator(source)
+                    operator._start_preview = MagicMock(side_effect=lambda context: setattr(operator, '_area', context.area))
+                    self.context.selected_objects = selected
+                    with patch.object(ProjectDatabase, 'set_connections', wraps=ProjectDatabase.set_connections) as persist:
+                        result = operator.invoke(self.context, SimpleNamespace(
+                            type='L', value='PRESS', mouse_region_x=0.0, mouse_region_y=0.0,
+                        ))
+                        self.assertEqual(result, {'RUNNING_MODAL'})
+                        persist.assert_called_once()
+                    for obj in (source, partner, hook_a, hook_b):
+                        for link in obj.stagehand.links:
+                            self.assertEqual(connections.get_connected_link_uids(link), ())
+                    self.assertEqual(len(ProjectDatabase.get_connections()), 2)
+                    self.assertEqual(source.matrix_world, Matrix.Identity(4))
+                    self.assertEqual(len(operator._initial_connections), 3)
+
+                    self.assertTrue(connections.connect_links(source, 0, partner, 0))
+                    operator._selecting_source = False
+                    operator.modal(self.context, SimpleNamespace(
+                        type='L', value='PRESS', mouse_region_x=0.0, mouse_region_y=0.0,
+                    ))
+                    self.assertEqual(connections.get_connected_link_uids(source.stagehand.links[0]), ())
+                    source.matrix_world = Matrix.Translation((10, 0, 0))
+                    operator.cancel(self.context)
+                    self.assertEqual(source.matrix_world, Matrix.Identity(4))
+                    self.assertEqual(ProjectDatabase.get_connections(), original_graph)
+
+    def test_automatic_refresh_waits_while_link_move_is_active(self):
+        connections = snap.Connections
+        for operator_id in ('stagehand_ot_link_move_mode', 'stagehand.link_move_mode'):
+            with (
+                self.subTest(operator_id=operator_id),
+                patch.object(connections, '_pending_operator_ids', return_value=[operator_id]),
+                patch.object(connections, '_DIRTY_CONNECTION_OBJECT_UIDS', {'moving-object'}),
+                patch.object(connections, '_process_dirty_connection_refresh') as refresh,
+            ):
+                self.assertEqual(connections.dirty_connection_refresh_timer(), connections.CONNECTION_REFRESH_POLL_INTERVAL)
+                refresh.assert_not_called()
 
     def test_release_starts_motion_at_release_position_and_reselection_does_not_jump(self):
         obj = make_object('source', [make_link(), make_link(50.0)])
@@ -161,6 +253,63 @@ class LinkMoveSnapTests(unittest.TestCase):
             )
         self.assertEqual(index.target_count, 1)
         self.assertEqual(set(index.cells_by_type), {int(StagehandLinkType.PIPE)})
+
+    def test_selected_cylinder_slides_past_a_hook_using_its_full_length(self):
+        source = make_object('pipe', [make_link(link_type=StagehandLinkType.PIPE, cylindrical=True)])
+        source.matrix_world = Matrix.Translation((0.5, 0.0, 0.0))
+        target = make_object('hook', [make_link(0.0, 5.0, link_type=StagehandLinkType.HOOK)])
+        target_center, target_rotation = snap._link_transform(target, target.stagehand.links[0])
+        operator = make_operator(source)
+        operator._selecting_source = False
+        operator.movement_matrices = operator.initial_matrices
+        operator.plane_origin = Vector((0, 0, 0))
+        operator.plane_normal = Vector((0, 0, 1))
+        operator.start_plane_point = Vector((0, 0, 0))
+        operator.last_profile_report_at = 0.0
+        operator.target_index = SimpleNamespace(
+            target_count=1,
+            iter_candidates=MagicMock(return_value=[(0, (target, 0, target.stagehand.links[0], target_center, target_rotation))]),
+        )
+        with (
+            patch.object(snap, 'SNAP_PROFILE', False),
+            patch.object(snap, '_screen_to_plane_point', side_effect=lambda context, event, *args: Vector((event.mouse_region_x, event.mouse_region_y, 0))),
+        ):
+            for position in (0.0, -2.0, 5.0, -5.0):
+                with self.subTest(position=position):
+                    operator._apply_current_motion(self.context, SimpleNamespace(mouse_region_x=0.0, mouse_region_y=position))
+                    self.assertLess((source.matrix_world.translation - Vector((0, position, 0))).length, 1e-6)
+                    self.assertTrue(snap.Connections.links_are_aligned(source, 0, target, 0))
+                    self.assertEqual(operator._snap_target, (target, 0))
+            operator._apply_current_motion(self.context, SimpleNamespace(mouse_region_x=0.0, mouse_region_y=-5.01))
+            self.assertIsNone(operator._snap_target)
+            self.assertAlmostEqual(source.matrix_world.translation.x, 0.5)
+
+    def test_cylinder_search_prefers_a_closer_target_near_its_far_end(self):
+        pipe = make_link(link_type=StagehandLinkType.PIPE, cylindrical=True)
+        pipe.length = 400.0
+        source = make_object('pipe', [pipe])
+        near_start = make_object('near start', [make_link(0.4, 0.0, link_type=StagehandLinkType.HOOK)])
+        near_end = make_object('near end', [make_link(0.1, 350.0, link_type=StagehandLinkType.HOOK)])
+        fake_bpy = SimpleNamespace(data=SimpleNamespace(objects=[source, near_start, near_end]))
+        with patch.object(snap, 'bpy', fake_bpy), patch.object(snap, '_is_link_available_cached', return_value=True):
+            index = snap._ScreenLinkSpatialIndex(self.context, [source], connections={}, source_link=pipe)
+            profile = {}
+            pair = snap._find_best_snap_pair(self.context, (source, 0), index, profile)
+        self.assertIs(pair[4], near_end)
+        self.assertLess((pair[3] - Vector((0, 350, 0))).length, 1e-6)
+        self.assertEqual(profile['cells_visited'], 2)
+
+    def test_point_source_still_snaps_along_a_target_cylinder(self):
+        source = make_object('hook', [make_link(0.5, 7.0, link_type=StagehandLinkType.HOOK)])
+        target = make_object('pipe', [make_link(link_type=StagehandLinkType.PIPE, cylindrical=True)])
+        center, rotation = snap._link_transform(target, target.stagehand.links[0])
+        index = SimpleNamespace(
+            target_count=1,
+            iter_candidates=MagicMock(return_value=[(0, (target, 0, target.stagehand.links[0], center, rotation))]),
+        )
+        pair = snap._find_best_snap_pair(self.context, (source, 0), index)
+        self.assertLess((pair[3] - Vector((0.5, 7.0, 0))).length, 1e-6)
+        self.assertLess((pair[7] - Vector((0.0, 7.0, 0))).length, 1e-6)
 
     def test_sphere_is_an_overlay_with_a_one_second_pulse_and_cleans_up(self):
         obj = make_object('source', [make_link()])
