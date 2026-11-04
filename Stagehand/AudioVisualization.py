@@ -138,8 +138,12 @@ void main()
         float phase = 2.0 * PI * (
             distanceMeters + audio.x
         ) * audioData.frequency / max(audioData.soundSpeed, 0.001);
-        pressureReal += pressure * sin(phase) * audio.y * dispersion;
-        pressureImaginary += pressure * cos(phase) * audio.y * dispersion;
+        pressureReal += (
+            pressure * sin(phase) * audio.y * dispersion
+        );
+        pressureImaginary += (
+            pressure * cos(phase) * audio.y * dispersion
+        );
     }}
 
     float totalPressure = sqrt(

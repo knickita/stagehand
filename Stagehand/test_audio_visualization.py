@@ -44,6 +44,8 @@ class AudioVisualizationTests(unittest.TestCase):
         self.assertEqual([], sub["links"])
         self.assertTrue(sub["audio"]["omnidirectional"])
         self.assertEqual(143.0, sub["audio"]["splAtOneMeter"])
+        self.assertEqual("none", sub["audio"]["phaseMode"])
+        self.assertEqual([0.0, -1.0, 0.0], sub["audio"]["phaseAxis"])
 
     def test_audio_module_defines_overlay_operator_and_pressure_math(self):
         source = (ROOT / "AudioVisualization.py").read_text(encoding="utf-8")
@@ -77,6 +79,8 @@ class AudioVisualizationTests(unittest.TestCase):
         self.assertIn("distanceMeters + audio.x", source)
         self.assertIn("pressureReal * pressureReal", source)
         self.assertIn("directivityFactor", source)
+        self.assertNotIn("orientationPolarity", source)
+        self.assertNotIn("audioPhaseMode", source)
         self.assertIn("clipPosition.z -= 0.00001 * clipPosition.w", source)
         self.assertIn("if _has_audio_source_tag(obj):", source)
 
@@ -97,6 +101,8 @@ class AudioVisualizationTests(unittest.TestCase):
             "audioDelayMeters",
             "audioReversePolarity",
             "audioOmnidirectional",
+            "audioPhaseMode",
+            "audioPhaseAxis",
             "audioHorizontalDispersion",
             "audioVerticalDispersion",
             "audioNearDispersionDistance",

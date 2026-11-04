@@ -241,6 +241,31 @@ class StagehandObject(bpy.types.PropertyGroup):
         update=_make_audio_multi_edit_update("audioOmnidirectional"),
     )
 
+    # Retained for compatibility with saved files; ignored by acoustic prediction.
+    audioPhaseMode: bpy.props.EnumProperty(
+        name="Orientation Phase",
+        description="How source orientation affects acoustic polarity",
+        items=(
+            ('NONE', "None", "Orientation does not affect phase"),
+            (
+                'HEMISPHERE',
+                "Hemisphere",
+                "The two sides of the phase axis have opposite polarity",
+            ),
+        ),
+        default='NONE',
+        update=_make_audio_multi_edit_update("audioPhaseMode"),
+    )
+
+    audioPhaseAxis: bpy.props.FloatVectorProperty(
+        name="Phase Axis",
+        description="Local acoustic axis used by the orientation phase model",
+        size=3,
+        default=(0.0, -1.0, 0.0),
+        subtype='DIRECTION',
+        update=_make_audio_multi_edit_update("audioPhaseAxis"),
+    )
+
     audioHorizontalDispersion: bpy.props.FloatProperty(
         name="Horizontal Dispersion (deg)",
         default=100.0,
@@ -460,6 +485,8 @@ def _apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
         stagehand.audioMuted = False
         stagehand.audioAttenuation = 0.0
         stagehand.audioOmnidirectional = False
+        stagehand.audioPhaseMode = 'NONE'
+        stagehand.audioPhaseAxis = (0.0, -1.0, 0.0)
         stagehand.audioHorizontalDispersion = 100.0
         stagehand.audioVerticalDispersion = 15.0
         stagehand.audioNearDispersionDistance = 0.0
@@ -480,6 +507,15 @@ def _apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
     stagehand.audioMuted = bool(audio_data.get("muted", False))
     stagehand.audioAttenuation = float(audio_data.get("attenuation", 0.0))
     stagehand.audioOmnidirectional = bool(audio_data.get("omnidirectional", False))
+    phase_mode = str(audio_data.get("phaseMode", "none")).strip().upper()
+    if phase_mode not in {'NONE', 'HEMISPHERE'}:
+        phase_mode = 'NONE'
+    stagehand.audioPhaseMode = phase_mode
+    phase_axis = tuple(
+        float(value) for value in audio_data.get("phaseAxis", (0.0, -1.0, 0.0))
+    )
+    if len(phase_axis) == 3:
+        stagehand.audioPhaseAxis = phase_axis
     stagehand.audioHorizontalDispersion = float(
         audio_data.get("horizontalDispersion", 100.0)
     )

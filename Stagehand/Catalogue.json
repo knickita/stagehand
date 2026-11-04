@@ -73,6 +73,12 @@
                 "muted": false,
                 "attenuation": 0.0,
                 "omnidirectional": true,
+                "phaseMode": "none",
+                "phaseAxis": [
+                    0.0,
+                    -1.0,
+                    0.0
+                ],
                 "horizontalDispersion": 100.0,
                 "verticalDispersion": 15.0,
                 "nearDispersionPlaneDistance": 0.0,
