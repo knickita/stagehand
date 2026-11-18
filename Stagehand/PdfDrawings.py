@@ -1,3 +1,4 @@
+import colorsys
 import math
 import os
 import tempfile
@@ -49,6 +50,14 @@ BLACK = (0.0, 0.0, 0.0)
 OPAQUE_WHITE = (1.0, 1.0, 1.0, 1.0)
 PDF_LINE_COLOR = BLACK
 PDF_DIMENSION_COLOR = (0.0, 0.0, 1.0, 1.0)
+PDF_STRUCTURE_DIMENSION_COLORS = (
+    PDF_DIMENSION_COLOR,
+    (0.0, 0.32, 0.08, 1.0),
+    (0.65, 0.025, 0.015, 1.0),
+    (0.32, 0.04, 0.55, 1.0),
+    (0.0, 0.28, 0.38, 1.0),
+    (0.50, 0.18, 0.0, 1.0),
+)
 # Workbench outlines use quarter-opacity contributions from adjacent pixels.
 # Compensate neutral ink only; keep colored dimension pixels unchanged.
 PDF_WORKBENCH_OUTLINE_INK_GAIN = 4.0
@@ -553,26 +562,23 @@ class _StructureSegment(list):
 def _build_truss_segments(truss_objects):
     visible_truss_uids = {_object_uid(obj) for obj in truss_objects}
     truss_joint_objects = [obj for obj in truss_objects if _is_truss_joint_object(obj)]
-    segments = [[obj] for obj in truss_joint_objects]
+    structure_rotation = _structure_rotation(truss_objects)
+    segments = []
+    for joint in truss_joint_objects:
+        axes = {
+            _truss_quote_axis([neighbor], structure_rotation)
+            for neighbor in _connected_truss_neighbors(joint, visible_truss_uids)
+            if not _is_truss_joint_object(neighbor)
+        }
+        axes.discard(None)
+        if axes:
+            segments.extend(
+                _StructureSegment([joint], quote_axis=axis)
+                for axis in sorted(axes)
+            )
+        else:
+            segments.append([joint])
     seen_segments = set()
-    overall_segments = []
-    seen_overall_segments = set()
-
-    def add_overall_segment(path):
-        run_objects = [obj for obj in path if not _is_truss_joint_object(obj)]
-        if not run_objects:
-            return
-
-        run_axes = [_object_local_z_world_axis(obj) for obj in run_objects]
-        if any(axis is None for axis in run_axes):
-            return
-        if any(abs(run_axes[0].dot(axis)) < 0.995 for axis in run_axes[1:]):
-            return
-
-        key = _segment_key(path)
-        if key not in seen_overall_segments:
-            seen_overall_segments.add(key)
-            overall_segments.append(_StructureSegment(path, is_overall=True))
 
     for obj in truss_joint_objects:
         seen_segments.add((_object_uid(obj),))
@@ -598,7 +604,6 @@ def _build_truss_segments(truss_objects):
                     if segment and key not in seen_segments:
                         seen_segments.add(key)
                         segments.append(segment)
-                    add_overall_segment(path)
                     break
 
                 next_objects = [
@@ -613,7 +618,6 @@ def _build_truss_segments(truss_objects):
                     if segment and key not in seen_segments:
                         seen_segments.add(key)
                         segments.append(segment)
-                    add_overall_segment(path)
                     break
 
                 previous_uid = current_uid
@@ -623,7 +627,7 @@ def _build_truss_segments(truss_objects):
     if not segments and truss_objects:
         segments.append(list(truss_objects))
 
-    return segments + overall_segments
+    return segments
 
 
 def _object_cardinal_axis(obj, structure_rotation, threshold=0.82):
@@ -1110,7 +1114,14 @@ def _dimension_axis_for_segment(segment_objects, structure_rotation, dimensions)
     )
 
 
-def _build_dimension_candidates(structure_segments, structure_rotation):
+def _structure_dimension_color(structure_index):
+    if structure_index < len(PDF_STRUCTURE_DIMENSION_COLORS):
+        return PDF_STRUCTURE_DIMENSION_COLORS[structure_index]
+    hue = (0.61 + structure_index * 0.61803398875) % 1.0
+    return (*colorsys.hsv_to_rgb(hue, 0.85, 0.48), 1.0)
+
+
+def _build_dimension_candidates(structure_segments, structure_rotation, color=PDF_DIMENSION_COLOR):
     candidates = []
     seen = set()
 
@@ -1143,37 +1154,38 @@ def _build_dimension_candidates(structure_segments, structure_rotation):
 
         seen.add(key)
         candidates.append({
+            "color": color,
             "axis": axis,
             "value": value,
             "segment": tuple(segment_objects),
             "index": index,
             "span": span_override,
             "is_overall": bool(getattr(segment_objects, "is_overall", False)),
+            "is_joint": len(segment_objects) == 1 and _is_truss_joint_object(segment_objects[0]),
         })
 
     return candidates
 
 
 def _build_general_dimension_candidates(objects):
-    if not objects:
-        return []
-
-    stage_deck_uids = {
-        _object_uid(obj)
-        for obj in objects
-        if any(_has_tag(obj, tag) for tag in STAGE_DECK_THICKNESS_BY_TAG)
-    }
-    stage_objects = []
-    if stage_deck_uids:
-        structure_objects = [obj for obj in objects if _is_structure_object(obj)]
-        for group in _connected_structure_groups(structure_objects):
-            if any(_object_uid(obj) in stage_deck_uids for obj in group):
-                stage_objects.extend(group)
-
-    general_segments = _build_tagged_axis_segments(stage_objects) if stage_objects else None
-    if general_segments is None:
-        general_segments = [_StructureSegment(objects, quote_axis=axis) for axis in ("X", "Y", "Z")]
-    return _build_dimension_candidates(general_segments, Matrix.Identity(3))
+    candidates = []
+    structure_objects = [obj for obj in objects if _is_structure_object(obj)]
+    for group_index, group in enumerate(_connected_structure_groups(structure_objects)):
+        rotation = _structure_rotation(group)
+        group_min, group_max = _world_box(group)
+        group_center = (group_min + group_max) * 0.5
+        segments = _build_structure_segments(group)
+        for candidate in _build_dimension_candidates(
+            segments, rotation, color=_structure_dimension_color(group_index),
+        ):
+            candidate.update({
+                "index": len(candidates),
+                "structure_index": group_index,
+                "structure_rotation": rotation,
+                "structure_center": group_center,
+            })
+            candidates.append(candidate)
+    return candidates
 
 
 def _project_dimension_candidate(dimension_candidate, camera_rotation, center, structure_rotation, assembly_projected_center):
@@ -1286,6 +1298,11 @@ def _projected_dimension_preference_key(projected_dimension):
 
 
 def _projected_dimensions_are_redundant(first_dimension, second_dimension, tolerance, view_name=None):
+    first_candidate = first_dimension["candidate"]
+    second_candidate = second_dimension["candidate"]
+    if first_candidate.get("is_joint") or second_candidate.get("is_joint"):
+        if _segment_key(first_candidate["segment"]) != _segment_key(second_candidate["segment"]):
+            return False
     if abs(first_dimension["value"] - second_dimension["value"]) > tolerance:
         return False
 
@@ -1363,20 +1380,39 @@ def _view_dimension_data(
             and dimension_candidate["index"] not in allowed_dimension_candidate_indices
         ):
             continue
-        if not _dimension_axis_is_visible(dimension_candidate["axis"], view_name, structure_rotation):
+        candidate_rotation = dimension_candidate.get("structure_rotation", structure_rotation)
+        projected_axis = camera_rotation.inverted() @ (
+            candidate_rotation @ _dimension_axis_vector(dimension_candidate["axis"])
+        )
+        if projected_axis.length_squared <= 0.000001 or abs(projected_axis.normalized().z) >= 0.97:
             continue
 
+        candidate_center = dimension_candidate.get("structure_center")
+        projected_structure_center = (
+            camera_rotation.inverted() @ candidate_center
+            if candidate_center is not None
+            else assembly_projected_center
+        )
         projected_dimension = _project_dimension_candidate(
             dimension_candidate,
             camera_rotation,
             center,
-            structure_rotation,
-            assembly_projected_center,
+            candidate_rotation,
+            projected_structure_center,
         )
         if projected_dimension is not None:
+            projected_dimension["center"] = projected_structure_center - (camera_rotation.inverted() @ center)
             axes.append(projected_dimension)
 
-    axes = _remove_aligned_duplicate_dimensions(axes, view_name=view_name)
+    # Only deduplicate within each structure, as on its individual drawing page.
+    axes_by_structure = {}
+    for axis in axes:
+        axes_by_structure.setdefault(axis["candidate"].get("structure_index"), []).append(axis)
+    axes = [
+        axis
+        for structure_axes in axes_by_structure.values()
+        for axis in _remove_aligned_duplicate_dimensions(structure_axes, view_name=view_name)
+    ]
 
     return {
         "frame_width": frame_width,
@@ -1541,9 +1577,9 @@ def _create_surface_material():
     return material
 
 
-def _create_dimension_material():
-    material = bpy.data.materials.new("Stagehand PDF Blue Dimension")
-    material.diffuse_color = PDF_DIMENSION_COLOR
+def _create_dimension_material(color=PDF_DIMENSION_COLOR):
+    material = bpy.data.materials.new("Stagehand PDF Dimension")
+    material.diffuse_color = color
     material.use_nodes = True
 
     nodes = material.node_tree.nodes
@@ -1551,7 +1587,7 @@ def _create_dimension_material():
 
     output_node = nodes.new(type="ShaderNodeOutputMaterial")
     emission_node = nodes.new(type="ShaderNodeEmission")
-    emission_node.inputs["Color"].default_value = PDF_DIMENSION_COLOR
+    emission_node.inputs["Color"].default_value = color
     emission_node.inputs["Strength"].default_value = 1.0
     material.node_tree.links.new(emission_node.outputs["Emission"], output_node.inputs["Surface"])
 
@@ -1649,7 +1685,7 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
         return [], None
 
     camera_rotation = camera.rotation_euler.to_matrix()
-    material = _create_dimension_material()
+    materials_by_color = {}
     temporary_objects = []
     base_offset = camera.data.ortho_scale * 0.04
     offset_step = camera.data.ortho_scale * 0.035
@@ -1666,13 +1702,18 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
         if axis_dimension["value"] <= 0.01:
             continue
 
+        color = tuple(axis_dimension["candidate"].get("color", PDF_DIMENSION_COLOR))
+        if color not in materials_by_color:
+            materials_by_color[color] = _create_dimension_material(color)
+        material = materials_by_color[color]
         p1 = axis_dimension["p1"].copy()
         p2 = axis_dimension["p2"].copy()
         direction_x, direction_y = _normalize_2d(p2.x - p1.x, p2.y - p1.y)
         normal_x, normal_y = -direction_y, direction_x
         mid = (p1 + p2) * 0.5
 
-        if ((mid.x - assembly_center.x) * normal_x) + ((mid.y - assembly_center.y) * normal_y) < 0.0:
+        dimension_center = axis_dimension.get("center", assembly_center)
+        if ((mid.x - dimension_center.x) * normal_x) + ((mid.y - dimension_center.y) * normal_y) < 0.0:
             normal_x = -normal_x
             normal_y = -normal_y
 
@@ -1776,10 +1817,10 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
             direction_y,
         ))
 
-    return temporary_objects, material
+    return temporary_objects, tuple(materials_by_color.values())
 
 
-def _remove_dimension_render_objects(temporary_objects, material):
+def _remove_dimension_render_objects(temporary_objects, materials):
     for obj in temporary_objects:
         data = obj.data
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -1787,8 +1828,9 @@ def _remove_dimension_render_objects(temporary_objects, material):
             if isinstance(data, bpy.types.Curve):
                 bpy.data.curves.remove(data)
 
-    if material is not None and material.users == 0:
-        bpy.data.materials.remove(material)
+    for material in materials or ():
+        if material.users == 0:
+            bpy.data.materials.remove(material)
 
 
 def _render_view(
@@ -2702,6 +2744,34 @@ def _write_pdf(filepath, pages, title, page_titles=None, bom_entries=None, detai
         profiler.record_since("pdf write total", write_started_at)
 
 
+PDF_EXPORT_SETTINGS_KEY = "stagehand_pdf_drawing_export_settings"
+PDF_EXPORT_DEFAULTS = {
+    "include_material_list": True,
+    "include_truss_details": True,
+    "include_general_view": True,
+    "include_general_dimensions": False,
+    "include_dimensioned_views": True,
+}
+
+
+def _restore_pdf_export_settings(operator, scene):
+    saved = scene.get(PDF_EXPORT_SETTINGS_KEY, {})
+    if not hasattr(saved, "get"):
+        saved = {}
+    for name, default in PDF_EXPORT_DEFAULTS.items():
+        value = saved.get(name, default)
+        if not isinstance(value, (bool, int)) or value not in (0, 1):
+            value = default
+        setattr(operator, name, bool(value))
+
+
+def _save_pdf_export_settings(operator, scene):
+    # Scene custom properties survive add-on reloads and are stored in the .blend.
+    scene[PDF_EXPORT_SETTINGS_KEY] = {
+        name: bool(getattr(operator, name)) for name in PDF_EXPORT_DEFAULTS
+    }
+
+
 class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
     bl_idname = "stagehand.generate_pdf_drawings"
     bl_label = "Generate PDF Drawings"
@@ -2716,27 +2786,27 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
     include_material_list: bpy.props.BoolProperty(
         name="Elenco materiale",
         description="Include l'elenco completo del materiale visibile",
-        default=True,
+        default=PDF_EXPORT_DEFAULTS["include_material_list"],
     )
     include_truss_details: bpy.props.BoolProperty(
         name="Dettaglio americane",
         description="Include lunghezze, cubi e ferramenta delle americane",
-        default=True,
+        default=PDF_EXPORT_DEFAULTS["include_truss_details"],
     )
     include_general_view: bpy.props.BoolProperty(
         name="Vista generale",
         description="Include le quattro viste generali dell'intera scena",
-        default=True,
+        default=PDF_EXPORT_DEFAULTS["include_general_view"],
     )
     include_general_dimensions: bpy.props.BoolProperty(
         name="Disegna quote sulla vista generale",
-        description="Disegna le quote di ingombro complessivo nelle quattro viste generali",
-        default=False,
+        description="Disegna le quote di tutte le singole strutture nelle quattro viste generali",
+        default=PDF_EXPORT_DEFAULTS["include_general_dimensions"],
     )
     include_dimensioned_views: bpy.props.BoolProperty(
         name="Viste quotate",
         description="Include le quattro viste quotate di ogni struttura",
-        default=True,
+        default=PDF_EXPORT_DEFAULTS["include_dimensioned_views"],
     )
 
     def draw(self, context):
@@ -2753,6 +2823,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
         column.prop(self, "include_dimensioned_views")
 
     def invoke(self, context, event):
+        _restore_pdf_export_settings(self, context.scene)
         if not self.filepath:
             blend_path = bpy.data.filepath
             base_directory = Path(blend_path).parent if blend_path else Path.home()
@@ -2765,6 +2836,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             self.report({'WARNING'}, "PDF generation is already running")
             return {'CANCELLED'}
 
+        _save_pdf_export_settings(self, context.scene)
         if not any((
             self.include_material_list,
             self.include_truss_details,
@@ -3061,7 +3133,10 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     group_center, _group_dimensions = _object_bounds(group_objects)
                     group_segments = _build_structure_segments(group_objects) if group_objects else []
                     group_rotation = _structure_rotation(group_objects)
-                    group_dimension_candidates = _build_dimension_candidates(group_segments, group_rotation)
+                    group_dimension_candidates = _build_dimension_candidates(
+                        group_segments, group_rotation,
+                        color=_structure_dimension_color(group_index - 1),
+                    )
                     if profiler is not None:
                         profiler.record_since("structure prep", structure_started_at)
                     rendered_views = {}
