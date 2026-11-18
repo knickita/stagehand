@@ -14,6 +14,7 @@ from bpy_extras.io_utils import ExportHelper
 from mathutils import Matrix, Quaternion, Vector
 
 from . import Connections
+from . import DimensionLayout
 from .LinkTypes import StagehandLinkType
 from .RegistrationUtils import safe_register_class, safe_unregister_class
 
@@ -1236,6 +1237,7 @@ def _project_dimension_candidate(dimension_candidate, camera_rotation, center, s
     return {
         "p1": p1_camera - projected_center,
         "p2": p2_camera - projected_center,
+        "edge_options": [(a - projected_center, b - projected_center) for _score, a, b in candidates],
         "value": dimension_candidate["value"],
         "candidate": dimension_candidate,
     }
@@ -1363,6 +1365,7 @@ def _view_dimension_data(
     view_name,
     structure_rotation,
     allowed_dimension_candidate_indices=None,
+    drawing_objects=None,
 ):
     if not dimension_candidates:
         return None
@@ -1414,7 +1417,30 @@ def _view_dimension_data(
         for axis in _remove_aligned_duplicate_dimensions(structure_axes, view_name=view_name)
     ]
 
+    structure_points = {}
+    covered_uids = set()
+    for candidate in dimension_candidates:
+        group = candidate.get("structure_index", 0)
+        points = structure_points.setdefault(group, [])
+        for obj in candidate["segment"]:
+            uid = _object_uid(obj)
+            if uid in covered_uids:
+                continue
+            covered_uids.add(uid)
+            points.extend(_camera_point(camera_rotation, center, obj.matrix_world @ Vector(corner))
+                          for corner in obj.bound_box)
+    perimeters = {group: DimensionLayout.convex_hull(points) for group, points in structure_points.items()}
+    obstacles = list(perimeters.values())
+    for obj in drawing_objects or ():
+        if _object_uid(obj) not in covered_uids:
+            obstacles.append(DimensionLayout.convex_hull([
+                _camera_point(camera_rotation, center, obj.matrix_world @ Vector(corner))
+                for corner in obj.bound_box
+            ]))
+
     return {
+        "perimeters": perimeters,
+        "obstacles": obstacles,
         "frame_width": frame_width,
         "frame_height": frame_height,
         "overlay_depth": overlay_depth,
@@ -1680,143 +1706,66 @@ def _add_dimension_text(scene, name, text, location, camera, material, size, dir
     return obj
 
 
+def _place_view_dimensions(dimension_data, scale):
+    text_size = scale * 0.018
+    features = []
+    for axis in dimension_data["axes"]:
+        if axis["value"] <= 0.01:
+            continue
+        label = _format_dimension(axis["value"])
+        group = axis["candidate"].get("structure_index", 0)
+        features.append({
+            "axis": axis,
+            "group": group,
+            "center": tuple(axis.get("center", dimension_data["center"]))[:2],
+            "perimeter": dimension_data["perimeters"][group],
+            "edges": [(tuple(a)[:2], tuple(b)[:2])
+                      for a, b in axis.get("edge_options", [(axis["p1"], axis["p2"])])],
+            "text_width": len(label) * text_size * 0.64,
+        })
+    return DimensionLayout.place_dimensions(
+        features, dimension_data["obstacles"], text_size,
+    )
+
+
 def _create_dimension_render_objects(scene, camera, center, dimension_data):
     if dimension_data is None:
         return [], None
-
     camera_rotation = camera.rotation_euler.to_matrix()
     materials_by_color = {}
     temporary_objects = []
-    base_offset = camera.data.ortho_scale * 0.04
-    offset_step = camera.data.ortho_scale * 0.035
-    max_stack_offset = camera.data.ortho_scale * 0.16
-    tick = camera.data.ortho_scale * 0.012
-    bevel_depth = camera.data.ortho_scale * 0.0008
-    text_size = camera.data.ortho_scale * 0.023
-    assembly_center = dimension_data["center"]
+    scale = dimension_data.get("layout_scale", camera.data.ortho_scale)
+    text_size = scale * 0.018
+    bevel_depth = scale * 0.00065
     overlay_depth = dimension_data["overlay_depth"]
-    placed_boxes_by_bucket = {}
-    placed_dimensions = []
+    placements, conflicts = _place_view_dimensions(dimension_data, scale)
+    dimension_data["layout_conflicts"] = conflicts
+    dimension_data["placements"] = placements
 
-    for index, axis_dimension in enumerate(dimension_data["axes"]):
-        if axis_dimension["value"] <= 0.01:
-            continue
+    def world_point(point):
+        return _camera_overlay_point(
+            camera_rotation, center, Vector((point[0], point[1], 0.0)), overlay_depth,
+        )
 
-        color = tuple(axis_dimension["candidate"].get("color", PDF_DIMENSION_COLOR))
+    for index, placement in enumerate(placements):
+        axis = placement["feature"]["axis"]
+        color = tuple(axis["candidate"].get("color", PDF_DIMENSION_COLOR))
         if color not in materials_by_color:
             materials_by_color[color] = _create_dimension_material(color)
         material = materials_by_color[color]
-        p1 = axis_dimension["p1"].copy()
-        p2 = axis_dimension["p2"].copy()
-        direction_x, direction_y = _normalize_2d(p2.x - p1.x, p2.y - p1.y)
-        normal_x, normal_y = -direction_y, direction_x
-        mid = (p1 + p2) * 0.5
-
-        dimension_center = axis_dimension.get("center", assembly_center)
-        if ((mid.x - dimension_center.x) * normal_x) + ((mid.y - dimension_center.y) * normal_y) < 0.0:
-            normal_x = -normal_x
-            normal_y = -normal_y
-
-        preferred_normal = Vector((normal_x, normal_y, 0.0))
-        direction = Vector((direction_x, direction_y, 0.0))
-        text_width = len(_format_dimension(axis_dimension["value"])) * text_size * 0.58
-        text_height = text_size
-        chosen = None
-        is_overall = axis_dimension["candidate"].get("is_overall", False)
-        overall_uids = set(_segment_key(axis_dimension["candidate"]["segment"])) if is_overall else set()
-        preferred_start_offset = base_offset
-
-        for side_index, side_multiplier in enumerate((1.0, -1.0)):
-            normal = preferred_normal * side_multiplier
-            max_offset = max_stack_offset if side_index == 0 else max_stack_offset * 1.5
-            offset = base_offset
-            if is_overall:
-                offset += offset_step
-                for placed_dimension, placed_q1, placed_q2 in placed_dimensions:
-                    if not _projected_dimensions_are_parallel(axis_dimension, placed_dimension, 0.05):
-                        continue
-                    placed_uids = set(_segment_key(placed_dimension["candidate"]["segment"]))
-                    if not placed_uids.issubset(overall_uids):
-                        continue
-                    offset = max(
-                        offset,
-                        normal.dot(placed_q1 - p1) + offset_step,
-                        normal.dot(placed_q2 - p1) + offset_step,
-                    )
-                max_offset = max(max_offset, offset + max_stack_offset)
-            if side_index == 0:
-                preferred_start_offset = offset
-
-            while offset <= max_offset:
-                q1 = p1 + (normal * offset)
-                q2 = p2 + (normal * offset)
-                label_point = ((q1 + q2) * 0.5) + (normal * (text_size * 0.65))
-                box = _dimension_layout_box(q1, q2, label_point, text_width, text_height, normal, direction)
-                bucket = _dimension_collision_bucket(direction, normal)
-                placed_boxes = placed_boxes_by_bucket.get(bucket, [])
-                overlaps = any(_boxes_overlap(box, placed_box) for placed_box in placed_boxes)
-
-                if not overlaps:
-                    chosen = (normal, q1, q2, label_point, box, bucket)
-                    break
-
-                offset += offset_step
-
-            if chosen is not None:
-                break
-
-        if chosen is None:
-            normal = preferred_normal
-            q1 = p1 + (normal * preferred_start_offset)
-            q2 = p2 + (normal * preferred_start_offset)
-            label_point = ((q1 + q2) * 0.5) + (normal * (text_size * 0.65))
-            chosen = (
-                normal,
-                q1,
-                q2,
-                label_point,
-                _dimension_layout_box(q1, q2, label_point, text_width, text_height, normal, direction),
-                _dimension_collision_bucket(direction, normal),
-            )
-
-        normal, q1, q2, label_point, box, bucket = chosen
-        placed_boxes_by_bucket.setdefault(bucket, []).append(box)
-        placed_dimensions.append((axis_dimension, q1, q2))
-        tick_vector = normal * tick
-
         world_segments = [
-            (_camera_overlay_point(camera_rotation, center, p1, overlay_depth), _camera_overlay_point(camera_rotation, center, q1, overlay_depth)),
-            (_camera_overlay_point(camera_rotation, center, p2, overlay_depth), _camera_overlay_point(camera_rotation, center, q2, overlay_depth)),
-            (_camera_overlay_point(camera_rotation, center, q1, overlay_depth), _camera_overlay_point(camera_rotation, center, q2, overlay_depth)),
-            (
-                _camera_overlay_point(camera_rotation, center, q1 - tick_vector, overlay_depth),
-                _camera_overlay_point(camera_rotation, center, q1 + tick_vector, overlay_depth),
-            ),
-            (
-                _camera_overlay_point(camera_rotation, center, q2 - tick_vector, overlay_depth),
-                _camera_overlay_point(camera_rotation, center, q2 + tick_vector, overlay_depth),
-            ),
+            (world_point(a), world_point(b))
+            for a, b in placement["main"] + placement["extensions"]
         ]
-
         temporary_objects.append(_add_dimension_curve(
-            scene,
-            f"Stagehand PDF Dimension Lines {index}",
-            world_segments,
-            material,
-            bevel_depth,
+            scene, f"Stagehand PDF Dimension Lines {index}",
+            world_segments, material, bevel_depth,
         ))
         temporary_objects.append(_add_dimension_text(
-            scene,
-            f"Stagehand PDF Dimension Text {index}",
-            _format_dimension(axis_dimension["value"]),
-            _camera_overlay_point(camera_rotation, center, label_point, overlay_depth),
-            camera,
-            material,
-            text_size,
-            direction_x,
-            direction_y,
+            scene, f"Stagehand PDF Dimension Text {index}",
+            _format_dimension(axis["value"]), world_point(placement["label"]),
+            camera, material, text_size, *placement["direction"],
         ))
-
     return temporary_objects, tuple(materials_by_color.values())
 
 
@@ -1858,6 +1807,7 @@ def _render_view(
     view_center = center.copy()
     _set_camera_view(scene, camera, view_center, objects, view_direction, view_up)
     _expand_camera_for_dimensions(scene, camera)
+    layout_scale = camera.data.ortho_scale
     if profiler is not None:
         profiler.record_since("view setup", setup_started_at)
 
@@ -1884,7 +1834,10 @@ def _render_view(
                 view_name,
                 structure_rotation,
                 allowed_dimension_candidate_indices=allowed_dimension_candidate_indices,
+                drawing_objects=objects,
             )
+            if dimension_data is not None:
+                dimension_data["layout_scale"] = layout_scale
             dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
             dimension_object_count += len(dimension_objects)
             context.view_layer.update()
@@ -1909,7 +1862,10 @@ def _render_view(
                 view_name,
                 structure_rotation,
                 allowed_dimension_candidate_indices=allowed_dimension_candidate_indices,
+                drawing_objects=objects,
             )
+            if dimension_data is not None:
+                dimension_data["layout_scale"] = layout_scale
             dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
             dimension_object_count += len(dimension_objects)
             context.view_layer.update()
@@ -1922,6 +1878,11 @@ def _render_view(
             profiler.record_since("dimension fitting", fitting_started_at)
             profiler.count("fit passes", fit_pass_count)
             profiler.count("dimension objects", dimension_object_count)
+        if dimension_data is not None and dimension_data.get("layout_conflicts", 0):
+            print(f"Stagehand PDF: review dimension layout in {profile_label or view_name}; "
+                  f"{dimension_data['layout_conflicts']} remaining conflicts")
+            if profiler is not None:
+                profiler.count("views with dimension conflicts")
 
         scene.camera = camera
         scene.render.filepath = str(output_path)
@@ -2918,6 +2879,9 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
             print(f"Stagehand PDF counts: {count_summary}")
             print(f"Stagehand PDF slow renders: {slow_view_summary}")
             print(f"Stagehand PDF slow structures: {slow_structure_summary}")
+            conflict_views = profiler.counts.get("views with dimension conflicts", 0)
+            if conflict_views:
+                self.report({'WARNING'}, f"PDF created: review dimension placement in {conflict_views} views")
             return {'FINISHED'}
         except Exception as exc:
             self._cancel_pdf_generation(context, f"Unable to generate PDF drawings: {exc}")
@@ -3072,7 +3036,6 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                         else []
                     )
                     general_rendered_views = {}
-                    general_non_iso_dimension_candidate_indices = set()
 
                     try:
                         for view_name in ("Front", "Left", "Top", "Iso"):
@@ -3088,16 +3051,6 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                                 profiler=profiler,
                                 conversion_executor=conversion_executor,
                                 profile_label=f"general {view_name}",
-                                allowed_dimension_candidate_indices=(
-                                    general_non_iso_dimension_candidate_indices
-                                    if view_name == "Iso"
-                                    else None
-                                ),
-                                visible_dimension_candidate_indices=(
-                                    None
-                                    if view_name == "Iso"
-                                    else general_non_iso_dimension_candidate_indices
-                                ),
                             )
                             progress.advance(message=f"Rendered general view: {view_name}")
                     finally:
@@ -3140,7 +3093,6 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     if profiler is not None:
                         profiler.record_since("structure prep", structure_started_at)
                     rendered_views = {}
-                    non_iso_dimension_candidate_indices = set()
 
                     try:
                         for view_name in ("Front", "Left", "Top", "Iso"):
@@ -3158,12 +3110,6 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                                 profiler=profiler,
                                 conversion_executor=conversion_executor,
                                 profile_label=f"structure {group_index} {view_name}",
-                                allowed_dimension_candidate_indices=(
-                                    non_iso_dimension_candidate_indices if view_name == "Iso" else None
-                                ),
-                                visible_dimension_candidate_indices=(
-                                    None if view_name == "Iso" else non_iso_dimension_candidate_indices
-                                ),
                             )
                             progress.advance(
                                 message=f"Rendered structure {group_index}/{len(structure_groups)}: {view_name}"

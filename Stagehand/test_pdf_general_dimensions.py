@@ -7,6 +7,9 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+import DimensionLayout
 
 try:
     from mathutils import Matrix, Quaternion, Vector
@@ -26,6 +29,7 @@ class GeneralDimensionTests(unittest.TestCase):
             "math": math, "Matrix": Matrix, "Quaternion": Quaternion, "Vector": Vector,
             "DIMENSION_DUPLICATE_TOLERANCE": 0.01,
             "colorsys": colorsys,
+            "DimensionLayout": DimensionLayout,
         }
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(
@@ -62,10 +66,11 @@ class GeneralDimensionTests(unittest.TestCase):
             rotation_euler=rotation, location=Vector((0, -20, 10)),
             data=SimpleNamespace(ortho_scale=20),
         )
-        return self.ns["_view_dimension_data"](
+        data = self.ns["_view_dimension_data"](
             self.scene, camera, Vector((0, 0, 0)), candidates, view,
             Matrix.Identity(3), allowed_dimension_candidate_indices=allowed,
-        )["axes"]
+        )
+        return data["axes"] if data is not None else []
 
     def test_general_reuses_individual_candidates_and_ignores_nonstructures(self):
         objects = [self.object("A", (0, 0, 0)), self.object("B", (5, 2, 0), math.pi / 4)]
@@ -126,6 +131,34 @@ class GeneralDimensionTests(unittest.TestCase):
         candidates = self.ns["_build_dimension_candidates"](segments, Matrix.Identity(3))
         self.assertTrue(all(c["is_joint"] for c in candidates))
         self.assertEqual(len(self.project(candidates, "Front")), 2)
+
+    def test_dimensions_repeat_in_each_visible_view(self):
+        objects = [self.object("A", (0, 0, 0)), self.object("B", (5, 0, 0), math.pi / 2)]
+        candidates = self.ns["_build_general_dimension_candidates"](objects)
+        expected = {'Front': [0], 'Left': [1], 'Top': [0, 1], 'Iso': [0, 1]}
+        for view in ('Front', 'Left', 'Top', 'Iso', 'Front'):
+            axes = self.project(candidates, view)
+            self.assertEqual([a['candidate']['index'] for a in axes], expected[view])
+            for axis in axes:
+                self.assertAlmostEqual(axis['value'], 4.0, places=5)
+
+    def test_duplicates_are_removed_independently_within_each_view(self):
+        obj = self.object('A', (0, 0, 0))
+        for candidates in (
+            self.ns['_build_general_dimension_candidates']([obj]),
+            self.ns['_build_dimension_candidates'](
+                self.ns['_build_structure_segments']([obj]), obj.rotation,
+            ),
+        ):
+            duplicated = candidates + [dict(candidates[0], index=1)]
+            for view in ('Front', 'Top', 'Iso'):
+                axes = self.project(duplicated, view)
+                self.assertEqual(len(axes), 1)
+                self.assertEqual(axes[0]['candidate']['index'], 0)
+
+    def test_disabled_dimensions_remain_empty_in_all_views(self):
+        for view in ('Front', 'Left', 'Top', 'Iso'):
+            self.assertEqual(self.project([], view), [])
 
 
 if __name__ == "__main__":
