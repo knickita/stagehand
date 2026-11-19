@@ -491,10 +491,15 @@ def _structure_rotation(objects):
     if not objects:
         return Matrix.Identity(3)
 
+    # Braces have an intrinsic slope: their orientation is not the frame's
+    # orientation. Prefer the members explicitly identifying the frame axes.
+    axis_members = [obj for obj in objects
+                    if _has_tag(obj, STRUCTURE_HORIZONTAL_TAG) or _has_tag(obj, STRUCTURE_VERTICAL_TAG)]
+    reference_objects = axis_members or objects
     reference_orientation = None
     fallback_orientation = None
     best_horizontal_score = 0.0
-    for obj in objects:
+    for obj in reference_objects:
         orientation = obj.matrix_world.to_quaternion()
         world_axis = _object_local_z_world_axis(obj)
         if world_axis is None:
@@ -809,6 +814,7 @@ def _build_tagged_axis_segments(structure_objects):
     return segments
 
 
+@Connections.database_transaction()
 def _build_structure_segments(structure_objects):
     structure_kind = _structure_kind(structure_objects[0]) if structure_objects else None
     if structure_kind == "layher":
@@ -847,6 +853,7 @@ def _connected_truss_groups(truss_objects):
     return groups
 
 
+@Connections.database_transaction()
 def _connected_structure_groups(structure_objects):
     structures_by_uid = {_object_uid(obj): obj for obj in structure_objects}
     unvisited = set(structures_by_uid)
@@ -977,9 +984,12 @@ def _fit_camera_to_projected_objects(scene, camera, objects, view_center, paddin
     if not all(math.isfinite(value) for value in (dimensions.x, dimensions.y)):
         return False, view_center
 
-    render = scene.render
-    frame_aspect = render.resolution_x / max(render.resolution_y, 1)
-    required_scale = max(camera.data.ortho_scale, max(dimensions.y, dimensions.x / frame_aspect, 0.5) * padding)
+    frame = camera.data.view_frame(scene=scene)
+    frame_width = max(p.x for p in frame) - min(p.x for p in frame)
+    frame_height = max(p.y for p in frame) - min(p.y for p in frame)
+    # Blender's ortho_scale follows sensor fit, not always the frame height.
+    fit_ratio = max(dimensions.x / max(frame_width, 1e-6), dimensions.y / max(frame_height, 1e-6))
+    required_scale = camera.data.ortho_scale * max(1.0, fit_ratio * padding)
     projected_center = (min_corner + max_corner) * 0.5
     world_to_camera_rotation = camera_rotation.inverted()
     view_center_projected = world_to_camera_rotation @ view_center
@@ -1168,6 +1178,7 @@ def _build_dimension_candidates(structure_segments, structure_rotation, color=PD
     return candidates
 
 
+@Connections.database_transaction()
 def _build_general_dimension_candidates(objects):
     candidates = []
     structure_objects = [obj for obj in objects if _is_structure_object(obj)]
@@ -1234,12 +1245,18 @@ def _project_dimension_candidate(dimension_candidate, camera_rotation, center, s
         return None
 
     p1_camera, p2_camera = max(candidates, key=lambda candidate: candidate[0])[1:]
+    world_axis = (structure_rotation @ _dimension_axis_vector(axis)).normalized()
+    span_start, span_end = local_mid.copy(), local_mid.copy()
+    span_start[axis_index], span_end[axis_index] = axis_min, axis_max
     return {
         "p1": p1_camera - projected_center,
         "p2": p2_camera - projected_center,
         "edge_options": [(a - projected_center, b - projected_center) for _score, a, b in candidates],
         "value": dimension_candidate["value"],
         "candidate": dimension_candidate,
+        "world_axis": world_axis,
+        "world_span": (local_world_point(span_start).dot(world_axis),
+                       local_world_point(span_end).dot(world_axis)),
     }
 
 
@@ -1310,6 +1327,15 @@ def _projected_dimensions_are_redundant(first_dimension, second_dimension, toler
 
     if _same_projected_dimension(first_dimension, second_dimension, tolerance):
         return True
+    if view_name == "Iso":
+        # Depth changes screen-space midpoints, not the measured stations in 3D.
+        alignment = first_dimension["world_axis"].dot(second_dimension["world_axis"])
+        if abs(alignment) >= 1.0 - 1e-6:
+            first_span = sorted(first_dimension["world_span"])
+            second_span = sorted(value * (1 if alignment >= 0 else -1)
+                                 for value in second_dimension["world_span"])
+            if all(abs(a - b) <= tolerance for a, b in zip(first_span, second_span)):
+                return True
     if view_name != "Iso" and _projected_dimensions_share_axis_midpoint(first_dimension, second_dimension, tolerance):
         return True
 
@@ -1439,6 +1465,7 @@ def _view_dimension_data(
             ]))
 
     return {
+        "view_name": view_name,
         "perimeters": perimeters,
         "obstacles": obstacles,
         "frame_width": frame_width,
@@ -1715,6 +1742,7 @@ def _place_view_dimensions(dimension_data, scale):
         label = _format_dimension(axis["value"])
         group = axis["candidate"].get("structure_index", 0)
         features.append({
+            "shortest_exit": dimension_data.get("view_name") == "Iso",
             "axis": axis,
             "group": group,
             "center": tuple(axis.get("center", dimension_data["center"]))[:2],
@@ -1817,58 +1845,18 @@ def _render_view(
     output_path = Path(temp_directory) / f"{view_name.lower()}.png"
     try:
         fitting_started_at = time.perf_counter()
-        fit_changed = False
-        fit_pass_count = 0
-        dimension_object_count = 0
-        dimension_data = None
-        for _fit_pass in range(5):
-            fit_pass_count += 1
-            _remove_dimension_render_objects(dimension_objects, dimension_material)
-            dimension_objects = []
-            dimension_material = None
-            dimension_data = _view_dimension_data(
-                scene,
-                camera,
-                view_center,
-                dimension_candidates,
-                view_name,
-                structure_rotation,
-                allowed_dimension_candidate_indices=allowed_dimension_candidate_indices,
-                drawing_objects=objects,
-            )
-            if dimension_data is not None:
-                dimension_data["layout_scale"] = layout_scale
-            dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
-            dimension_object_count += len(dimension_objects)
-            context.view_layer.update()
-            fit_changed, view_center = _fit_camera_to_projected_objects(
-                scene,
-                camera,
-                list(objects) + dimension_objects,
-                view_center,
-            )
-            if not fit_changed:
-                break
-
-        if fit_changed or not dimension_objects:
-            _remove_dimension_render_objects(dimension_objects, dimension_material)
-            dimension_objects = []
-            dimension_material = None
-            dimension_data = _view_dimension_data(
-                scene,
-                camera,
-                view_center,
-                dimension_candidates,
-                view_name,
-                structure_rotation,
-                allowed_dimension_candidate_indices=allowed_dimension_candidate_indices,
-                drawing_objects=objects,
-            )
-            if dimension_data is not None:
-                dimension_data["layout_scale"] = layout_scale
-            dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
-            dimension_object_count += len(dimension_objects)
-            context.view_layer.update()
+        dimension_data = _view_dimension_data(
+            scene, camera, view_center, dimension_candidates, view_name, structure_rotation,
+            allowed_dimension_candidate_indices=allowed_dimension_candidate_indices,
+            drawing_objects=objects,
+        )
+        if dimension_data is not None:
+            dimension_data["layout_scale"] = layout_scale
+        dimension_objects, dimension_material = _create_dimension_render_objects(scene, camera, view_center, dimension_data)
+        context.view_layer.update()
+        # An orthographic camera can be fitted to the finished world-space
+        # annotations without solving their layout again after each pan/zoom.
+        _fit_camera_to_projected_objects(scene, camera, list(objects) + dimension_objects, view_center)
         if visible_dimension_candidate_indices is not None and dimension_data is not None:
             visible_dimension_candidate_indices.update(
                 axis_dimension["candidate"]["index"]
@@ -1876,8 +1864,8 @@ def _render_view(
             )
         if profiler is not None:
             profiler.record_since("dimension fitting", fitting_started_at)
-            profiler.count("fit passes", fit_pass_count)
-            profiler.count("dimension objects", dimension_object_count)
+            profiler.count("fit passes", 1)
+            profiler.count("dimension objects", len(dimension_objects))
         if dimension_data is not None and dimension_data.get("layout_conflicts", 0):
             print(f"Stagehand PDF: review dimension layout in {profile_label or view_name}; "
                   f"{dimension_data['layout_conflicts']} remaining conflicts")
@@ -2270,6 +2258,7 @@ def _collect_fastener_totals(objects):
     }
 
 
+@Connections.database_transaction()
 def _collect_structure_details(objects):
     return {
         "litec30_lengths": _collect_truss_length_entries(objects, StagehandLinkType.LITEC30),
@@ -3040,6 +3029,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                     try:
                         for view_name in ("Front", "Left", "Top", "Iso"):
                             progress.set_message(f"Rendering general view: {view_name}")
+                            yield
                             general_rendered_views[view_name] = _render_view(
                                 context,
                                 view_name,
@@ -3099,6 +3089,7 @@ class STAGEHAND_OT_generate_pdf_drawings(bpy.types.Operator, ExportHelper):
                             progress.set_message(
                                 f"Rendering structure {group_index}/{len(structure_groups)}: {view_name}"
                             )
+                            yield
                             rendered_views[view_name] = _render_view(
                                 context,
                                 view_name,

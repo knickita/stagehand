@@ -1,5 +1,6 @@
 import math
 import unittest
+from unittest.mock import patch
 
 import DimensionLayout as layout
 
@@ -66,6 +67,42 @@ class DimensionLayoutTests(unittest.TestCase):
         boundary = max(layout.dot(p, placement['normal']) for p in feature['perimeter'])
         lane = (level - boundary - .3 * 1.1) / (.3 * 1.8)
         self.assertAlmostEqual(lane, round(lane))
+
+    def test_shortest_exit_does_not_detour_to_avoid_another_dimension(self):
+        feature = self.feature((-5, 2), (5, 2))
+        feature['shortest_exit'] = True
+        blocker = self.feature((-3, -1), (6, -1),
+                               perimeter=[(-3, -2), (6, -2), (6, -1), (-3, -1)])
+        blocker['shortest_exit'] = True
+        obstacles = [feature['perimeter'], blocker['perimeter'],
+                     [(-4, -5), (6, -5), (6, -2), (-4, -2)]]
+        placements, _ = layout.place_dimensions([feature, blocker], obstacles, .3)
+        self.assertTrue(all(p['normal'][1] > 0 for p in placements))
+        self.assertAlmostEqual(placements[0]['offset'], .3 * 1.1)
+
+    def test_shortest_exit_can_switch_sides_to_avoid_geometry(self):
+        feature = self.feature((-4, 1.8), (4, 1.8))
+        feature['shortest_exit'] = True
+        roof = [(-6, 2.01), (6, 2.01), (6, 20), (-6, 20)]
+        placements, conflicts = layout.place_dimensions([feature], [feature['perimeter'], roof], .3)
+        self.assertEqual(conflicts, 0)
+        self.assertLess(placements[0]['normal'][1], 0)
+
+    def test_budget_exhaustion_keeps_every_dimension_and_bounds_work(self):
+        features = [self.feature((x * .1, 2), (x * .1 + .29, 2)) for x in range(18)]
+        with patch.object(layout, 'pair_conflicts', wraps=layout.pair_conflicts) as comparisons:
+            placements, conflicts = layout.place_dimensions(features, [], .3, refinement_budget=0)
+        count = len(features)
+        self.assertLessEqual(comparisons.call_count, 24 * count * (count - 1) // 2 + count * count)
+        self.assertEqual([p['feature'] for p in placements], features)
+        self.assertEqual(conflicts, sum(layout.pair_conflicts(a, b)
+                                       for i, a in enumerate(placements) for b in placements[i + 1:]))
+
+    def test_far_apart_annotations_skip_detailed_geometry(self):
+        a = layout._placement(self.feature((0, 0), (1, 0)), ((0, 0), (1, 0)), (0, 1), 1, .3)
+        b = layout._placement(self.feature((100, 0), (101, 0)), ((100, 0), (101, 0)), (0, 1), 1, .3)
+        with patch.object(layout, 'polygons_overlap', side_effect=AssertionError('Unnecessary geometry check')):
+            self.assertEqual(layout.pair_conflicts(a, b), 0)
 
 
 if __name__ == '__main__':
