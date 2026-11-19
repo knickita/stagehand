@@ -1132,13 +1132,60 @@ def _structure_dimension_color(structure_index):
     return (*colorsys.hsv_to_rgb(hue, 0.85, 0.48), 1.0)
 
 
+def _stage_perimeter_candidates(objects, rotation, color):
+    decks = [obj for obj in objects if any(_has_tag(obj, tag) for tag in STAGE_DECK_THICKNESS_BY_TAG)]
+    if not decks:
+        return None
+    origin = decks[0].matrix_world.translation
+    inverse = rotation.inverted()
+    levels = {}
+    for obj in decks:
+        points = [inverse @ (obj.matrix_world @ Vector(corner) - origin) for corner in obj.bound_box]
+        low = Vector(tuple(min(p[i] for p in points) for i in range(3)))
+        high = Vector(tuple(max(p[i] for p in points) for i in range(3)))
+        # A deck rotated off the assembly's orthogonal grid needs polygon union,
+        # not an axis-aligned bounding rectangle. Keep its existing dimensions.
+        if any(min(abs(p[i] - low[i]), abs(p[i] - high[i])) > 0.0001
+               for p in points for i in (0, 1)):
+            return None
+        levels.setdefault(round(high.z, 4), []).append((low.x, low.y, high.x, high.y))
+    boundaries = [(z, DimensionLayout.rectangle_boundary(rectangles)) for z, rectangles in sorted(levels.items())]
+    if len(boundaries) == 1 and len(boundaries[0][1]) == 4:
+        return None
+    candidates = []
+    for z, edges in boundaries:
+        for a, b in edges:
+            edge = tuple(origin + rotation @ Vector((*point, z)) for point in (a, b))
+            candidates.append({
+                "color": color, "axis": "X" if a[1] == b[1] else "Y",
+                "value": math.dist(a, b), "segment": tuple(objects),
+                "world_edge": edge, "is_perimeter": True,
+                "outward": rotation @ Vector((b[1] - a[1], a[0] - b[0], 0.0)),
+                "span": None, "is_overall": False, "is_joint": False,
+            })
+    return candidates
+
+
 def _build_dimension_candidates(structure_segments, structure_rotation, color=PDF_DIMENSION_COLOR):
     candidates = []
     seen = set()
 
-    for index, segment_objects in enumerate(structure_segments):
+    perimeter_objects = set()
+    for segment_objects in structure_segments:
         if not segment_objects:
             continue
+
+        if getattr(segment_objects, "quote_axis", None) in {"X", "Y"}:
+            key = _segment_key(segment_objects)
+            if key in perimeter_objects:
+                continue
+            perimeter = _stage_perimeter_candidates(segment_objects, structure_rotation, color)
+            if perimeter is not None:
+                perimeter_objects.add(key)
+                for candidate in perimeter:
+                    candidate["index"] = len(candidates)
+                    candidates.append(candidate)
+                continue
 
         local_box = _segment_local_box(segment_objects, structure_rotation)
         dimensions = local_box["dimensions"]
@@ -1169,10 +1216,11 @@ def _build_dimension_candidates(structure_segments, structure_rotation, color=PD
             "axis": axis,
             "value": value,
             "segment": tuple(segment_objects),
-            "index": index,
+            "index": len(candidates),
             "span": span_override,
             "is_overall": bool(getattr(segment_objects, "is_overall", False)),
             "is_joint": len(segment_objects) == 1 and _is_truss_joint_object(segment_objects[0]),
+            "anchor_to_legs": axis == "Z" and quote_end_offset > 0.0,
         })
 
     return candidates
@@ -1202,6 +1250,19 @@ def _build_general_dimension_candidates(objects):
 
 def _project_dimension_candidate(dimension_candidate, camera_rotation, center, structure_rotation, assembly_projected_center):
     axis = dimension_candidate["axis"]
+    if dimension_candidate.get("is_perimeter"):
+        a, b = dimension_candidate["world_edge"]
+        p1, p2 = (_camera_point(camera_rotation, center, point) for point in (a, b))
+        p1.z = p2.z = 0.0
+        if (p2 - p1).length <= DIMENSION_DUPLICATE_TOLERANCE:
+            return None
+        world_axis = (b - a).normalized()
+        return {
+            "p1": p1, "p2": p2, "edge_options": [(p1, p2)],
+            "value": dimension_candidate["value"], "candidate": dimension_candidate,
+            "world_axis": world_axis, "world_span": (a.dot(world_axis), b.dot(world_axis)),
+            "outward": camera_rotation.inverted() @ dimension_candidate["outward"],
+        }
     local_box = _segment_local_box(dimension_candidate["segment"], structure_rotation)
     axis_index = {"X": 0, "Y": 1, "Z": 2}[axis]
     local_min = local_box["min_corner"]
@@ -1217,34 +1278,56 @@ def _project_dimension_candidate(dimension_candidate, camera_rotation, center, s
     def local_world_point(local_point):
         return local_box["origin"] + (local_box["rotation"] @ local_point)
 
-    for first_side in (local_min[other_axis_indices[0]], local_max[other_axis_indices[0]]):
-        for second_side in (local_min[other_axis_indices[1]], local_max[other_axis_indices[1]]):
-            p1_local = local_mid.copy()
-            p2_local = local_mid.copy()
-            p1_local[axis_index] = axis_min
-            p2_local[axis_index] = axis_max
-            p1_local[other_axis_indices[0]] = first_side
-            p2_local[other_axis_indices[0]] = first_side
-            p1_local[other_axis_indices[1]] = second_side
-            p2_local[other_axis_indices[1]] = second_side
+    anchor_boxes = [(local_min, local_max)]
+    if dimension_candidate.get("anchor_to_legs"):
+        inverse_rotation = structure_rotation.inverted()
+        anchor_boxes = []
+        for obj in dimension_candidate["segment"]:
+            points = [inverse_rotation @ (obj.matrix_world @ Vector(corner) - local_box["origin"])
+                      for corner in obj.bound_box]
+            anchor_boxes.append((
+                Vector(tuple(min(p[i] for p in points) for i in range(3))),
+                Vector(tuple(max(p[i] for p in points) for i in range(3))),
+            ))
+    anchor_positions = sorted({
+        (first_side, second_side)
+        for low, high in anchor_boxes
+        for first_side in (low[other_axis_indices[0]], high[other_axis_indices[0]])
+        for second_side in (low[other_axis_indices[1]], high[other_axis_indices[1]])
+    })
+    for first_side, second_side in anchor_positions:
+        p1_local = local_mid.copy()
+        p2_local = local_mid.copy()
+        p1_local[axis_index] = axis_min
+        p2_local[axis_index] = axis_max
+        p1_local[other_axis_indices[0]] = first_side
+        p2_local[other_axis_indices[0]] = first_side
+        p1_local[other_axis_indices[1]] = second_side
+        p2_local[other_axis_indices[1]] = second_side
 
-            p1_projected = camera_rotation.inverted() @ local_world_point(p1_local)
-            p2_projected = camera_rotation.inverted() @ local_world_point(p2_local)
-            p1_camera = Vector((p1_projected.x, p1_projected.y, 0.0))
-            p2_camera = Vector((p2_projected.x, p2_projected.y, 0.0))
-            if (p2_camera - p1_camera).length <= DIMENSION_DUPLICATE_TOLERANCE:
-                continue
+        p1_projected = camera_rotation.inverted() @ local_world_point(p1_local)
+        p2_projected = camera_rotation.inverted() @ local_world_point(p2_local)
+        p1_camera = Vector((p1_projected.x, p1_projected.y, 0.0))
+        p2_camera = Vector((p2_projected.x, p2_projected.y, 0.0))
+        if (p2_camera - p1_camera).length <= DIMENSION_DUPLICATE_TOLERANCE:
+            continue
 
-            direction_x, direction_y = _normalize_2d(p2_camera.x - p1_camera.x, p2_camera.y - p1_camera.y)
-            normal = Vector((-direction_y, direction_x, 0.0))
-            mid_camera = (p1_camera + p2_camera) * 0.5
-            outside_score = abs((mid_camera - assembly_projected_center).dot(normal))
-            candidates.append((outside_score, p1_camera, p2_camera))
+        direction_x, direction_y = _normalize_2d(p2_camera.x - p1_camera.x, p2_camera.y - p1_camera.y)
+        normal = Vector((-direction_y, direction_x, 0.0))
+        mid_camera = (p1_camera + p2_camera) * 0.5
+        outside_score = abs((mid_camera - assembly_projected_center).dot(normal))
+        candidates.append((outside_score, p1_camera, p2_camera))
 
     if not candidates:
         return None
 
     p1_camera, p2_camera = max(candidates, key=lambda candidate: candidate[0])[1:]
+    if dimension_candidate.get("anchor_to_legs"):
+        # Only the two outermost real supports can win the parallel lane search.
+        direction = (p2_camera - p1_camera).normalized()
+        normal = Vector((-direction.y, direction.x, 0.0))
+        candidates = [select(candidates, key=lambda c: ((c[1] + c[2]) * 0.5).dot(normal))
+                      for select in (min, max)]
     world_axis = (structure_rotation @ _dimension_axis_vector(axis)).normalized()
     span_start, span_end = local_mid.copy(), local_mid.copy()
     span_start[axis_index], span_end[axis_index] = axis_min, axis_max
@@ -1319,6 +1402,9 @@ def _projected_dimension_preference_key(projected_dimension):
 def _projected_dimensions_are_redundant(first_dimension, second_dimension, tolerance, view_name=None):
     first_candidate = first_dimension["candidate"]
     second_candidate = second_dimension["candidate"]
+    if first_candidate.get("is_perimeter") or second_candidate.get("is_perimeter"):
+        return (abs(first_dimension["value"] - second_dimension["value"]) <= tolerance
+                and _same_projected_dimension(first_dimension, second_dimension, tolerance))
     if first_candidate.get("is_joint") or second_candidate.get("is_joint"):
         if _segment_key(first_candidate["segment"]) != _segment_key(second_candidate["segment"]):
             return False
@@ -1456,7 +1542,17 @@ def _view_dimension_data(
             points.extend(_camera_point(camera_rotation, center, obj.matrix_world @ Vector(corner))
                           for corner in obj.bound_box)
     perimeters = {group: DimensionLayout.convex_hull(points) for group, points in structure_points.items()}
-    obstacles = list(perimeters.values())
+    perimeter_groups = {c.get("structure_index", 0) for c in dimension_candidates if c.get("is_perimeter")}
+    obstacles = [polygon for group, polygon in perimeters.items() if group not in perimeter_groups]
+    perimeter_objects = {}
+    for candidate in dimension_candidates:
+        if candidate.get("structure_index", 0) in perimeter_groups:
+            for obj in candidate["segment"]:
+                perimeter_objects[_object_uid(obj)] = obj
+    obstacles.extend(DimensionLayout.convex_hull([
+        _camera_point(camera_rotation, center, obj.matrix_world @ Vector(corner))
+        for corner in obj.bound_box
+    ]) for obj in perimeter_objects.values())
     for obj in drawing_objects or ():
         if _object_uid(obj) not in covered_uids:
             obstacles.append(DimensionLayout.convex_hull([
@@ -1659,6 +1755,11 @@ def _create_line_render_objects(scene, objects, hidden_objects=None):
 
     for obj in objects:
         line_obj = obj.copy()
+        # Render copies must not participate in UID repair or catalogue mesh sharing.
+        stagehand = getattr(line_obj, "stagehand", None)
+        if stagehand is not None:
+            stagehand.is_stagehand_object = False
+            stagehand.uid = ""
         line_obj.data = obj.data.copy()
         line_obj.animation_data_clear()
         line_obj.name = f"Stagehand PDF Line {obj.name}"
@@ -1674,6 +1775,22 @@ def _create_line_render_objects(scene, objects, hidden_objects=None):
     return temporary_objects, surface_material, original_hide_render
 
 
+def _remove_temporary_render_objects(temporary_objects, materials):
+    objects = set(temporary_objects)
+    data_blocks = {obj.data for obj in objects if obj.data is not None}
+    if objects:
+        bpy.data.batch_remove(ids=objects)
+
+    # Check users after unlinking objects so shared or retained data survives.
+    unused_data = {data for data in data_blocks if data.users == 0}
+    if unused_data:
+        bpy.data.batch_remove(ids=unused_data)
+
+    unused_materials = {material for material in materials if material.users == 0}
+    if unused_materials:
+        bpy.data.batch_remove(ids=unused_materials)
+
+
 def _remove_line_render_objects(temporary_objects, surface_material, original_hide_render):
     for obj, hide_render in original_hide_render:
         try:
@@ -1681,14 +1798,9 @@ def _remove_line_render_objects(temporary_objects, surface_material, original_hi
         except ReferenceError:
             pass
 
-    for obj in temporary_objects:
-        mesh = obj.data
-        bpy.data.objects.remove(obj, do_unlink=True)
-        if mesh is not None and mesh.users == 0:
-            bpy.data.meshes.remove(mesh)
-
-    if surface_material is not None and surface_material.users == 0:
-        bpy.data.materials.remove(surface_material)
+    _remove_temporary_render_objects(
+        temporary_objects, (surface_material,) if surface_material is not None else (),
+    )
 
 
 def _camera_overlay_point(camera_rotation, center, point, overlay_depth=0.0):
@@ -1745,8 +1857,11 @@ def _place_view_dimensions(dimension_data, scale):
             "shortest_exit": dimension_data.get("view_name") == "Iso",
             "axis": axis,
             "group": group,
+            "outward": tuple(axis["outward"])[:2] if "outward" in axis else None,
             "center": tuple(axis.get("center", dimension_data["center"]))[:2],
-            "perimeter": dimension_data["perimeters"][group],
+            "perimeter": ([tuple(axis["p1"])[:2], tuple(axis["p2"])[:2]]
+                          if axis["candidate"].get("is_perimeter")
+                          else dimension_data["perimeters"][group]),
             "edges": [(tuple(a)[:2], tuple(b)[:2])
                       for a, b in axis.get("edge_options", [(axis["p1"], axis["p2"])])],
             "text_width": len(label) * text_size * 0.64,
@@ -1798,16 +1913,7 @@ def _create_dimension_render_objects(scene, camera, center, dimension_data):
 
 
 def _remove_dimension_render_objects(temporary_objects, materials):
-    for obj in temporary_objects:
-        data = obj.data
-        bpy.data.objects.remove(obj, do_unlink=True)
-        if data is not None and data.users == 0:
-            if isinstance(data, bpy.types.Curve):
-                bpy.data.curves.remove(data)
-
-    for material in materials or ():
-        if material.users == 0:
-            bpy.data.materials.remove(material)
+    _remove_temporary_render_objects(temporary_objects, materials or ())
 
 
 def _render_view(

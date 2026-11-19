@@ -44,6 +44,7 @@ class GeneralDimensionTests(unittest.TestCase):
                 isinstance(target, ast.Name) and target.id in {
                     "PDF_DIMENSION_COLOR", "PDF_STRUCTURE_DIMENSION_COLORS",
                     "STRUCTURE_HORIZONTAL_TAG", "STRUCTURE_VERTICAL_TAG",
+                    "STAGE_DECK_THICKNESS_BY_TAG",
                 } for target in node.targets
             ):
                 exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), self.ns)

@@ -3,6 +3,46 @@
 import math
 
 
+def rectangle_boundary(rectangles, precision=4):
+    """Oriented, merged union edges; occupied area stays on the left.
+
+    Coordinate compression also splits partially shared edges and T junctions.
+    Interior holes retain their own clockwise boundary.
+    """
+    rectangles = sorted(set(tuple(round(v, precision) for v in rect) for rect in rectangles))
+    rectangles = [r for r in rectangles if r[2] > r[0] and r[3] > r[1]]
+    if not rectangles:
+        return []
+    xs = sorted({v for r in rectangles for v in (r[0], r[2])})
+    ys = sorted({v for r in rectangles for v in (r[1], r[3])})
+    xi, yi = {v: i for i, v in enumerate(xs)}, {v: i for i, v in enumerate(ys)}
+    cells = set()
+    for x0, y0, x1, y1 in rectangles:
+        cells.update((i, j) for i in range(xi[x0], xi[x1]) for j in range(yi[y0], yi[y1]))
+    lines = {}
+    for i, j in sorted(cells):
+        for neighbor, axis, fixed, start, end, sign in (
+            ((i, j - 1), 0, ys[j], xs[i], xs[i + 1], 1),
+            ((i + 1, j), 1, xs[i + 1], ys[j], ys[j + 1], 1),
+            ((i, j + 1), 0, ys[j + 1], xs[i], xs[i + 1], -1),
+            ((i - 1, j), 1, xs[i], ys[j], ys[j + 1], -1),
+        ):
+            if neighbor not in cells:
+                lines.setdefault((axis, fixed, sign), []).append((start, end))
+    edges = []
+    for (axis, fixed, sign), intervals in sorted(lines.items()):
+        merged = []
+        for start, end in sorted(intervals):
+            if merged and start == merged[-1][1]:
+                merged[-1] = (merged[-1][0], end)
+            else:
+                merged.append((start, end))
+        for start, end in merged:
+            a, b = ((start, fixed), (end, fixed)) if axis == 0 else ((fixed, start), (fixed, end))
+            edges.append((a, b) if sign > 0 else (b, a))
+    return edges
+
+
 def add(a, b):
     return (a[0] + b[0], a[1] + b[1])
 
@@ -158,7 +198,8 @@ def place_dimensions(features, obstacles, text_size, *, refinement_budget=50000)
             continue
         normal = (-direction[1] / length, direction[0] / length)
         midpoint = mul(add(p1, p2), 0.5)
-        if dot(sub(midpoint, feature['center']), normal) < 0:
+        preferred_normal = feature.get('outward') or sub(midpoint, feature['center'])
+        if dot(preferred_normal, normal) < 0:
             normal = mul(normal, -1)
         choices = []
         for side in (1, -1):

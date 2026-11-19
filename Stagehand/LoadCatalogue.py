@@ -19,6 +19,8 @@ CACHE_MESH_PATH_KEY = f"{CACHE_METADATA_PREFIX}mesh_path"
 CACHE_PART_COUNT_KEY = f"{CACHE_METADATA_PREFIX}part_count"
 CACHE_PART_KEY_PREFIX = f"{CACHE_METADATA_PREFIX}part_"
 CACHE_SOURCE_NAME_KEY = f"{CACHE_METADATA_PREFIX}source_name"
+INSTANCE_PART_KEY = "stagehand_asset_part_index"
+INSTANCE_MESH_PATH_KEY = "stagehand_asset_mesh_path"
 
 
 def _addon_directory():
@@ -123,6 +125,7 @@ def refresh_scene_objects_from_catalogue():
 
         Connections.prune_stale_connections()
 
+    repair_catalogue_mesh_sharing()
     return refreshed_count, skipped_count
 
 
@@ -294,6 +297,83 @@ def _clear_cache_metadata(obj):
             del obj[key]
 
 
+def _share_mesh_data(obj, source):
+    """Relink only mesh data; transforms and Stagehand state stay per object."""
+    if (
+        obj.type != 'MESH'
+        or source.type != 'MESH'
+        or obj.mode != 'OBJECT'
+        or obj.library is not None
+        or obj.override_library is not None
+        or obj.data == source.data
+    ):
+        return False
+
+    old_mesh = obj.data
+    obj.data = source.data
+    # Never purge unrelated orphan data or meshes still used outside Stagehand.
+    if old_mesh.users == 0 and not old_mesh.use_fake_user and old_mesh.library is None:
+        bpy.data.meshes.remove(old_mesh)
+    return True
+
+
+def share_duplicate_catalogue_mesh(obj, original):
+    """A duplicated UID identifies the source part even in pre-cache files."""
+    if not obj.stagehand.asset_id or obj.stagehand.asset_id != original.stagehand.asset_id:
+        return False
+    return _share_mesh_data(obj, original)
+
+
+def repair_catalogue_mesh_sharing():
+    """Reuse cached meshes, including copies saved with already distinct UIDs.
+
+    Part indices persist through Blender duplication and save/load. Legacy
+    multipart objects are matched by mesh identity only: an asset ID alone
+    cannot distinguish, for example, a fixture's base from its moving head.
+    """
+    templates = {}
+    for asset_id, template in ProjectDatabase.get_asset_cache(create=False).items():
+        asset_data = CATALOGUE_BY_ID.get(asset_id)
+        if asset_data is None:
+            continue
+        if str(template.get(CACHE_MESH_PATH_KEY, "")) != str(asset_data["mesh3d"]):
+            continue
+        parts = _cached_template_parts(template)
+        mesh_parts = {
+            index: part for index, part in enumerate(parts) if part.type == 'MESH'
+        }
+        if mesh_parts:
+            templates[asset_id] = (str(asset_data["mesh3d"]), mesh_parts)
+
+    repaired_count = 0
+    for obj in _iter_stagehand_scene_objects():
+        if obj.type != 'MESH':
+            continue
+        cached = templates.get(int(obj.stagehand.asset_id))
+        if cached is None:
+            continue
+        mesh_path, parts = cached
+        if obj.get(INSTANCE_MESH_PATH_KEY, mesh_path) != mesh_path:
+            continue
+        part_index = obj.get(INSTANCE_PART_KEY)
+        if part_index is None:
+            part_index = next(
+                (index for index, part in parts.items() if part.data == obj.data),
+                None,
+            )
+            if part_index is None and len(parts) == 1:
+                part_index = next(iter(parts))
+        source = parts.get(part_index)
+        if source is None or obj.library is not None or obj.override_library is not None:
+            continue
+        repaired_count += int(_share_mesh_data(obj, source))
+        if obj.get(INSTANCE_PART_KEY) != part_index:
+            obj[INSTANCE_PART_KEY] = part_index
+        if obj.get(INSTANCE_MESH_PATH_KEY) != mesh_path:
+            obj[INSTANCE_MESH_PATH_KEY] = mesh_path
+    return repaired_count
+
+
 def _instantiate_cached_template(template, asset_data, select=False):
     template_parts = _cached_template_parts(template)
     if not template_parts:
@@ -305,7 +385,7 @@ def _instantiate_cached_template(template, asset_data, select=False):
     instance_by_template = {}
     instances = []
 
-    for template_part in template_parts:
+    for part_index, template_part in enumerate(template_parts):
         source_name = str(
             template_part.get(CACHE_SOURCE_NAME_KEY, asset_data["name"])
         )
@@ -313,6 +393,8 @@ def _instantiate_cached_template(template, asset_data, select=False):
         if template_part.data is not None:
             instance.data = template_part.data
         _clear_cache_metadata(instance)
+        instance[INSTANCE_PART_KEY] = part_index
+        instance[INSTANCE_MESH_PATH_KEY] = str(asset_data["mesh3d"])
         instance.hide_select = False
         instance.hide_viewport = False
         instance.hide_render = False

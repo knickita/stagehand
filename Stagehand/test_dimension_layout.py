@@ -6,6 +6,28 @@ import DimensionLayout as layout
 
 
 class DimensionLayoutTests(unittest.TestCase):
+    def test_rectangle_boundary_merges_modules_and_partial_shared_edges(self):
+        edges = layout.rectangle_boundary([(0, 0, 4, 1), (0, 1, 2, 2), (2, 1, 4, 2)])
+        self.assertEqual(len(edges), 4)
+        self.assertEqual(sum(math.dist(a, b) for a, b in edges), 12)
+
+    def test_rectangle_boundary_preserves_t_shape_and_equal_length_sides(self):
+        edges = layout.rectangle_boundary([(-4, 0, 20, 4), (0, 4, 16, 8)])
+        self.assertEqual(len(edges), 8)
+        self.assertEqual(sorted(math.dist(a, b) for a, b in edges), [4] * 6 + [16, 24])
+        self.assertIn(((20, 4), (16, 4)), edges)
+        self.assertIn(((0, 4), (-4, 4)), edges)
+
+    def test_rectangle_boundary_keeps_holes_duplicates_and_disconnected_islands(self):
+        rects = [(0, 0, 4, 1), (0, 3, 4, 4), (0, 1, 1, 3), (3, 1, 4, 3)]
+        edges = layout.rectangle_boundary(rects + rects + [(10, 0, 11, 1)])
+        self.assertEqual(len(edges), 12)
+        self.assertEqual(sum(math.dist(a, b) for a, b in edges), 28)
+        self.assertEqual(edges, layout.rectangle_boundary(list(reversed(rects)) + [(10, 0, 11, 1)]))
+
+    def test_rectangle_boundary_tolerates_small_float_gaps(self):
+        self.assertEqual(len(layout.rectangle_boundary([(0, 0, 2, 1), (2.000001, 0, 4, 1)])), 4)
+
     def feature(self, p1, p2, width=1.0, group=0, perimeter=None):
         return dict(edges=[(p1, p2)], center=(0, 0), text_width=width, group=group,
                     perimeter=perimeter or [(-5, -2), (5, -2), (5, 2), (-5, 2)])

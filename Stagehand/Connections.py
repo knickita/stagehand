@@ -1261,6 +1261,8 @@ def mark_duplicate_repair_needed():
 def _repair_duplicate_ids(rebuild_indexes=True):
     global _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS
 
+    from .LoadCatalogue import share_duplicate_catalogue_mesh
+
     _LAST_REPAIRED_DUPLICATE_OBJECT_UIDS = set()
     if rebuild_indexes:
         _rebuild_database_indexes()
@@ -1287,6 +1289,7 @@ def _repair_duplicate_ids(rebuild_indexes=True):
 
     for original_uid, objects in duplicate_groups.items():
         for duplicate_index, obj in enumerate(objects[1:], start=1):
+            share_duplicate_catalogue_mesh(obj, objects[0])
             link_snapshots = []
             for link_index, link in iter_object_links(obj):
                 old_link_uid = ensure_stagehand_link_uid(link)
@@ -1392,6 +1395,11 @@ def _repair_duplicate_ids_if_needed():
         return 0
 
     repaired_count = _repair_duplicate_ids(rebuild_indexes=False)
+    # This pass already runs after duplication, file load and undo/redo, outside
+    # active transforms. Keep mesh repair here instead of scanning every frame.
+    from .LoadCatalogue import repair_catalogue_mesh_sharing
+
+    repair_catalogue_mesh_sharing()
     _DUPLICATE_REPAIR_NEEDED = False
     return repaired_count
 
