@@ -543,6 +543,12 @@ def _apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
 
     _clear_collection(stagehand.links)
     for link_index, link_data in enumerate(asset_data.get("links", [])):
+        z_scale = float(obj.get("stagehand_recipe_link_z_scale", 1.0))
+        if z_scale != 1.0:
+            link_data = dict(link_data)
+            pos_dir = list(link_data["posdir"])
+            pos_dir[2] *= z_scale
+            link_data["posdir"] = pos_dir
         link_item = stagehand.links.add()
         preserved_state = None
         if preserve_links:

@@ -1910,7 +1910,17 @@ def _normalized_selvoline_settings(definition, parameters):
     height_key = str(parameters.get("stageHeight", ""))
     post_asset_id = post_asset_ids.get(height_key)
     if post_asset_id is None:
-        raise ValueError("Selvoline stage height must be 50cm or 150cm")
+        raise ValueError("Seleziona un range Selvoline: 56-70cm o 125-145cm")
+    height_variant = settings["postHeightVariants"][height_key]
+    post_height_cm = float(parameters.get(
+        height_variant["heightParameter"], height_variant["min"]
+    ))
+    if not height_variant["min"] <= post_height_cm <= height_variant["max"]:
+        raise ValueError(
+            f"Altezza piantone Selvoline fuori dal range "
+            f"{height_variant['min']}-{height_variant['max']}cm"
+        )
+    post_scale = post_height_cm * 0.01 / float(height_variant["baseLength"])
 
     railings_mode = str(parameters.get("railings", "NONE"))
     if railings_mode not in {"NONE", "THREE_SIDES", "FOUR_SIDES"}:
@@ -1945,6 +1955,8 @@ def _normalized_selvoline_settings(definition, parameters):
         "moduleSize": module_size,
         "maxItems": max_items,
         "postAssetId": post_asset_id,
+        "postHeightCm": post_height_cm,
+        "postScale": post_scale,
         **asset_settings,
         "postLinks": post_links,
         "beamStartLink": int(settings.get("beamStartLink", 0)),
@@ -2333,6 +2345,14 @@ def build_selvoline_stage(context, definition, parameters):
                 + structure_matrix.to_quaternion()
                 @ Vector((x_index * module_size, y_index * module_size, 0.0))
             )
+            _scale_object_world_axis_around_pivot(
+                post, "z", settings["postScale"], post.matrix_world.translation
+            )
+            post["stagehand_recipe_link_z_scale"] = settings["postScale"]
+            for link in post.stagehand.links:
+                pos_dir = list(link.posDir)
+                pos_dir[2] *= settings["postScale"]
+                link.posDir = pos_dir
             posts[(x_index, y_index)] = post
 
         for x_index, y_index in sorted(x_beam_sites, key=lambda site: (site[1], site[0])):
@@ -2397,7 +2417,7 @@ def build_selvoline_stage(context, definition, parameters):
         obj.select_set(True)
     context.view_layer.objects.active = posts[min(post_sites, key=lambda site: (site[1], site[0]))]
 
-    height_label = "50cm" if str(parameters["stageHeight"]) == "H50" else "150cm"
+    height_label = f"{settings['postHeightCm']:g}cm"
     railings_label = {
         "NONE": "senza mancorrenti",
         "THREE_SIDES": "mancorrenti su 3 lati",

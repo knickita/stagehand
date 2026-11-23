@@ -605,13 +605,29 @@
                 },
                 "stageHeight": {
                     "type": "ENUM",
-                    "label": "Altezza",
-                    "description": "Altezza dei piantoni Selvoline",
+                    "label": "Range altezza",
+                    "description": "Tipo di piantone Selvoline",
                     "default": "H50",
                     "items": [
-                        { "value": "H50", "label": "50 cm" },
-                        { "value": "H150", "label": "150 cm" }
+                        { "value": "H50", "label": "56-70 cm" },
+                        { "value": "H150", "label": "125-145 cm" }
                     ]
+                },
+                "postHeightLowCm": {
+                    "type": "INT",
+                    "label": "Altezza piantone (cm)",
+                    "default": 56,
+                    "min": 56,
+                    "max": 70,
+                    "visibleWhen": { "stageHeight": "H50" }
+                },
+                "postHeightHighCm": {
+                    "type": "INT",
+                    "label": "Altezza piantone (cm)",
+                    "default": 125,
+                    "min": 125,
+                    "max": 145,
+                    "visibleWhen": { "stageHeight": "H150" }
                 },
                 "railings": {
                     "type": "ENUM",
@@ -636,6 +652,10 @@
                 "postAssetIds": {
                     "H50": 53,
                     "H150": 64
+                },
+                "postHeightVariants": {
+                    "H50": { "heightParameter": "postHeightLowCm", "min": 56, "max": 70, "baseLength": 0.575 },
+                    "H150": { "heightParameter": "postHeightHighCm", "min": 125, "max": 145, "baseLength": 1.575 }
                 },
                 "xBeamAssetId": 55,
                 "yBeamAssetId": 54,
