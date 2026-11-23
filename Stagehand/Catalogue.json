@@ -10,6 +10,8 @@
             ],
             "audio": {
                 "splAtOneMeter": 133.5,
+                "lowpass": 20000.0,
+                "highpass": 100.0,
                 "delayMeters": 0.0,
                 "reversePolarity": false,
                 "muted": false,
@@ -68,6 +70,8 @@
             ],
             "audio": {
                 "splAtOneMeter": 143.0,
+                "lowpass": 100.0,
+                "highpass": 20.0,
                 "delayMeters": 0.0,
                 "reversePolarity": false,
                 "muted": false,
@@ -3714,7 +3718,7 @@
                         0.0,
                         1.0
                     ],
-                    "displayradius": 0.01,
+                    "displayradius": 0.1,
                     "type": 28,
                     "allowrotations": "none"
                 }
@@ -6680,6 +6684,95 @@
                     ],
                     "displayradius": 0.025,
                     "type": 1
+                }
+            ]
+        },
+        {
+            "name": "litecTowerlift-tl3",
+            "uniqueId": 78,
+            "mesh3d": "Models/litecTowerlift-tl3",
+            "tags": [
+                "structure",
+                "truss"
+            ],
+            "links": [                
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        1.595,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071067094802856
+                    ],
+                    "displayradius": 0.1,
+                    "type": 0,
+                    "allowrotations": "90"
+                },
+                {
+                    "posdir": [
+                        0.11999999731779099,
+                        0.11999999731779099,
+                        0.096,
+                        0.2705981135368347,
+                        0.6532815098762512,
+                        0.6532814502716064,
+                        0.27059805393218994
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 1.5
+                },
+                {
+                    "posdir": [
+                        -0.11999999731779099,
+                        0.11999999731779099,
+                        0.096,
+                        0.2705981135368347,
+                        -0.6532815098762512,
+                        -0.6532814502716064,
+                        0.27059805393218994
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 1.5
+                },
+                {
+                    "posdir": [
+                        0.11999999731779099,
+                        -0.11999999731779099,
+                        0.096,
+                        0.653281569480896,
+                        0.2705981433391571,
+                        0.2705981433391571,
+                        0.6532813906669617
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 1.5
+                },
+                {
+                    "posdir": [
+                        -0.11999999731779099,
+                        -0.11999999731779099,
+                        0.096,
+                        0.653281569480896,
+                        -0.2705981433391571,
+                        -0.2705981433391571,
+                        0.6532813906669617
+                    ],
+                    "displayradius": 0.025,
+                    "type": 2,
+                    "allowrotations": "none",
+                    "cylindricaltype": true,
+                    "length": 1.5
                 }
             ]
         }

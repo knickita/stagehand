@@ -1614,7 +1614,7 @@ def _add_litec_run(
     return connection_count
 
 
-def _add_litec_heavy_base(
+def _add_litec_base(
     leg_obj,
     leg_link_index,
     base_asset_id,
@@ -1630,7 +1630,7 @@ def _add_litec_heavy_base(
         leg_obj,
         leg_link_index,
     ):
-        raise RuntimeError("Unable to position a Litec heavy base")
+        raise RuntimeError("Unable to position a Litec base")
     _connect_litec_pair(
         base_obj,
         base_link_index,
@@ -1657,7 +1657,29 @@ def build_litec_structure(context, definition, parameters):
 
     family = _normalized_litec_family(definition, parameters)
     measurement_mode = str(parameters.get("measurementMode", "INTERNAL")).upper()
-    add_heavy_base = bool(parameters.get("heavyBase", False))
+    base_mode = str(parameters.get("base", "NONE"))
+    if base_mode not in {"NONE", "HEAVY_90KG", "TOWERLIFT"}:
+        raise ValueError("Invalid Litec base option")
+    add_base = base_mode != "NONE"
+    towerlift_height = (
+        float(settings.get("towerliftHeight", 1.5))
+        if base_mode == "TOWERLIFT" else 0.0
+    )
+    leg_family = family
+    carriage_drop = (
+        float(settings.get("carriageHeightOffset", 0.75))
+        if base_mode == "TOWERLIFT" else 0.0
+    )
+    if base_mode == "TOWERLIFT":
+        leg_family = _normalized_litec_family(
+            definition, {**parameters, "family": "LITEC30"}
+        )
+        family = {
+            **family,
+            "cubeAssetId": int(settings.get("carriageAssetId", 35)),
+            "cubeSize": 0.4,
+            "cubeLinks": {"xNegative": 0, "xPositive": 1, "yNegative": 2, "yPositive": 3},
+        }
     max_run = float(settings.get("maxRun", 50.0))
     max_items = int(settings.get("maxItems", 500))
     if max_run <= 0.0 or max_items <= 0:
@@ -1679,6 +1701,9 @@ def build_litec_structure(context, definition, parameters):
         measurement_mode,
         "height",
     )
+    straight_height -= towerlift_height
+    if straight_height <= 0.0:
+        raise ValueError("L'altezza deve superare 1,5m più l'eventuale spessore del cubo")
     width_plan = _litec_segment_plan(
         straight_width,
         family,
@@ -1689,7 +1714,7 @@ def build_litec_structure(context, definition, parameters):
     )
     height_plan = _litec_segment_plan(
         straight_height,
-        family,
+        leg_family,
         "height",
         requested_height,
         measurement_mode,
@@ -1698,21 +1723,31 @@ def build_litec_structure(context, definition, parameters):
 
     cube_size = family["cubeSize"]
     cube_links = family["cubeLinks"]
-    heavy_base_asset_id = int(settings.get("heavyBaseAssetId", 10))
-    heavy_base_link = int(settings.get("heavyBaseLink", 0))
-    if add_heavy_base:
-        heavy_base_asset = LoadCatalogue.CATALOGUE_BY_ID.get(heavy_base_asset_id)
-        if heavy_base_asset is None:
+    base_asset_id = int(settings.get(
+        "towerliftAssetId" if base_mode == "TOWERLIFT" else "heavyBaseAssetId",
+        78 if base_mode == "TOWERLIFT" else 10,
+    ))
+    base_link = int(settings.get(
+        "towerliftLink" if base_mode == "TOWERLIFT" else "heavyBaseLink", 0
+    ))
+    if add_base:
+        base_asset = LoadCatalogue.CATALOGUE_BY_ID.get(base_asset_id)
+        if base_asset is None:
             raise ValueError(
-                f"Catalogue asset ID {heavy_base_asset_id} was not found"
+                f"Catalogue asset ID {base_asset_id} was not found"
             )
         try:
-            heavy_base_asset["links"][heavy_base_link]
+            base_link_type = base_asset["links"][base_link]["type"]
         except (IndexError, TypeError) as exc:
             raise ValueError(
-                f"Heavy base link {heavy_base_link} is invalid for asset "
-                f"{heavy_base_asset_id}"
+                f"Base link {base_link} is invalid for asset {base_asset_id}"
             ) from exc
+        cube_asset = LoadCatalogue.CATALOGUE_BY_ID[leg_family["cubeAssetId"]]
+        leg_type = cube_asset["links"][leg_family["cubeLinks"]["bottom"]]["type"]
+        if not are_link_types_compatible(base_link_type, leg_type):
+            raise ValueError(
+                f"La base {base_asset['name']} non è compatibile con {family['label']}"
+            )
     center_width = straight_width + cube_size
     requested_depth = None
     straight_depth = None
@@ -1721,8 +1756,8 @@ def build_litec_structure(context, definition, parameters):
     if structure_type == "PORTAL":
         leg_count = 2
         cube_offsets = (
-            (0.0, 0.0, straight_height),
-            (center_width, 0.0, straight_height),
+            (0.0, 0.0, straight_height + towerlift_height),
+            (center_width, 0.0, straight_height + towerlift_height),
         )
         total_items = 2 + len(width_plan) + (2 * len(height_plan))
     else:
@@ -1745,10 +1780,10 @@ def build_litec_structure(context, definition, parameters):
         )
         center_depth = straight_depth + cube_size
         cube_offsets = (
-            (0.0, 0.0, straight_height),
-            (center_width, 0.0, straight_height),
-            (center_width, center_depth, straight_height),
-            (0.0, center_depth, straight_height),
+            (0.0, 0.0, straight_height + towerlift_height),
+            (center_width, 0.0, straight_height + towerlift_height),
+            (center_width, center_depth, straight_height + towerlift_height),
+            (0.0, center_depth, straight_height + towerlift_height),
         )
         total_items = (
             4
@@ -1757,14 +1792,17 @@ def build_litec_structure(context, definition, parameters):
             + (4 * len(height_plan))
         )
 
-    heavy_base_count = leg_count if add_heavy_base else 0
-    total_items += heavy_base_count
+    base_count = leg_count if add_base else 0
+    total_items += base_count
 
     if total_items > max_items:
         raise ValueError(
             f"This structure needs {total_items} items; "
             f"the recipe limit is {max_items}"
         )
+
+    if carriage_drop:
+        cube_offsets = tuple((x, y, z - carriage_drop) for x, y, z in cube_offsets)
 
     imported_objects = []
     connection_count = 0
@@ -1777,23 +1815,49 @@ def build_litec_structure(context, definition, parameters):
         )
 
         def add_vertical_leg(cube):
+            if base_mode == "TOWERLIFT":
+                imported = LoadCatalogue.import_catalogue_asset(base_asset_id)
+                imported_objects.extend(imported)
+                tower = _single_stagehand_object(imported, base_asset_id)
+                tower.matrix_world = cube.matrix_world.copy()
+                base_link_z = float(base_asset["links"][base_link]["posdir"][2])
+                tower.matrix_world.translation -= (
+                    tower.matrix_world.to_quaternion()
+                    @ Vector((0.0, 0.0, straight_height + base_link_z - carriage_drop))
+                )
+                leg_start = len(imported_objects)
+                count, _top, _top_link = _add_litec_run(
+                    tower, base_link, height_plan, leg_family,
+                    imported_objects, return_endpoint=True,
+                )
+                chord_index = int(settings.get("carriageTowerChordLink", 2))
+                carriage_link = int(settings.get("carriageTowerLink", 4))
+                target = next((
+                    obj for obj in reversed([tower, *imported_objects[leg_start:]])
+                    if Connections.get_link(obj, chord_index) is not None
+                    and Connections.links_are_aligned(cube, carriage_link, obj, chord_index)
+                ), None)
+                if target is None:
+                    raise ValueError("Impossibile collegare il carrello 75cm sotto la cima della torre")
+                _connect_litec_pair(cube, carriage_link, target, chord_index)
+                return count + 1
             result = _add_litec_run(
                 cube,
                 cube_links["bottom"],
                 height_plan,
                 family,
                 imported_objects,
-                return_endpoint=add_heavy_base,
+                return_endpoint=add_base,
             )
-            if not add_heavy_base:
+            if not add_base:
                 return result
 
             run_connections, leg_obj, leg_link_index = result
-            _add_litec_heavy_base(
+            _add_litec_base(
                 leg_obj,
                 leg_link_index,
-                heavy_base_asset_id,
-                heavy_base_link,
+                base_asset_id,
+                base_link,
                 imported_objects,
             )
             return run_connections + 1
@@ -1858,7 +1922,7 @@ def build_litec_structure(context, definition, parameters):
         imported_objects,
         f"Added {family['label']} {structure_label} ({dimensions} {mode_label}, "
         f"{total_items} items, {connection_count} connections"
-        f"{f', {heavy_base_count} heavy bases' if heavy_base_count else ''})",
+        f"{f', {base_count} basi' if base_count else ''})",
     )
 
 
@@ -3271,6 +3335,48 @@ def _property_from_definition(parameter_name, parameter, update_callback=None):
     )
 
 
+def _center_recipe_on_world_origin(context, objects):
+    """Center the complete world-space bounding box on X/Y, preserving Z."""
+    recipe_objects = set(objects)
+    for obj in tuple(recipe_objects):
+        recipe_objects.update(obj.children_recursive)
+    if not recipe_objects:
+        return
+
+    context.view_layer.update()
+    depsgraph = context.evaluated_depsgraph_get()
+    coordinates = []
+    for obj in recipe_objects:
+        if obj.type not in {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT', 'VOLUME'}:
+            continue
+        evaluated = obj.evaluated_get(depsgraph)
+        coordinates.extend(
+            evaluated.matrix_world @ Vector(corner)
+            for corner in evaluated.bound_box
+        )
+    if not coordinates:
+        return
+
+    offset = Vector((
+        -(max(point.x for point in coordinates) + min(point.x for point in coordinates)) / 2.0,
+        -(max(point.y for point in coordinates) + min(point.y for point in coordinates)) / 2.0,
+        0.0,
+    ))
+    # Move hierarchy roots only: children inherit the same translation once.
+    roots = []
+    for obj in recipe_objects:
+        parent = obj.parent
+        while parent is not None and parent not in recipe_objects:
+            parent = parent.parent
+        if parent is None:
+            roots.append(obj)
+    for obj in roots:
+        matrix = obj.matrix_world.copy()
+        matrix.translation += offset
+        obj.matrix_world = matrix
+    context.view_layer.update()
+
+
 def _build_operator(definition):
     recipe_id = definition["id"]
     normalized_id = _normalize_identifier(recipe_id)
@@ -3346,6 +3452,7 @@ def _build_operator(definition):
             values = {name: getattr(self, name) for name in parameters}
             with Connections.database_transaction():
                 _objects, message = builder(context, definition, values)
+                _center_recipe_on_world_origin(context, _objects)
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}

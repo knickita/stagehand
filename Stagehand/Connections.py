@@ -923,9 +923,26 @@ def _constrained_connection_pair(obj_a, link_index_a, obj_b, link_index_b):
 
 
 def _set_constrained_child_locks(child_obj):
-    child_obj.lock_location = (True, True, True)
-    child_obj.lock_rotation = (False, True, True)
-    child_obj.lock_scale = (True, True, True)
+    if tuple(child_obj.lock_location) != (True, True, True):
+        child_obj.lock_location = (True, True, True)
+    if tuple(child_obj.lock_rotation) != (False, True, True):
+        child_obj.lock_rotation = (False, True, True)
+    if tuple(child_obj.lock_scale) != (True, True, True):
+        child_obj.lock_scale = (True, True, True)
+
+
+def _set_array_property_if_changed(owner, name, value):
+    """Avoid tagging the depsgraph again for an already enforced array value."""
+    current = getattr(owner, name)
+    if isinstance(value, (tuple, list)):
+        unchanged = all(abs(a - b) <= 1e-7 for a, b in zip(current, value))
+    elif isinstance(value, float):
+        # Blender stores RNA floats at single precision, unlike Python floats.
+        unchanged = abs(current - value) <= 1e-7
+    else:
+        unchanged = current == value
+    if not unchanged:
+        setattr(owner, name, value)
 
 
 def _ensure_constrained_child_rotation_limit(
@@ -941,22 +958,22 @@ def _ensure_constrained_child_rotation_limit(
         rotation_limit = child_obj.constraints.new(type='LIMIT_ROTATION')
         rotation_limit.name = AUDIO_ARRAY_LIMIT_CONSTRAINT_NAME
 
-    rotation_limit.owner_space = 'LOCAL'
-    rotation_limit.influence = 1.0
+    _set_array_property_if_changed(rotation_limit, "owner_space", 'LOCAL')
+    _set_array_property_if_changed(rotation_limit, "influence", 1.0)
     if hasattr(rotation_limit, "use_transform_limit"):
-        rotation_limit.use_transform_limit = True
+        _set_array_property_if_changed(rotation_limit, "use_transform_limit", True)
 
     axis_index = {"X": 0, "Y": 1, "Z": 2}[constraint.axis]
     for index, axis_name in enumerate(("x", "y", "z")):
-        setattr(rotation_limit, f"use_limit_{axis_name}", True)
+        _set_array_property_if_changed(rotation_limit, f"use_limit_{axis_name}", True)
         if index == axis_index:
             minimum = rest_rotation[index] + radians(constraint.min_degrees)
             maximum = rest_rotation[index] + radians(constraint.max_degrees)
         else:
             minimum = rest_rotation[index]
             maximum = rest_rotation[index]
-        setattr(rotation_limit, f"min_{axis_name}", minimum)
-        setattr(rotation_limit, f"max_{axis_name}", maximum)
+        _set_array_property_if_changed(rotation_limit, f"min_{axis_name}", minimum)
+        _set_array_property_if_changed(rotation_limit, f"max_{axis_name}", maximum)
 
 
 def _clear_constrained_child_parent(child_obj, expected_parent=None):
@@ -1131,7 +1148,7 @@ def _enforce_constrained_child_transform(child_obj):
     if constraint is None:
         return False
 
-    child_obj.rotation_mode = 'XYZ'
+    _set_array_property_if_changed(child_obj, "rotation_mode", 'XYZ')
     axis_index = {"X": 0, "Y": 1, "Z": 2}[constraint.axis]
     rotation = list(child_obj.rotation_euler)
     requested_degrees = degrees(rotation[axis_index] - rest_rotation[axis_index])
@@ -1144,9 +1161,9 @@ def _enforce_constrained_child_transform(child_obj):
         rotation[index] = rest_rotation[index]
     rotation[axis_index] += radians(snapped_degrees)
 
-    child_obj.location = rest_location
-    child_obj.rotation_euler = rotation
-    child_obj.scale = rest_scale
+    _set_array_property_if_changed(child_obj, "location", rest_location)
+    _set_array_property_if_changed(child_obj, "rotation_euler", rotation)
+    _set_array_property_if_changed(child_obj, "scale", rest_scale)
     _set_constrained_child_locks(child_obj)
     _ensure_constrained_child_rotation_limit(
         child_obj,

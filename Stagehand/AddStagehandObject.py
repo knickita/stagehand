@@ -15,6 +15,22 @@ addon_keymaps = []
 RECIPE_EXTRA_LINKS_KEY = "stagehand_recipe_extra_link_indices"
 AUDIO_SOURCE_TAG = "audiosource"
 _audio_multi_edit_suppression = 0
+_audio_band_update_suppression = False
+
+
+def _enforce_audio_frequency_range(stagehand, property_name):
+    global _audio_band_update_suppression
+
+    if stagehand.audioHighpass <= stagehand.audioLowpass:
+        return
+    _audio_band_update_suppression = True
+    try:
+        if property_name == "audioHighpass":
+            stagehand.audioHighpass = stagehand.audioLowpass
+        else:
+            stagehand.audioLowpass = stagehand.audioHighpass
+    finally:
+        _audio_band_update_suppression = False
 
 
 def _stagehand_has_tag(stagehand, tag):
@@ -54,6 +70,10 @@ def _make_audio_multi_edit_update(property_name):
     def update(stagehand, context):
         global _audio_multi_edit_suppression
 
+        if _audio_band_update_suppression:
+            return
+        if property_name in {"audioHighpass", "audioLowpass"}:
+            _enforce_audio_frequency_range(stagehand, property_name)
         if _audio_multi_edit_suppression or context is None:
             return
         owner = getattr(stagehand, "id_data", None)
@@ -212,6 +232,24 @@ class StagehandObject(bpy.types.PropertyGroup):
         min=0.0,
         unit='LENGTH',
         update=_make_audio_multi_edit_update("audioDelayMeters"),
+    )
+
+    audioHighpass: bpy.props.FloatProperty(
+        name="Highpass (Hz)",
+        description="Lowest emitted frequency; cannot exceed lowpass",
+        default=20.0,
+        min=20.0,
+        max=20000.0,
+        update=_make_audio_multi_edit_update("audioHighpass"),
+    )
+
+    audioLowpass: bpy.props.FloatProperty(
+        name="Lowpass (Hz)",
+        description="Highest emitted frequency; cannot fall below highpass",
+        default=20000.0,
+        min=20.0,
+        max=20000.0,
+        update=_make_audio_multi_edit_update("audioLowpass"),
     )
 
     audioReversePolarity: bpy.props.BoolProperty(
@@ -485,6 +523,8 @@ def _apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
         stagehand.audioMuted = False
         stagehand.audioAttenuation = 0.0
         stagehand.audioOmnidirectional = False
+        stagehand.audioLowpass = 20000.0
+        stagehand.audioHighpass = 20.0
         stagehand.audioPhaseMode = 'NONE'
         stagehand.audioPhaseAxis = (0.0, -1.0, 0.0)
         stagehand.audioHorizontalDispersion = 100.0
@@ -501,6 +541,9 @@ def _apply_stagehand_catalogue_data(obj, asset_data=None, preserve_links=False):
     stagehand.watt = float(asset_data.get("watt", 0.0))
 
     audio_data = asset_data.get("audio", {})
+    stagehand.audioHighpass = 20.0
+    stagehand.audioLowpass = float(audio_data.get("lowpass", 20000.0))
+    stagehand.audioHighpass = float(audio_data.get("highpass", 20.0))
     stagehand.audioSplAtOneMeter = float(audio_data.get("splAtOneMeter", 100.0))
     stagehand.audioDelayMeters = float(audio_data.get("delayMeters", 0.0))
     stagehand.audioReversePolarity = bool(audio_data.get("reversePolarity", False))
@@ -716,6 +759,8 @@ class STAGEHAND_PT_object_properties(bpy.types.Panel):
             audio_box.prop(stagehand, "audioSplAtOneMeter")
             audio_box.prop(stagehand, "audioAttenuation")
             audio_box.prop(stagehand, "audioDelayMeters")
+            audio_box.prop(stagehand, "audioHighpass")
+            audio_box.prop(stagehand, "audioLowpass")
             audio_box.prop(stagehand, "audioReversePolarity")
             audio_box.prop(stagehand, "audioOmnidirectional")
             if not stagehand.audioOmnidirectional:

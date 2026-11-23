@@ -17,6 +17,8 @@ class AudioVisualizationTests(unittest.TestCase):
         self.assertEqual(
             {
                 "splAtOneMeter",
+                "lowpass",
+                "highpass",
                 "delayMeters",
                 "reversePolarity",
                 "muted",
@@ -96,6 +98,8 @@ class AudioVisualizationTests(unittest.TestCase):
         source = (ROOT / "AddStagehandObject.py").read_text(encoding="utf-8")
         audio_properties = (
             "audioMuted",
+            "audioHighpass",
+            "audioLowpass",
             "audioSplAtOneMeter",
             "audioAttenuation",
             "audioDelayMeters",

@@ -877,11 +877,16 @@
                         }
                     ]
                 },
-                "heavyBase": {
-                    "type": "BOOL",
-                    "label": "Base pesante",
-                    "description": "Aggiunge una base pesante da 90kg sotto ogni gamba verticale",
-                    "default": false
+                "base": {
+                    "type": "ENUM",
+                    "label": "Base",
+                    "description": "Base da collegare alle gambe verticali della struttura",
+                    "default": "NONE",
+                    "items": [
+                        { "value": "NONE", "label": "Nessuna" },
+                        { "value": "HEAVY_90KG", "label": "Base 90kg" },
+                        { "value": "TOWERLIFT", "label": "Towerlift" }
+                    ]
                 }
             },
             "settings": {
@@ -889,6 +894,13 @@
                 "familyResource": "litecFamilies",
                 "heavyBaseAssetId": 10,
                 "heavyBaseLink": 0,
+                "towerliftAssetId": 78,
+                "towerliftLink": 0,
+                "towerliftHeight": 1.5,
+                "carriageAssetId": 35,
+                "carriageTowerLink": 4,
+                "carriageTowerChordLink": 2,
+                "carriageHeightOffset": 0.75,
                 "maxRun": 50.0,
                 "maxItems": 500
             }

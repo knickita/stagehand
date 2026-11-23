@@ -128,6 +128,10 @@ void main()
 
     for (int sourceIndex = 0; sourceIndex < int(audioData.sourceCount); ++sourceIndex)
     {{
+        vec4 nearPlaneAndBand = sourceData(sourceIndex, 4);
+        if (audioData.frequency < nearPlaneAndBand.z
+            || audioData.frequency > nearPlaneAndBand.w)
+            continue;
         vec4 positionSpl = sourceData(sourceIndex, 0);
         vec3 offset = worldPosition - positionSpl.xyz;
         float distanceMeters = max(length(offset), 0.01);
@@ -264,8 +268,8 @@ def _source_uniform_data(context):
         source_data["sourceNearPlane"].append((
             float(stagehand.audioDispersionPlaneSize[0]),
             float(stagehand.audioDispersionPlaneSize[1]),
-            0.0,
-            0.0,
+            float(stagehand.audioHighpass),
+            float(stagehand.audioLowpass),
         ))
 
     return len(source_data["sourcePositionSpl"]), source_data
