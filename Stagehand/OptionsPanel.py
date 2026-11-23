@@ -84,7 +84,17 @@ class StageHandOptionsPanel(bpy.types.Panel):
         )
         settings = box.column(align=True)
         settings.enabled = audio_enabled
-        settings.prop(context.scene, "stagehand_audio_frequency", text="Frequency (Hz)")
+        settings.prop(context.scene, "stagehand_audio_bandwidth", text="Bandwidth")
+        third_octave = context.scene.stagehand_audio_bandwidth == 'THIRD_OCTAVE'
+        settings.prop(
+            context.scene, "stagehand_audio_frequency",
+            text="Center Frequency (Hz)" if third_octave else "Frequency (Hz)",
+        )
+        if third_octave:
+            lower, upper = AudioVisualization.third_octave_limits(
+                context.scene.stagehand_audio_frequency
+            )
+            settings.label(text=f"Band: {lower:.1f} - {upper:.1f} Hz")
         settings.prop(context.scene, "stagehand_audio_max_spl", text="Maximum SPL (dB)")
         settings.prop(context.scene, "stagehand_audio_gradient_step", text="Color Step (dB)")
         settings.prop(context.scene, "stagehand_audio_smooth_gradient", text="Smooth Gradient")

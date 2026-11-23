@@ -16,6 +16,7 @@ from .RegistrationUtils import (
 
 
 AUDIO_SOURCE_TAG = "audiosource"
+THIRD_OCTAVE_SAMPLES = 17
 SOURCE_TEXTURE_FIELDS = (
     "sourcePositionSpl",
     "sourceForwardHorizontal",
@@ -121,7 +122,7 @@ vec3 gradientColor(int index)
     return vec3(0.06, 0.02, 0.16);
 }}
 
-void main()
+float pressureSquaredAtFrequency(float frequency)
 {{
     float pressureReal = 0.0;
     float pressureImaginary = 0.0;
@@ -129,8 +130,8 @@ void main()
     for (int sourceIndex = 0; sourceIndex < int(audioData.sourceCount); ++sourceIndex)
     {{
         vec4 nearPlaneAndBand = sourceData(sourceIndex, 4);
-        if (audioData.frequency < nearPlaneAndBand.z
-            || audioData.frequency > nearPlaneAndBand.w)
+        if (frequency < nearPlaneAndBand.z
+            || frequency > nearPlaneAndBand.w)
             continue;
         vec4 positionSpl = sourceData(sourceIndex, 0);
         vec3 offset = worldPosition - positionSpl.xyz;
@@ -141,7 +142,7 @@ void main()
         vec4 audio = sourceData(sourceIndex, 3);
         float phase = 2.0 * PI * (
             distanceMeters + audio.x
-        ) * audioData.frequency / max(audioData.soundSpeed, 0.001);
+        ) * frequency / max(audioData.soundSpeed, 0.001);
         pressureReal += (
             pressure * sin(phase) * audio.y * dispersion
         );
@@ -150,9 +151,32 @@ void main()
         );
     }}
 
-    float totalPressure = sqrt(
+    return (
         pressureReal * pressureReal + pressureImaginary * pressureImaginary
     );
+}}
+
+void main()
+{{
+    float meanSquaredPressure = 0.0;
+    if (audioData.thirdOctave > 0.5)
+    {{
+        // Midpoint quadrature in log frequency: equal energy per octave.
+        // Sum sources coherently at each frequency, then average energies.
+        for (int sampleIndex = 0; sampleIndex < {THIRD_OCTAVE_SAMPLES}; ++sampleIndex)
+        {{
+            float octaveOffset = (
+                (float(sampleIndex) + 0.5) / {float(THIRD_OCTAVE_SAMPLES):.1f} - 0.5
+            ) / 3.0;
+            float frequency = audioData.frequency * exp2(octaveOffset);
+            meanSquaredPressure += pressureSquaredAtFrequency(frequency);
+        }}
+        meanSquaredPressure /= {float(THIRD_OCTAVE_SAMPLES):.1f};
+    }}
+    else
+        meanSquaredPressure = pressureSquaredAtFrequency(audioData.frequency);
+
+    float totalPressure = sqrt(meanSquaredPressure);
     float totalSpl = 20.0 * log10Safe(totalPressure / REFERENCE_PRESSURE);
     float gradientValue = clamp(
         (audioData.maxDisplayedSpl - totalSpl)
@@ -185,6 +209,11 @@ def _tag_view3d_redraw():
 
 def _audio_setting_updated(_self, _context):
     _tag_view3d_redraw()
+
+
+def third_octave_limits(center_frequency):
+    factor = 2.0 ** (1.0 / 6.0)
+    return center_frequency / factor, center_frequency * factor
 
 
 def _has_audio_source_tag(obj):
@@ -296,6 +325,7 @@ struct AudioData {
     float gradientStepDb;
     float overlayOpacity;
     float smoothGradient;
+    float thirdOctave;
 };
 ''')
         shader_info.uniform_buf(0, "AudioData", "audioData")
@@ -356,6 +386,11 @@ def _update_audio_data_buffer(scene, source_count, texture_width):
         float(scene.stagehand_audio_gradient_step),
         float(scene.stagehand_audio_overlay_opacity),
         1.0 if scene.stagehand_audio_smooth_gradient else 0.0,
+        1.0 if getattr(scene, "stagehand_audio_bandwidth", 'SINGLE') == 'THIRD_OCTAVE' else 0.0,
+        # std140 rounds the uniform block size to a multiple of 16 bytes.
+        0.0,
+        0.0,
+        0.0,
     ]
 
     buffer = gpu.types.Buffer('FLOAT', len(values), values)
@@ -507,6 +542,19 @@ def register():
 
     safe_define_property(
         bpy.types.Scene,
+        "stagehand_audio_bandwidth",
+        bpy.props.EnumProperty(
+            name="Bandwidth",
+            items=(
+                ('SINGLE', "Single Frequency", "Calculate one frequency"),
+                ('THIRD_OCTAVE', "1/3 Octave", "Average energy over a third-octave band using 17 log-spaced samples"),
+            ),
+            default='SINGLE',
+            update=_audio_setting_updated,
+        ),
+    )
+    safe_define_property(
+        bpy.types.Scene,
         "stagehand_audio_visualization_enabled",
         bpy.props.BoolProperty(
             name="Audio Visualization",
@@ -619,5 +667,6 @@ def unregister():
         "stagehand_audio_sound_speed",
         "stagehand_audio_frequency",
         "stagehand_audio_visualization_enabled",
+        "stagehand_audio_bandwidth",
     ):
         safe_remove_property(bpy.types.Scene, property_name)
