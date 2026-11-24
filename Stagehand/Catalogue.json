@@ -6775,6 +6775,124 @@
                     "length": 1.5
                 }
             ]
+        },
+        {
+            "name": "base 30 kg - ovetti centrali",
+            "uniqueId": 79,
+            "mesh3d": "Models/base-30kg",
+            "tags": [
+                "structure",
+                "structure-joint",
+                "truss"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        0.01,
+                        0.7071068286895752,
+                        0.0,
+                        0.0,
+                        0.7071067094802856
+                    ],
+                    "displayradius": 0.1,
+                    "type": 26,
+                    "allowrotations": "90"
+                }
+            ]
+        },
+        {
+            "name": "Robe@Pointe",
+            "uniqueId": 80,
+            "mesh3d": "Models/Lights/robepointe",
+            "tags": [
+                "movinghead"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        -0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.10999999940395355,
+                        0.05000000074505806,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.015,
+                    "type": 5,
+                    "allowrotations": "none"
+                }
+            ],
+            "watt": 470.0
+        },
+        {
+            "name": "Portman@Pix3l",
+            "uniqueId": 81,
+            "mesh3d": "Models/Lights/portmanpix3l",
+            "tags": [
+                "movinghead"
+            ],
+            "links": [
+                {
+                    "posdir": [
+                        0.0,
+                        0.0,
+                        -0.09000000357627869,
+                        0.0,
+                        0.7071068286895752,
+                        0.7071068286895752,
+                        0.0
+                    ],
+                    "displayradius": 0.025,
+                    "type": 1,
+                    "allowrotations": "none"
+                },
+                {
+                    "posdir": [
+                        0.07000000029802322,
+                        0.10999999940395355,
+                        0.05000000074505806,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "displayradius": 0.015,
+                    "type": 9,
+                    "allowrotations": "none"
+                }
+            ],
+            "watt": 690.0
         }
     ],
     "variants": [
