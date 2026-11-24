@@ -3335,8 +3335,8 @@ def _property_from_definition(parameter_name, parameter, update_callback=None):
     )
 
 
-def _center_recipe_on_world_origin(context, objects):
-    """Center the complete world-space bounding box on X/Y, preserving Z."""
+def _center_recipe_on_cursor(context, objects):
+    """Center the world-space bounds on cursor X/Y; builders set cursor Z."""
     recipe_objects = set(objects)
     for obj in tuple(recipe_objects):
         recipe_objects.update(obj.children_recursive)
@@ -3358,8 +3358,8 @@ def _center_recipe_on_world_origin(context, objects):
         return
 
     offset = Vector((
-        -(max(point.x for point in coordinates) + min(point.x for point in coordinates)) / 2.0,
-        -(max(point.y for point in coordinates) + min(point.y for point in coordinates)) / 2.0,
+        context.scene.cursor.location.x - (max(point.x for point in coordinates) + min(point.x for point in coordinates)) / 2.0,
+        context.scene.cursor.location.y - (max(point.y for point in coordinates) + min(point.y for point in coordinates)) / 2.0,
         0.0,
     ))
     # Move hierarchy roots only: children inherit the same translation once.
@@ -3452,7 +3452,7 @@ def _build_operator(definition):
             values = {name: getattr(self, name) for name in parameters}
             with Connections.database_transaction():
                 _objects, message = builder(context, definition, values)
-                _center_recipe_on_world_origin(context, _objects)
+                _center_recipe_on_cursor(context, _objects)
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}

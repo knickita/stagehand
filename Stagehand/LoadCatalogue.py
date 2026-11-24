@@ -462,10 +462,18 @@ def _build_operator(asset_data):
     class_name = f"STAGEHAND_OT_import_catalogue_{operator_token}_{operator_suffix}"
 
     def execute(self, context):
-        del context
-
         try:
-            _import_asset(asset_data, select=True)
+            objects = _import_asset(asset_data, select=True)
+            context.view_layer.update()
+            imported = set(objects)
+            roots = [obj for obj in objects if obj.parent not in imported]
+            anchor = roots[0] if roots else objects[0]
+            offset = context.scene.cursor.location - anchor.matrix_world.translation
+            for obj in roots:
+                matrix = obj.matrix_world.copy()
+                matrix.translation += offset
+                obj.matrix_world = matrix
+            context.view_layer.update()
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}

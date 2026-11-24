@@ -657,7 +657,7 @@ class STAGEHAND_OT_add_object(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        bpy.ops.mesh.primitive_cube_add()
+        bpy.ops.mesh.primitive_cube_add(location=context.scene.cursor.location)
         obj = context.active_object
 
         if obj is None:
